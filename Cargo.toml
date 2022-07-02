@@ -1,0 +1,11 @@
+[package]
+name = "amber-blasphemy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+codepage-strings = "1.0.2"
+sdl2 = "0.35.2"               # SDL2 bindings for Rust
+#sdl2_ttf = "0.25.1"           # SDL2_ttf bindings for Rust
