@@ -1,8 +1,9 @@
 use std::{io, time::Duration, env};
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired};
 
 mod datafiles;
+mod audio;
 
 fn print_strings(data : &datafiles::AmberStarFiles) {
 
@@ -39,6 +40,23 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 
     let mut canvas = window.into_canvas().build().unwrap();
 
+    let audio = sdl_context.audio().unwrap();
+
+    let requested_audio = AudioSpecDesired {
+	freq: Some(44100),
+	channels: Some(2),
+	samples: None
+    };
+
+    let mixer_struct = audio::new(data.sample_data.data.clone());
+    let mixer = &mixer_struct;
+
+//    audio.open_playback(None, &requested_audio, audio::sdl_callback);
+    audio.open_playback(None, &requested_audio, |spec| {
+	mixer.init(spec);
+	return mixer;
+    }).unwrap();
+
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
@@ -53,7 +71,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 	    let img = &data.pics80[j];
 	    let creator = canvas.texture_creator();
 	    let texture = img.as_texture(&creator);
-	    canvas.copy(&texture, None, Some(Rect::new((j as i32 * (img.width as i32 + 8)), 0, img.width, img.height))).unwrap();
+	    canvas.copy(&texture, None, Some(Rect::new(j as i32 * (img.width as i32 + 8), 0, img.width, img.height))).unwrap();
 	}
 
 	let img = &data.pic_intro;

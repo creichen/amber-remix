@@ -15,7 +15,7 @@ pub fn seeker<'a>(data : &'a [u8], start : usize) -> SongSeeker<'a> {
 
 
 pub struct Song {
-    data : Vec<u8>
+    
 }
 
 pub struct Voice {
@@ -384,6 +384,6 @@ impl<'a> SongSeeker<'a> {
 	}
 
 	// Found a song header!
-	return Some(Song{ data : vec![] });
+	return Some(Song{ } );
     }
 }

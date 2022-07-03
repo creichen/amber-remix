@@ -16,6 +16,7 @@ mod decode;
 mod palette;
 mod pixmap;
 mod music;
+pub mod sampledata;
 
 #[derive(Debug)]
 pub enum FileHeaderType {
@@ -420,6 +421,7 @@ pub struct AmberStarFiles {
     pub pics80 : Vec<Pixmap>,
     pub pic_intro : Pixmap,
     pub palettes : Vec<Palette>,
+    pub sample_data : sampledata::SampleData,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -478,6 +480,9 @@ impl AmberStarFiles {
 //	    break;
 	}
 
+	let mut sampledata_f = load_relative(path, "SAMPLEDA.IMG");
+	let sample_data = sampledata::SampleData::new(sampledata_f.decode(0));
+
 	return AmberStarFiles {
 	    amberdev,
 	    string_fragments,
@@ -486,6 +491,7 @@ impl AmberStarFiles {
 	    pics80,
 	    pic_intro,
 	    palettes,
+	    sample_data,
 	}
     }
 }
