@@ -6,6 +6,7 @@ use std::fmt::Display;
 
 use crate::audio::dsp::writer::PCMWriter;
 use crate::audio::dsp::writer::FlexPCMWriter;
+use crate::audio::dsp::writer::FlexPCMResult;
 use super::frequency_range::Freq;
 use super::frequency_range::FreqRange;
 
@@ -51,7 +52,7 @@ impl<'a> LinearFilter<'a> {
 	return available as f32;
     }
 
-    fn fill_buffer(&mut self, output: &&mut [f32]) -> usize {
+    fn fill_buffer(&mut self, output: &mut [f32]) -> FlexPCMResult {
         let requested_output_in_seconds = output.len() as f32 / self.out_freq as f32;
         let available_in_seconds = self.buffer_size_in_seconds();
         let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
@@ -61,23 +62,27 @@ impl<'a> LinearFilter<'a> {
 	let possible_max_to_write = self.buf.len() - buf_offset;
 	let max_to_write = usize::min(desired_max_to_write, possible_max_to_write);
 
-        let num_written = {
+        let write_result = {
 	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
 	    self.source.write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset,
 				       usize::max(1, missing_in_millis))
 	};
-        if num_written == 0 && max_to_write > 0 && missing_in_millis > 0 {
-	    if possible_max_to_write == 0 {
-		panic!("LinearFilter buffer too small");
-	    } else {
-		panic!("Source to LinearFilter refused to provide updates");
+
+	if let FlexPCMResult::Wrote(num_written) = write_result {
+            if num_written == 0 && max_to_write > 0 && missing_in_millis > 0 {
+		if possible_max_to_write == 0 {
+		    panic!("LinearFilter buffer too small");
+		} else {
+		    panic!("Source to LinearFilter refused to provide updates");
+		}
 	    }
+
+            self.samples_in_buf += num_written;
 	}
-        self.samples_in_buf += num_written;
 
 	// println!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
 
-	return num_written;
+	return write_result;
     }
 
     fn emit_buffer(&mut self, output: &mut [f32]) -> usize {
@@ -200,7 +205,21 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 	let output_requested = output.len();
 	let mut output_written = 0;
 	while output_written < output_requested {
-	    let num_read = self.fill_buffer(&output);
+	    let mut num_read = 0;
+	    loop {
+		match self.fill_buffer(output) {
+		    FlexPCMResult::Wrote(r) => {
+			num_read = r;
+			break;
+		    },
+		    FlexPCMResult::Flush => {
+			self.samples_in_buf = 0;
+			self.state = None;
+			continue;
+		    }
+		    FlexPCMResult::Silence => { return; }
+		}
+	    };
 	    // println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
 	    // println!("[TOP]  out = {:?}", &output[..output_written]);
 	    // println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
@@ -475,7 +494,7 @@ fn test_downsample_one_point_five_incremental() {
 struct MockFlexWriter { s : Vec<f32>, f : Vec<(usize, Freq)>, maxwrite : usize }
 #[cfg(test)]
 impl FlexPCMWriter for MockFlexWriter {
-    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange, _msecs : usize) -> usize {
+    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange, _msecs : usize) -> FlexPCMResult {
 	let maxsize = usize::min(self.maxwrite, usize::min(output.len(), self.s.len()));
 	output[0..maxsize].copy_from_slice(&self.s[0..maxsize]);
 	let f = &self.f;
@@ -484,7 +503,7 @@ impl FlexPCMWriter for MockFlexWriter {
 	}
 	self.f = vec![];
 	self.s.copy_within(maxsize.., 0);
-	return maxsize;
+	return FlexPCMResult::Wrote(maxsize);
     }
 }
 
