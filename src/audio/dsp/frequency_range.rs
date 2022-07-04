@@ -1,19 +1,26 @@
+use std::fmt::Display;
+
 /// Frequency range for FlexPCMWriter
 
 pub type Freq = usize;
 
 /// A FreqRange is a range position-to-frequency mappings,
 /// open to the end.
-pub struct FreqRange {
+pub enum FreqRange<'a> {
+    Base(FreqRangeBase),
+    AtOffset(&'a mut FreqRangeBase, usize),
+}
+
+struct FreqRangeBase {
     frequencies : Vec<(usize, Freq)>,
 }
 
-impl FreqRange {
-    pub fn new() -> FreqRange {
-	return FreqRange { frequencies : Vec::new(), };
+impl FreqRangeBase {
+    fn new() -> FreqRangeBase {
+	return FreqRangeBase { frequencies : Vec::new(), };
     }
 
-    pub fn append(&mut self, pos : usize, freq : Freq) {
+    fn append(&mut self, pos : usize, freq : Freq) {
 	if self.frequencies.len() > 0 {
 	    let (last_pos, last_freq) = self.frequencies[self.frequencies.len() - 1];
 	    // No need to change
@@ -28,7 +35,7 @@ impl FreqRange {
     }
 
     /// Frequency and remaining samples after the given position
-    pub fn get(&self, pos : usize) -> (Freq, Option<usize>) {
+    fn get(&self, pos : usize) -> (Freq, Option<usize>) {
 	let mut last_pos = None;
 	for rev_i in 0..self.frequencies.len() {
 	    let (i_pos, i_freq) = self.frequencies[self.frequencies.len() - rev_i - 1];
@@ -46,7 +53,7 @@ impl FreqRange {
     }
 
     /// Slide window to the left, discarding old data
-    pub fn slide(&mut self, offset : usize) {
+    fn slide(&mut self, offset : usize) {
 	let mut new_frequencies = vec![];
 	let freq = &self.frequencies;
 	let mut last_freq = None;
@@ -74,10 +81,61 @@ impl FreqRange {
     }
 }
 
+impl Display for FreqRangeBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "{:?}", self.frequencies)
+    }
+}
+
+impl<'a> Display for FreqRange<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	match self {
+	    FreqRange::Base(b)        => write!(f, "B({b})"),
+	    FreqRange::AtOffset(b, o) => write!(f, "O({b} + {o})"),
+	}
+    }
+}
+
+impl<'a> FreqRange<'a> {
+    pub fn new() -> FreqRange<'a> {
+	return FreqRange::Base(FreqRangeBase::new());
+    }
+
+    pub fn append(&mut self, pos : usize, freq : Freq) {
+	match self {
+	    FreqRange::Base(f)                => f.append(pos, freq),
+	    FreqRange::AtOffset(bref, offset) => { bref.append(pos + *offset, freq)},
+	}
+    }
+
+    /// Frequency and remaining samples after the given position
+    pub fn get(&self, pos : usize) -> (Freq, Option<usize>) {
+	match self {
+	    FreqRange::Base(f)                => f.get(pos),
+	    FreqRange::AtOffset(bref, offset) => bref.get(pos + offset),
+	}
+    }
+
+    /// Slide window to the left, discarding old data
+    pub fn shift(&mut self, offset : usize) {
+	match self {
+	    FreqRange::Base(f)           => f.slide(offset),
+	    FreqRange::AtOffset(bref, _) => bref.slide(offset),
+	}
+    }
+
+    pub fn at_offset(&mut self, offset : usize) -> FreqRange {
+	match self {
+	    FreqRange::Base(f)           => FreqRange::AtOffset(f, offset),
+	    FreqRange::AtOffset(bref, o) => FreqRange::AtOffset(bref, offset + *o),
+	}
+    }
+}
+
 
 #[cfg(test)]
 #[test]
-fn freqrange_add_get() {
+fn test_append_get() {
     let mut fr = FreqRange::new();
     fr.append(0, 42);
     assert_eq!((42, None), fr.get(0));
@@ -94,15 +152,17 @@ fn freqrange_add_get() {
 
 #[cfg(test)]
 #[test]
-fn freqrange_slide() {
+fn test_slide() {
     let mut fr = FreqRange::new();
     fr.append(0, 100);
     fr.append(3, 101);
     fr.append(7, 102);
     fr.append(12, 103);
 
-    assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-	       &fr.frequencies[..]);
+    if let FreqRange::Base(ref frr) = fr {
+	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
+		   &frr.frequencies[..]);
+    } else { panic!(); }
 
     assert_eq!((100, Some(3)), fr.get(0));
     assert_eq!((100, Some(1)), fr.get(2));
@@ -113,10 +173,12 @@ fn freqrange_slide() {
     assert_eq!((103, None), fr.get(12));
     assert_eq!((103, None), fr.get(100));
 
-    fr.slide(0);
+    fr.shift(0);
 
-    assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-	       &fr.frequencies[..]);
+    if let FreqRange::Base(ref frr) = fr {
+	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
+		   &frr.frequencies[..]);
+    } else { panic!(); }
 
     assert_eq!((100, Some(3)), fr.get(0));
     assert_eq!((100, Some(1)), fr.get(2));
@@ -127,10 +189,12 @@ fn freqrange_slide() {
     assert_eq!((103, None), fr.get(12));
     assert_eq!((103, None), fr.get(100));
 
-    fr.slide(1);
+    fr.shift(1);
 
-    assert_eq!([(0, 100), (2, 101), (6, 102), (11, 103)],
-	       &fr.frequencies[..]);
+    if let FreqRange::Base(ref frr) = fr {
+	assert_eq!([(0, 100), (2, 101), (6, 102), (11, 103)],
+		   &frr.frequencies[..]);
+    } else { panic!(); }
 
     assert_eq!((100, Some(2)), fr.get(0));
     assert_eq!((100, Some(1)), fr.get(1));
@@ -141,7 +205,7 @@ fn freqrange_slide() {
     assert_eq!((103, None), fr.get(11));
     assert_eq!((103, None), fr.get(100));
 
-    fr.slide(2);
+    fr.shift(2);
 
     assert_eq!((101, Some(4)), fr.get(0));
     assert_eq!((101, Some(1)), fr.get(3));
@@ -150,19 +214,203 @@ fn freqrange_slide() {
     assert_eq!((103, None), fr.get(9));
     assert_eq!((103, None), fr.get(100));
 
-    fr.slide(6);
+    fr.shift(6);
 
     assert_eq!((102, Some(3)), fr.get(0));
     assert_eq!((102, Some(1)), fr.get(2));
     assert_eq!((103, None), fr.get(3));
     assert_eq!((103, None), fr.get(100));
 
-    assert_eq!(2, fr.frequencies.len());
+    if let FreqRange::Base(ref frr) = fr {
+	assert_eq!(2, frr.frequencies.len());
+    } else { panic!(); }
 
-    fr.slide(10000);
+    fr.shift(10000);
 
     assert_eq!((103, None), fr.get(0));
     assert_eq!((103, None), fr.get(100));
 
-    assert_eq!(1, fr.frequencies.len());
+    if let FreqRange::Base(ref frr) = fr {
+	assert_eq!(1, frr.frequencies.len());
+    } else { panic!(); }
+}
+
+#[cfg(test)]
+#[test]
+fn test_at_offset_get() {
+    let mut fr_base = FreqRange::new();
+    fr_base.append(0, 100);
+    fr_base.append(3, 101);
+    fr_base.append(7, 102);
+    fr_base.append(12, 103);
+
+    let fr = fr_base.at_offset(0);
+
+    assert_eq!((100, Some(3)), fr.get(0));
+    assert_eq!((100, Some(1)), fr.get(2));
+    assert_eq!((101, Some(4)), fr.get(3));
+    assert_eq!((101, Some(1)), fr.get(6));
+    assert_eq!((102, Some(5)), fr.get(7));
+    assert_eq!((102, Some(1)), fr.get(11));
+    assert_eq!((103, None), fr.get(12));
+    assert_eq!((103, None), fr.get(100));
+
+    let mut fr1 = fr_base.at_offset(1);
+
+    assert_eq!((100, Some(2)), fr1.get(0));
+    assert_eq!((100, Some(1)), fr1.get(1));
+    assert_eq!((101, Some(4)), fr1.get(2));
+    assert_eq!((101, Some(1)), fr1.get(5));
+    assert_eq!((102, Some(5)), fr1.get(6));
+    assert_eq!((102, Some(1)), fr1.get(10));
+    assert_eq!((103, None), fr1.get(11));
+    assert_eq!((103, None), fr1.get(100));
+
+    let fr2 = fr1.at_offset(2);
+
+    assert_eq!((101, Some(4)), fr2.get(0));
+    assert_eq!((101, Some(1)), fr2.get(3));
+    assert_eq!((102, Some(5)), fr2.get(4));
+    assert_eq!((102, Some(1)), fr2.get(8));
+    assert_eq!((103, None), fr2.get(9));
+    assert_eq!((103, None), fr2.get(100));
+}
+
+#[cfg(test)]
+#[test]
+fn test_at_offset_append() {
+    let expected = [(100, Some(3)), // 0
+		    (100, Some(2)),
+		    (100, Some(1)),
+		    (101, Some(1)),
+		    (102, Some(1)),
+		    (103, Some(2)), // 5
+		    (103, Some(1)),
+		    (104, None),
+		    (104, None), ];
+
+    let mut fr_base = FreqRange::new();
+    fr_base.append(0, 100);
+    fr_base.append(3, 101);
+
+    {
+	let mut fr = fr_base.at_offset(0);
+	fr.append(4, 102);
+    }
+
+    {
+	let mut fr1 = fr_base.at_offset(5);
+
+	fr1.append(0, 103); // 5
+
+	{
+	    let mut fr2 = fr1.at_offset(1);
+	    fr2.append(1, 104); // 7
+
+	    for (i, expected) in expected.iter().enumerate() {
+		if i >= 6 {
+		    assert_eq!(*expected, fr2.get(i - 6));
+		}
+	    }
+	}
+	for (i, expected) in expected.iter().enumerate() {
+	    if i >= 5 {
+		assert_eq!(*expected, fr1.get(i - 5));
+	    }
+	}
+    }
+
+    for (i, expected) in expected.iter().enumerate() {
+	assert_eq!(*expected, fr_base.get(i));
+    }
+    let fr = fr_base.at_offset(0);
+    for (i, expected) in expected.iter().enumerate() {
+	assert_eq!(*expected, fr.get(i));
+    }
+}
+
+#[cfg(test)]
+fn require_base<'a>(r : &'a FreqRange)  -> &'a FreqRangeBase {
+    match r {
+	FreqRange::Base(b) => b,
+	_ => panic!(),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_at_offset_slide() {
+    let mut fr_base = FreqRange::new();
+    fr_base.append(0, 100);
+    fr_base.append(3, 101);
+    fr_base.append(7, 102);
+    fr_base.append(12, 103);
+
+    let frr = require_base(&fr_base);
+    assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
+	       &frr.frequencies[..]);
+
+    assert_eq!((100, Some(3)), fr_base.get(0));
+    assert_eq!((100, Some(1)), fr_base.get(2));
+    assert_eq!((101, Some(4)), fr_base.get(3));
+    assert_eq!((101, Some(1)), fr_base.get(6));
+    assert_eq!((102, Some(5)), fr_base.get(7));
+    assert_eq!((102, Some(1)), fr_base.get(11));
+    assert_eq!((103, None), fr_base.get(12));
+    assert_eq!((103, None), fr_base.get(100));
+
+    {
+	let mut fr = fr_base.at_offset(0);
+	fr.shift(0);
+    }
+
+    {
+	let frr = require_base(&fr_base);
+	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
+		   &frr.frequencies[..]);
+    }
+
+    {
+	let mut fr = fr_base.at_offset(0);
+
+	assert_eq!((100, Some(3)), fr.get(0));
+	assert_eq!((100, Some(1)), fr.get(2));
+	assert_eq!((101, Some(4)), fr.get(3));
+	assert_eq!((101, Some(1)), fr.get(6));
+	assert_eq!((102, Some(5)), fr.get(7));
+	assert_eq!((102, Some(1)), fr.get(11));
+	assert_eq!((103, None), fr.get(12));
+	assert_eq!((103, None), fr.get(100));
+
+	fr.shift(1);
+    }
+
+    {
+	let frr = require_base(&fr_base);
+	assert_eq!([(0, 100), (2, 101), (6, 102), (11, 103)],
+		   &frr.frequencies[..]);
+    }
+
+    assert_eq!((100, Some(2)), fr_base.get(0));
+    assert_eq!((100, Some(1)), fr_base.get(1));
+    assert_eq!((101, Some(4)), fr_base.get(2));
+    assert_eq!((101, Some(1)), fr_base.get(5));
+    assert_eq!((102, Some(5)), fr_base.get(6));
+    assert_eq!((102, Some(1)), fr_base.get(10));
+    assert_eq!((103, None), fr_base.get(11));
+    assert_eq!((103, None), fr_base.get(100));
+
+    {
+	let mut fr2 = fr_base.at_offset(1);
+	let mut fr3 = fr2.at_offset(3);
+	fr3.shift(2);
+    }
+
+    assert_eq!((101, Some(4)), fr_base.get(0));
+    assert_eq!((101, Some(1)), fr_base.get(3));
+    assert_eq!((102, Some(5)), fr_base.get(4));
+    assert_eq!((102, Some(1)), fr_base.get(8));
+    assert_eq!((103, None), fr_base.get(9));
+    assert_eq!((103, None), fr_base.get(100));
+
 }
