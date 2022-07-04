@@ -51,6 +51,144 @@ impl<'a> LinearFilter<'a> {
 	return available as f32;
     }
 
+    fn fill_buffer(&mut self, output: &&mut [f32]) -> usize {
+        let requested_output_in_seconds = output.len() as f32 / self.out_freq as f32;
+        let available_in_seconds = self.buffer_size_in_seconds();
+        let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
+        let missing_in_millis = f32::ceil(missing_in_seconds / 1000.0) as usize;
+        let buf_offset = self.samples_in_buf;
+        let desired_max_to_write = 1 + (missing_in_millis * self.max_in_freq) / 1000;
+	let possible_max_to_write = self.buf.len() - buf_offset;
+	let max_to_write = usize::min(desired_max_to_write, possible_max_to_write);
+
+        let num_written = {
+	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
+	    self.source.write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset,
+				       usize::max(1, missing_in_millis))
+	};
+        if num_written == 0 && max_to_write > 0 && missing_in_millis > 0 {
+	    if possible_max_to_write == 0 {
+		panic!("LinearFilter buffer too small");
+	    } else {
+		panic!("Source to LinearFilter refused to provide updates");
+	    }
+	}
+        self.samples_in_buf += num_written;
+
+	// println!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
+
+	return num_written;
+    }
+
+    fn emit_buffer(&mut self, output: &mut [f32]) -> usize {
+        let out_len = output.len();
+        let mut out_pos = 0;
+        let mut in_pos = 0;
+        while out_pos < out_len {
+	    let out_remaining = out_len - out_pos;
+	    let in_remaining = self.samples_in_buf - in_pos;
+
+	    // println!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
+
+	    // How much sample information should we write now?
+	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
+	    let num_samples_in_per_out = in_freq as f32 / self.out_freq as f32;
+	    let max_in_from_sample = match max_in_samples {
+		None    => in_remaining, // infinite length -> beyond the size of the output buffer
+		Some(l) => l,
+	    };
+
+	    // Make sure we have the linear remixer set up
+	    let sample_state_last = match self.state {
+		// Frequency change?  Invalidate.
+		Some(s) => { if s.in_freq == in_freq { Some(s) } else { None } },
+		None    => None
+	    };
+	    let mut sample_state = match sample_state_last {
+		Some(s) => s,
+		None    => {
+		    // println!("!! Need new sample state");
+		    SampleState::new(in_freq, self.out_freq)},
+	    };
+
+	    // How many samples can we expect to get?
+	    let in_from_sample = usize::min(max_in_from_sample,
+					    in_remaining - 1);
+	    // First double-check that we actually have enough data left
+	    if in_from_sample > in_remaining || in_from_sample == 0 {
+		break;
+	    }
+
+	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_in_per_out;
+	    let out_from_sample = (out_from_sample_f32 - sample_state.get_pos()) as usize;
+
+	    // println!("-- in@{in_pos} out@{out_pos}");
+	    // println!("   freqs={}", self.freqs);
+	    // println!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
+	    // println!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
+	    // println!("     -> expected max-for-outbuf={out_from_sample}   <- {out_from_sample_f32} - {}", sample_state.get_pos());
+	    // println!("        bufsize = {}", self.buf.len());
+	    // println!("        expected read: [{in_pos}..{}] (from max {})", in_pos + in_from_sample, in_pos + max_in_from_sample);
+	    // println!("        it: {sample_state}");
+
+	    if out_from_sample == 0 {
+		break; // Need to get more samples first
+	    }
+
+	    if out_remaining > out_from_sample {
+		// Sample will finish before / as we fill the output buffer
+		// println!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		// 	 out_pos, out_pos+out_from_sample,
+		// 	 in_pos, in_pos+in_from_sample);
+
+		sample_state.resample(&mut output[out_pos..out_pos+out_from_sample],
+				      // +1 so that we can interpolate to the next sample:
+				      &self.buf[in_pos..in_pos+in_from_sample + 1]);
+		//in_pos += in_from_sample;
+		out_pos += out_from_sample;
+		// if Some(in_from_sample) == max_in_samples {
+		//     println!("!! Reset sample state (1)");
+		//     self.state = None;
+		// } else {
+		//     self.state = Some(sample_state);
+		// }
+
+	    } else {
+		// We will fill the output buffer before the sample is done
+		// println!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		// 	 out_pos, out_pos+out_from_sample,
+		// 	 in_pos, in_pos+in_from_sample);
+		sample_state.resample(&mut output[out_pos..out_len],
+				      // +1 so that we can interpolate to the next sample:
+				      &self.buf[in_pos..in_pos+in_from_sample + 1]);
+		// println!("        -> it': {sample_state}");
+
+		out_pos = out_len;
+
+		// move int offset in sapmler state back to main object so that we can flush more data
+		//println!("           resetting state? {in_progress} >= {in_from_sample}?");
+		// if Some(in_progress) == max_in_samples {
+		//     println!("!! Reset sample state (2)");
+		//     self.state = None;
+		// } else {
+		//     // Store sample_state for the next time we are called
+		//     self.state = Some(sample_state);
+		// }
+	    }
+	    let in_progress = sample_state.sample_pos_int;
+	    sample_state.sample_pos_int = 0;
+	    in_pos += in_progress;
+
+	    self.state = Some(sample_state);
+	}
+	// println!("  cleanup: in_pos = {in_pos}");
+        self.freqs.shift(in_pos);
+        let left_over_samples = in_pos..self.samples_in_buf;
+        self.samples_in_buf = left_over_samples.len();
+        self.buf.copy_within(left_over_samples, 0);
+        return out_pos;
+    }
+
 }
 
 impl<'a> PCMWriter for LinearFilter<'a> {
@@ -59,109 +197,23 @@ impl<'a> PCMWriter for LinearFilter<'a> {
     }
 
     fn write_pcm(&mut self, output : &mut [f32]) {
-	let requested_output_in_seconds = output.len() as f32 / self.out_freq as f32;
-	let available_in_seconds = self.buffer_size_in_seconds();
-	let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
-	let missing_in_millis = f32::ceil(missing_in_seconds / 1000.0) as usize;
+	let output_requested = output.len();
+	let mut output_written = 0;
+	while output_written < output_requested {
+	    let num_read = self.fill_buffer(&output);
+	    // println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
+	    // println!("[TOP]  out = {:?}", &output[..output_written]);
+	    // println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
+	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
-	let buf_offset = self.samples_in_buf;
-	let max_to_write = 1 + (missing_in_millis * self.max_in_freq) / 1000;
-
-	// FIXME: what if buf_offset + missing_in_millis * self.max_in_freq > self.buf.len() ?
-	// In that case we must split up the incoming input and run the code below multiple times.
-
-	let num_written = {
-	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
-	    self.source.write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset, missing_in_millis)
-	};
-
-	self.samples_in_buf += num_written;
-	println!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
-
-	let out_len = output.len();
-	let mut out_pos = 0;
-	let mut in_pos = 0;
-	println!("** starting\n  freqs = {}", self.freqs);
-	while out_pos < out_len {
-	    let out_remaining = out_len - out_pos;
-
-	    println!("... onto the next; in: pos@{in_pos}, left:{}", self.samples_in_buf);
-
-	    // How much sample information should we write now?
-	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
-	    let num_samples_in_per_out = in_freq as f32 / self.out_freq as f32;
-	    let max_in_from_sample = match max_in_samples {
-		None    => self.samples_in_buf - in_pos, // infinite length -> beyond the size of the output buffer
-		Some(l) => l,
-	    };
-
-	    // Make sure we have the linear remixer set up
-	    let mut sample_state = match self.state {
-		Some(s) => s,
-		None    => {
-		    println!("!! Reset sample state");
-		    SampleState::new(in_freq, self.out_freq)},
-	    };
-	    let max_out_from_sample_f32 = max_in_from_sample as f32 / num_samples_in_per_out;
-	    let max_out_from_sample = (max_out_from_sample_f32 - sample_state.get_pos()) as usize;
-
-	    println!("-- in@{in_pos} out@{out_pos}");
-	    println!("   freqs={}", self.freqs);
-	    println!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
-	    println!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
-	    println!("     -> expected max-for-outbuf={max_out_from_sample}");
-	    println!("        bufsize = {}", self.buf.len());
-	    println!("        expected read: [{in_pos}..{}]", in_pos + max_in_from_sample);
-	    println!("        it: {sample_state}");
-
-	    if out_remaining > max_out_from_sample {
-		// Sample will finish before / as we fill the output buffer
-		println!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
-			 out_pos, out_pos+max_out_from_sample,
-			 in_pos, in_pos+max_in_from_sample);
-		sample_state.resample(&mut output[out_pos..out_pos+max_out_from_sample],
-				      // +1 so that we can interpolate to the next sample:
-				      &self.buf[in_pos..in_pos+max_in_from_sample + 1]);
-		in_pos += max_in_from_sample;
-		out_pos += max_out_from_sample;
-		self.state = None;
-
-
-		if max_out_from_sample == 0 {
-		    panic!("Ran out of samples!")
-		}
-	    } else {
-		// We will fill the output buffer before the sample is done
-		println!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
-			 out_pos, out_pos+max_out_from_sample,
-			 in_pos, in_pos+max_in_from_sample);
-		sample_state.resample(&mut output[out_pos..out_len],
-				      // +1 so that we can interpolate to the next sample:
-				      &self.buf[in_pos..in_pos+max_in_from_sample + 1]);
-		println!("        -> it': {sample_state}");
-
-		out_pos = out_len;
-
-		// move int offset in sapmler state back to main object so that we can flush more data
-		let in_progress = sample_state.sample_pos_int;
-		sample_state.sample_pos_int = 0;
-		in_pos += in_progress;
-		println!("           resetting state? {in_progress} >= {max_in_from_sample}?");
-		if in_progress >= max_in_from_sample {
-		    self.state = None;
-		} else {
-		    // Store sample_state for the next time we are called
-		    self.state = Some(sample_state);
-		}
+	    output_written += num_written;
+	    // println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
+	    if num_read == 0 && num_written == 0 {
+		panic!("No progress in linear filter: buf {}/{}", self.samples_in_buf, self.buf.len());
 	    }
-	}
-	self.freqs.shift(in_pos);
-
-	// Now move
-	let left_over_samples = in_pos..self.samples_in_buf;
-	self.samples_in_buf = left_over_samples.len();
-	self.buf.copy_within(left_over_samples, 0);
+        }
     }
+
 }
 
 
@@ -191,7 +243,7 @@ impl SampleState {
 
     fn resample(&mut self, outbuf : &mut [f32], inbuf : &[f32]) {
 	let sample_len = inbuf.len();
-	println!("  ## resamp from {}", inbuf[0]);
+	// println!("  ## resamp from {}", inbuf[0]);
 	let mut pos = self.sample_pos_int;
 
 	// fractional position counter
@@ -209,6 +261,8 @@ impl SampleState {
 
 	    let sample_v_current_fragment = sample_v_current * (fpos_denom - fpos_nom);
 	    let sample_v_next_fragment = sample_v_next * fpos_nom;
+
+	    // println!("  ## interpol {}, {}", sample_v_current, sample_v_next);
 
 	    let sample_v = (sample_v_current_fragment + sample_v_next_fragment) / fpos_denom;
 
@@ -476,7 +530,6 @@ fn test_linear_filter_resampling_incremental() {
 		 ],
 		 &outbuf[..]);
 
-println!("OK-A");
     lf.write_pcm(&mut outbuf[5..6]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -486,7 +539,6 @@ println!("OK-A");
 		 0.0, 0.0,
 		 ],
 		 &outbuf[..]);
-println!("OK-B");
     lf.write_pcm(&mut outbuf[6..7]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -497,7 +549,6 @@ println!("OK-B");
 		 ],
 		 &outbuf[..]);
 
-println!("OK-C");
     lf.write_pcm(&mut outbuf[7..11]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -507,7 +558,6 @@ println!("OK-C");
 		 ],
 		 &outbuf[..]);
 
-println!("OK-D");
     lf.write_pcm(&mut outbuf[11..13]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -563,6 +613,28 @@ fn test_linear_filter_limit_writes() {
 		     10.0, 25.0, 40.0, 55.0,],
 		     &outbuf[..]);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn test_linear_filter_tiny_buffer() {
+    let mut outbuf = [0.0; 14];
+    let mut flexwriter = MockFlexWriter {
+	maxwrite : 1000,
+	s : vec![1.0, 2.0,                           // 1:1
+		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
+		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
+		 10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
+	],
+	f : vec![(0, 40), (2, 80), (6, 20), (9, 60)],
+    };
+    let mut lf = LinearFilter::new(80, 40, &mut flexwriter);
+    lf.write_pcm(&mut outbuf[..]);
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		 10.0, 25.0, 40.0, 55.0,],
+		 &outbuf[..]);
 }
 
 // ================================================================================
