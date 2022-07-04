@@ -1,4 +1,6 @@
-use std::{io, time::Duration, env};
+#[macro_use(lazy_static)]
+extern crate lazy_static;
+use std::{io, time::Duration, env, sync::{Arc, Mutex}};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired};
 
@@ -29,6 +31,13 @@ fn print_strings(data : &datafiles::AmberStarFiles) {
 
 }
 
+struct D {}
+impl audio::AudioIterator for D {
+    fn next(&mut self) -> Vec<audio::AudioQueueOp> {
+	return vec![audio::AudioQueueOp::SetVolume(0.05)];
+    }
+}
+
 fn show_images(data : &datafiles::AmberStarFiles) {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -48,14 +57,15 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 	samples: None
     };
 
-    let mixer_struct = audio::new(data.sample_data.data.clone());
-    let mixer = &mixer_struct;
+    let mixer = audio::new(data.sample_data.data.clone());
 
-//    audio.open_playback(None, &requested_audio, audio::sdl_callback);
-    audio.open_playback(None, &requested_audio, |spec| {
-	mixer.init(spec);
-	return mixer;
+    let device = audio.open_playback(None, &requested_audio, |spec| {
+	return mixer.init(spec);
+	//return mixer;
     }).unwrap();
+    device.resume();
+    let d = Arc::new(Mutex::new(D{}));
+    mixer.set_channel(audio::CHANNELS[0], d);
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();

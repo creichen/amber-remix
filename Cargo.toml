@@ -9,3 +9,4 @@ edition = "2021"
 codepage-strings = "1.0.2"
 sdl2 = "0.35.2"               # SDL2 bindings for Rust
 #sdl2_ttf = "0.25.1"           # SDL2_ttf bindings for Rust
+lazy_static = "1.4.0"
