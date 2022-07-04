@@ -94,13 +94,16 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 		None    => self.samples_in_buf - in_pos, // infinite length -> beyond the size of the output buffer
 		Some(l) => l,
 	    };
-	    let max_out_from_sample = f32::floor(max_in_from_sample as f32 / num_samples_in_per_out) as usize;
 
 	    // Make sure we have the linear remixer set up
 	    let mut sample_state = match self.state {
 		Some(s) => s,
-		None    => SampleState::new(in_freq, self.out_freq),
+		None    => {
+		    println!("!! Reset sample state");
+		    SampleState::new(in_freq, self.out_freq)},
 	    };
+	    let max_out_from_sample_f32 = max_in_from_sample as f32 / num_samples_in_per_out;
+	    let max_out_from_sample = (max_out_from_sample_f32 - sample_state.get_pos()) as usize;
 
 	    println!("-- in@{in_pos} out@{out_pos}");
 	    println!("   freqs={}", self.freqs);
@@ -133,7 +136,8 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 			 out_pos, out_pos+max_out_from_sample,
 			 in_pos, in_pos+max_in_from_sample);
 		sample_state.resample(&mut output[out_pos..out_len],
-				      &self.buf[in_pos..in_pos+max_in_from_sample]);
+				      // +1 so that we can interpolate to the next sample:
+				      &self.buf[in_pos..in_pos+max_in_from_sample + 1]);
 		println!("        -> it': {sample_state}");
 
 		out_pos = out_len;
@@ -142,7 +146,8 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 		let in_progress = sample_state.sample_pos_int;
 		sample_state.sample_pos_int = 0;
 		in_pos += in_progress;
-		if in_progress >= max_out_from_sample {
+		println!("           resetting state? {in_progress} >= {max_in_from_sample}?");
+		if in_progress >= max_in_from_sample {
 		    self.state = None;
 		} else {
 		    // Store sample_state for the next time we are called
@@ -178,6 +183,10 @@ impl SampleState {
 	    sample_pos_int : 0,
 	    sample_pos_fract : 0.0,
 	}
+    }
+
+    fn get_pos(&self) -> f32 {
+	return self.sample_pos_int as f32 + (self.sample_pos_fract / self.out_freq as f32);
     }
 
     fn resample(&mut self, outbuf : &mut [f32], inbuf : &[f32]) {
@@ -409,11 +418,11 @@ fn test_downsample_one_point_five_incremental() {
 }
 
 #[cfg(test)]
-struct MockFlexWriter { s : Vec<f32>, f : Vec<(usize, Freq)> }
+struct MockFlexWriter { s : Vec<f32>, f : Vec<(usize, Freq)>, maxwrite : usize }
 #[cfg(test)]
 impl FlexPCMWriter for MockFlexWriter {
     fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange, _msecs : usize) -> usize {
-	let maxsize = usize::min(output.len(), self.s.len());
+	let maxsize = usize::min(self.maxwrite, usize::min(output.len(), self.s.len()));
 	output[0..maxsize].copy_from_slice(&self.s[0..maxsize]);
 	let f = &self.f;
 	for (pos, freq) in f {
@@ -430,6 +439,7 @@ impl FlexPCMWriter for MockFlexWriter {
 fn test_linear_filter_resampling_incremental() {
     let mut outbuf = [0.0; 14];
     let mut flexwriter = MockFlexWriter {
+	maxwrite : 100,
 	s : vec![1.0, 2.0,                           // 1:1
 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
 		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
@@ -488,7 +498,7 @@ println!("OK-B");
 		 &outbuf[..]);
 
 println!("OK-C");
-    lf.write_pcm(&mut outbuf[8..12]);
+    lf.write_pcm(&mut outbuf[7..11]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
@@ -498,7 +508,7 @@ println!("OK-C");
 		 &outbuf[..]);
 
 println!("OK-D");
-    lf.write_pcm(&mut outbuf[12..14]);
+    lf.write_pcm(&mut outbuf[11..13]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
@@ -513,6 +523,7 @@ println!("OK-D");
 fn test_linear_filter_resampling() {
     let mut outbuf = [0.0; 14];
     let mut flexwriter = MockFlexWriter {
+	maxwrite : 100,
 	s : vec![1.0, 2.0,                           // 1:1
 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
 		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
@@ -530,5 +541,28 @@ fn test_linear_filter_resampling() {
 		 &outbuf[..]);
 }
 
+#[cfg(test)]
+#[test]
+fn test_linear_filter_limit_writes() {
+    for i in 1..3 {
+	let mut outbuf = [0.0; 14];
+	let mut flexwriter = MockFlexWriter {
+	    maxwrite : i,
+	    s : vec![1.0, 2.0,                           // 1:1
+		     3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
+		     7.0, 8.0, 9.0,                      // 1:2 (upsample)
+		     10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
+	    ],
+	    f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
+	};
+	let mut lf = LinearFilter::new(20000, 10000, &mut flexwriter);
+	lf.write_pcm(&mut outbuf[..]);
+	assert_eq!( [1.0, 2.0,
+		     3.0, 5.0,
+		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		     10.0, 25.0, 40.0, 55.0,],
+		     &outbuf[..]);
+    }
+}
 
 // ================================================================================
