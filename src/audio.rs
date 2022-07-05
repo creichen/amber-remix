@@ -1,14 +1,17 @@
-use std::{sync::{Arc, Mutex}, thread};
+use std::{sync::{Arc, Mutex}, thread, collections::VecDeque, rc::Rc, cell::RefCell};
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback};
 
-pub use self::queue::AudioIterator;
-pub use self::queue::AQOp;
-pub use self::queue::AQSample;
+use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, frequency_range::Freq}, queue::AudioQueue, samplesource::SimpleSampleSource};
+pub use self::iterator::AudioIterator;
+pub use self::iterator::MockAudioIterator;
+pub use self::iterator::AQOp;
+pub use self::iterator::AQSample;
 pub use self::queue::SampleRange;
 
 mod dsp;
 mod queue;
+mod iterator;
 mod samplesource;
 
 const NOAUDIO : NoAudio = NoAudio {};
@@ -79,6 +82,29 @@ pub const CHANNELS : [Channel;5] = [
 ];
 
 
+struct LinearFilteringPipeline<'a> {
+    aqueue : RefCell<AudioQueue<'a>>,
+    linear_filter : RefCell<LinearFilter<'a>>,
+    stereo_mapper : RefCell<StereoMapper<'a>>,
+}
+
+impl<'a> LinearFilteringPipeline<'a> {
+    fn new(sample_source : &'a SimpleSampleSource, freq : Freq) -> LinearFilteringPipeline<'a> {
+	let mut mai = MockAudioIterator::new(vec![]);
+	let aqueue = RefCell::new(AudioQueue::new(&mut mai, sample_source));
+	let linear_filter = RefCell::new(LinearFilter::new(40000, freq, aqueue));
+	let stereo_mapper = RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter));
+	return LinearFilteringPipeline {
+	    // aqueue : &aqueue,
+	    // linear_filter : &linear_filter,
+	    aqueue,
+	    linear_filter,
+	    stereo_mapper,
+	}
+    }
+}
+
+
 struct ChannelState {
     chan : Channel,
     iterator : Arc<Mutex<dyn AudioIterator>>,
@@ -115,12 +141,12 @@ impl AudioCallback for &Mixer {
 	    let mut guard = chan.iterator.lock().unwrap();
 	    let chan_iterator = guard.deref_mut();
 
-	    for op in chan_iterator.next() {
-		match op {
-		    AQOp::SetVolume(v) => {amplitude = (v * 20000.0) as i16},
-		    _ => {},
-		}
-	    }
+	    // for op in chan_iterator.next() {
+	    // 	match op {
+	    // 	    AQOp::SetVolume(v) => {amplitude = (v * 20000.0) as i16},
+	    // 	    _ => {},
+	    // 	}
+	    // }
 	}
         for x in output.iter_mut() {
 	    *x = 0.0;
@@ -189,8 +215,8 @@ fn mixer_set_channel(c : Channel, source : Arc<Mutex<dyn AudioIterator>>) {
 
 struct NoAudio {}
 impl AudioIterator for NoAudio {
-    fn next(&mut self) -> Vec<AQOp> {
-	vec![AQOp::WaitMillis(1000)]
+    fn next(&mut self, queue: &mut VecDeque<AQOp>) {
+	queue.push_back(AQOp::WaitMillis(1000))
     }
 }
 

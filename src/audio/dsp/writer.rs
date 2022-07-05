@@ -10,7 +10,7 @@ pub trait PCMWriter {
     fn write_pcm(&mut self, output : &mut [f32]);
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum FlexPCMResult {
     Wrote(usize),
     Flush, // Source reset: flush buffers and try to write again

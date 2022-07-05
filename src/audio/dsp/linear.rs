@@ -218,7 +218,10 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 			self.state = None;
 			continue;
 		    }
-		    FlexPCMResult::Silence => { conclude_with_silence = true; }
+		    FlexPCMResult::Silence => {
+			conclude_with_silence = true;
+			break;
+		    }
 		}
 	    };
 	    // println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);

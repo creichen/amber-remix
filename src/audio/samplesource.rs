@@ -2,7 +2,7 @@
 
 const ONE_128TH : f32 = 1.0 / 128.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SampleRange {
     pub start : usize,
     pub len : usize,
@@ -25,6 +25,13 @@ impl<'a> SampleWriter<'a> {
     fn new(data : &'a [f32]) -> SampleWriter<'a> {
 	return SampleWriter {
 	    data,
+	    pos : 0,
+	}
+    }
+
+    pub fn empty() -> SampleWriter<'a> {
+	return SampleWriter {
+	    data : &[],
 	    pos : 0,
 	}
     }
@@ -61,6 +68,11 @@ impl SimpleSampleSource {
     pub fn new(data : Vec<i8>) -> SimpleSampleSource {
 	return SimpleSampleSource {
 	    data : data.iter().map(|x| { *x as f32 * ONE_128TH }).collect(),
+	};
+    }
+    pub fn new_float(data : Vec<f32>) -> SimpleSampleSource {
+	return SimpleSampleSource {
+	    data,
 	};
     }
 }
