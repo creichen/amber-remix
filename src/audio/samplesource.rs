@@ -2,6 +2,7 @@
 
 const ONE_128TH : f32 = 1.0 / 128.0;
 
+#[derive(Clone, Copy)]
 pub struct SampleRange {
     pub start : usize,
     pub len : usize,
@@ -30,6 +31,10 @@ impl<'a> SampleWriter<'a> {
 
     pub fn remaining(&self) -> usize {
 	return self.data.len() - self.pos;
+    }
+
+    pub fn done(&self) -> bool {
+	return self.remaining() == 0;
     }
 
     pub fn write(&mut self, dest : &mut [f32]) -> usize {
