@@ -2,7 +2,14 @@ use std::{sync::{Arc, Mutex}, thread};
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback};
 
+pub use self::queue::AudioIterator;
+pub use self::queue::AQOp;
+pub use self::queue::AQSample;
+pub use self::queue::SampleRange;
+
 mod dsp;
+mod queue;
+mod samplesource;
 
 const NOAUDIO : NoAudio = NoAudio {};
 const ONE_128TH : f32 = 1.0 / 128.0;
@@ -19,30 +26,18 @@ fn init_mixer() -> Mixer {
 		ChannelState {
 		    chan : CHANNELS[0],
 		    iterator : Arc::new(Mutex::new(NOAUDIO)),
-		    sample : Vec::new(),
-		    freq : 1.0,
-		    volume : 1.0,
 		},
 		ChannelState {
 		    chan : CHANNELS[1],
 		    iterator : Arc::new(Mutex::new(NOAUDIO)),
-		    sample : Vec::new(),
-		    freq : 1.0,
-		    volume : 1.0,
 		},
 		ChannelState {
 		    chan : CHANNELS[2],
 		    iterator : Arc::new(Mutex::new(NOAUDIO)),
-		    sample : Vec::new(),
-		    freq : 1.0,
-		    volume : 1.0,
 		},
 		ChannelState {
 		    chan : CHANNELS[3],
 		    iterator : Arc::new(Mutex::new(NOAUDIO)),
-		    sample : Vec::new(),
-		    freq : 1.0,
-		    volume : 1.0,
 		},
 	    ],
 	    sample_data : Vec::new(),
@@ -50,83 +45,43 @@ fn init_mixer() -> Mixer {
     }
 }
 
-pub const MAX_VOLUME : u16 = 0xffff;
+pub const MAX_VOLUME : f32 = 1.0;
 
 /// Audio channel
 #[derive(Clone, Copy)]
 pub struct Channel {
     id : u8,
-    left  : u16,
-    right : u16,
+    left  : f32,
+    right : f32,
 }
 
-pub const CHANNELS : [Channel;4] = [
+pub const CHANNELS : [Channel;5] = [
     Channel { id: 0,
 	      left : MAX_VOLUME,
-	      right : 0,
+	      right : 0.0,
     },
     Channel { id : 1,
-	      left : 0,
+	      left : 0.0,
 	      right : MAX_VOLUME,
     },
     Channel { id : 2,
-	      left : 0,
+	      left : 0.0,
 	      right : MAX_VOLUME,
     },
     Channel { id : 3,
 	      left : MAX_VOLUME,
-	      right : 0,
+	      right : 0.0,
+    },
+    Channel { id : 4,
+	      left : MAX_VOLUME,
+	      right : MAX_VOLUME,
     },
 ];
 
 
-pub struct SampleRange {
-    pub start : usize,
-    pub len : usize,
-}
-
-impl SampleRange {
-    fn new(start : usize, len : usize) -> SampleRange {
-	SampleRange {
-	    start, len,
-	}
-    }
-}
-
-pub enum Sample {
-    /// Loop specified sample
-    Loop(SampleRange),
-    /// Play specified sample once
-    Once(SampleRange),
-}
-
-/**
- * Audio queue operations allow AudioIterators to control output to their channel.
- *
- * "X ; WaitMillis(n); Y" means that settings X will be in effect for "n" milliseconds,
- * then any changes from Y take effect.
- */
-pub enum AudioQueueOp {
-    /// Process channel settings for specified nr of milliseconds
-    WaitMillis(usize),
-    /// Enqueue to the sample queue
-    SetSamples(Vec<Sample>),
-    /// Set audio frequency in Hz
-    SetFreq(f32),
-    /// Set audio volume as fraction
-    SetVolume(f32),
-}
-
-pub trait AudioIterator : Send + Sync {
-    fn next(&mut self) -> Vec<AudioQueueOp>;
-}
-
 struct ChannelState {
     chan : Channel,
     iterator : Arc<Mutex<dyn AudioIterator>>,
-    sample : Vec<Sample>,
-    freq : f32,
-    volume : f32,
 }
 
 /// Asynchronous audio processor
@@ -162,7 +117,7 @@ impl AudioCallback for &Mixer {
 
 	    for op in chan_iterator.next() {
 		match op {
-		    AudioQueueOp::SetVolume(v) => {amplitude = (v * 20000.0) as i16},
+		    AQOp::SetVolume(v) => {amplitude = (v * 20000.0) as i16},
 		    _ => {},
 		}
 	    }
@@ -234,8 +189,8 @@ fn mixer_set_channel(c : Channel, source : Arc<Mutex<dyn AudioIterator>>) {
 
 struct NoAudio {}
 impl AudioIterator for NoAudio {
-    fn next(&mut self) -> Vec<AudioQueueOp> {
-	vec![AudioQueueOp::WaitMillis(1000)]
+    fn next(&mut self) -> Vec<AQOp> {
+	vec![AQOp::WaitMillis(1000)]
     }
 }
 

@@ -204,6 +204,7 @@ impl<'a> PCMWriter for LinearFilter<'a> {
     fn write_pcm(&mut self, output : &mut [f32]) {
 	let output_requested = output.len();
 	let mut output_written = 0;
+	let mut conclude_with_silence = false;
 	while output_written < output_requested {
 	    let mut num_read = 0;
 	    loop {
@@ -217,7 +218,7 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 			self.state = None;
 			continue;
 		    }
-		    FlexPCMResult::Silence => { return; }
+		    FlexPCMResult::Silence => { conclude_with_silence = true; }
 		}
 	    };
 	    // println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
@@ -226,6 +227,9 @@ impl<'a> PCMWriter for LinearFilter<'a> {
 	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
 	    output_written += num_written;
+	    if conclude_with_silence {
+		return;
+	    }
 	    // println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
 		panic!("No progress in linear filter: buf {}/{}", self.samples_in_buf, self.buf.len());

@@ -1,6 +1,6 @@
 #[macro_use(lazy_static)]
 extern crate lazy_static;
-use std::{io, time::Duration, env, sync::{Arc, Mutex}};
+use std::{io, time::Duration, env, sync::{Arc, Mutex}, collections::VecDeque};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired};
 
@@ -33,8 +33,8 @@ fn print_strings(data : &datafiles::AmberStarFiles) {
 
 struct D {}
 impl audio::AudioIterator for D {
-    fn next(&mut self) -> Vec<audio::AudioQueueOp> {
-	return vec![audio::AudioQueueOp::SetVolume(0.05)];
+    fn next(&mut self, queue : &mut VecDeque<audio::AQOp>) {
+	queue.push_back(audio::AQOp::SetVolume(0.05));
     }
 }
 
