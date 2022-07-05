@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::Mutex;
+use log::trace;
 use std::ops::DerefMut;
 
 use super::ArcIt;
@@ -11,7 +10,6 @@ use super::dsp::writer::FlexPCMResult;
 use super::dsp::frequency_range::FreqRange;
 use super::iterator::AQOp;
 use super::iterator::AQSample;
-use super::iterator::AudioIterator;
 pub use super::samplesource::SampleRange;
 use super::samplesource::SampleSource;
 use super::samplesource::SampleWriter;
@@ -89,15 +87,15 @@ impl FlexPCMWriter for AudioQueue {
 	    let max_secs_to_write = f64::min(max_outbuf_write_sec, msecs_requested as f64 * INV_1000 - secs_written);
 	    let secs_to_write = f64::min(max_secs_to_write, self.remaining_secs);
 
-	    println!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
+	    trace!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
 		     self.freq, self.volume, self.remaining_secs, self.current_sample.remaining());
-	    println!("[AQ] available in out buffer: time:{max_secs_to_write} space:{max_outbuf_write}");
+	    trace!("[AQ] available in out buffer: time:{max_secs_to_write} space:{max_outbuf_write}");
 
 	    if self.remaining_secs > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
 		    if self.next_freq != self.freq {
-			println!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
+			trace!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
 		    	freqrange.append(outbuf_pos, self.next_freq);
 			self.freq = self.next_freq;
 		    }
@@ -125,7 +123,7 @@ impl FlexPCMWriter for AudioQueue {
 		    } else {
 			num_samples_to_write = num_samples_to_write_by_secs;
 		    }
-		    println!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
+		    trace!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
 		    self.current_sample.write(&mut outbuf[outbuf_pos..outbuf_pos+num_samples_to_write]);
 		    let vol = self.volume;
 		    if vol != 1.0 {
@@ -149,7 +147,7 @@ impl FlexPCMWriter for AudioQueue {
 		}
 		secs_written += secs_written_this_round;
 		self.remaining_secs -= secs_written_this_round;
-		println!{"[AQ] written: secs {secs_written}/{secs_requested}; bytes {outbuf_pos}/{outbuf_len}"}
+		trace!{"[AQ] written: secs {secs_written}/{secs_requested}; bytes {outbuf_pos}/{outbuf_len}"}
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
 		if self.queue.len() == 0 {
@@ -167,7 +165,7 @@ impl FlexPCMWriter for AudioQueue {
 		}
 		loop {
 		    let action = self.queue.pop_front();
-		    println!("[AQ]  ::update: {action:?}");
+		    trace!("[AQ]  ::update: {action:?}");
 		    match action {
 			Some(AQOp::WaitMillis(0))      => { },
 			Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;

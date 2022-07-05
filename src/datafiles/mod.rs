@@ -5,6 +5,8 @@ use std::cmp::min;
 use std::io::Read;
 use std::path::Path;
 
+use log::{trace, debug};
+
 use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
 
@@ -167,12 +169,12 @@ impl<'a> DataBuf<'a> {
 		header = self.data[read_pos];
 		read_pos += 1;
 		header_count = 0;
-		//println!("-- decompressed-mask= {:02x}", header);
+		trace!("-- decompressed-mask= {:02x}", header);
 	    }
 	    let next_is_compressed = (header & 0x80) == 0;
 	    header_count += 1;
 	    header <<= 1;
-	    //println!("-- readpos {} writepos {}", read_pos, write_pos);
+	    trace!("-- readpos {} writepos {}", read_pos, write_pos);
 	    if next_is_compressed {
 		let hi = self.data[read_pos];
 		let lo = self.data[read_pos + 1] as usize;
@@ -180,7 +182,7 @@ impl<'a> DataBuf<'a> {
 		let copy_length_requested = ((hi & 0xf) + 3) as usize;
 		let copy_length = min(copy_length_requested, size - write_pos);
 		let copy_offset : usize = (((hi & 0xf0) as usize) << 4) | lo;
-		//println!("-- hilo={:02x} {:02x}  -> offset={copy_offset}; len={copy_length}", hi, lo);
+		trace!("-- hilo={:02x} {:02x}  -> offset={copy_offset}; len={copy_length}", hi, lo);
 		let src_start = write_pos - copy_offset;
 		let src_end = src_start + copy_length;
 		for i in src_start..src_end { result[i + copy_offset] = result[i] }
@@ -342,7 +344,7 @@ impl DataFile {
 	    FileHeaderType::JH(k) => {
 		let mut buf = self.as_buf(4);
 		if DEBUG {
-		    println!("  JH({k}) -> decoding {}", buf.len());
+		    debug!("  JH({k}) -> decoding {}", buf.len());
 		}
 		buf.decode_jh(0, k);
 		self.filetype = buf.header_type(0);
@@ -354,7 +356,7 @@ impl DataFile {
 		let size = self.as_buf(self.header_offset).u32(4) & 0xffffff;
 		if DEBUG {
 		    let marker = self.as_buf(self.header_offset).u32(4) >> 24;
-		    println!("   LOB -> decompressing to {}, marker {}", size, marker);
+		    debug!("   LOB -> decompressing to {}, marker {}", size, marker);
 		}
 		return self.as_buf(self.header_offset).decompress_lob(12, size as usize);
 	    }
@@ -369,14 +371,14 @@ impl DataFile {
 			let decompressed_size = (buf.u32(4) as usize) & 0xffffff;
 			if DEBUG {
 			    let marker = (buf.u32(4) as usize) >> 24;
-			    println!("   AMPC.LOB -> decompressing to {}, marker {}", decompressed_size, marker);
+			    debug!("   AMPC.LOB -> decompressing to {}, marker {}", decompressed_size, marker);
 			}
 			return buf.decompress_lob(12, decompressed_size);
 		    }
 		    // Raw?
 		    _ => {
 			if DEBUG {
-			    println!("   AMPC.RAW");
+			    debug!("   AMPC.RAW");
 			}
 			return buf.as_vec(0);
 		    }
@@ -385,7 +387,7 @@ impl DataFile {
 	    // AMBR: uncompressed, no header
 	    FileHeaderType::AMBR  => {
 		if DEBUG {
-		    println!("   AMBR.RAW");
+		    debug!("   AMBR.RAW");
 		}
 		let buf = self._entry_buf(index);
 		return buf.as_vec(0);
@@ -395,7 +397,7 @@ impl DataFile {
 		// Not encoded in any way?
 		let mut vec = vec![0; self.data.len() - self.header_offset];
 		if DEBUG {
-		    println!("   RAW -> getting {}", vec.len());
+		    debug!("   RAW -> getting {}", vec.len());
 		}
 		vec.copy_from_slice(&self.data[self.header_offset..]);
 		return vec;

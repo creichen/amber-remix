@@ -1,6 +1,7 @@
 use core::time;
 use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
 use std::ops::DerefMut;
+use log::trace;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
 use self::{queue::AudioIteratorProcessor, samplesource::SampleSource};
@@ -320,13 +321,13 @@ fn run_mixer_thread(freq : Freq,
 		    arcit_updates : Arc<Mutex<Vec<ArcIt>>>,
 		    control_channel : Receiver<u8>)
 {
-    //let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
-    //let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq);
+    let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
+    let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq);
 
-    let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
-    let pipeline = LinearFilteringPipeline::new(iterator::simple(vec![AQOp::SetFreq(1000),
-								      AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0, 2))]),
-								      AQOp::WaitMillis(10000)]), sample_source, freq);
+    // let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
+    // let pipeline = LinearFilteringPipeline::new(iterator::simple(vec![AQOp::SetFreq(1000),
+    // 								      AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0, 2))]),
+    // 								      AQOp::WaitMillis(10000)]), sample_source, freq);
 
     let mut mt = MixerThread {
 	pipeline,
@@ -348,7 +349,7 @@ impl MixerThread {
 	    let samples_missing = if samples_needed < samples_available {0} else {samples_needed - samples_available};
 	    let samples_to_request = self.fill_heuristic(samples_available, samples_needed, samples_missing);
 
-	    println!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
+	    trace!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
 	    if samples_to_request > 0 {
 		self.fill_samples(samples_to_request);
 	    }

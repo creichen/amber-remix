@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use log::trace;
+
 /// Linearly interpolating remixer
 ///
 /// Not expected to produce particularly high-quality output
@@ -80,9 +82,9 @@ impl LinearFilter {
 	    }
 
             self.samples_in_buf += num_written;
+	    trace!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
 	}
 
-	// println!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
 
 	return write_result;
     }
@@ -95,7 +97,7 @@ impl LinearFilter {
 	    let out_remaining = out_len - out_pos;
 	    let in_remaining = self.samples_in_buf - in_pos;
 
-	    // println!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
+	    trace!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
 
 	    // How much sample information should we write now?
 	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
@@ -114,7 +116,7 @@ impl LinearFilter {
 	    let mut sample_state = match sample_state_last {
 		Some(s) => s,
 		None    => {
-		    // println!("!! Need new sample state");
+		    trace!("!! Need new sample state");
 		    SampleState::new(in_freq, self.out_freq)},
 	    };
 
@@ -129,14 +131,14 @@ impl LinearFilter {
 	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_in_per_out;
 	    let out_from_sample = (out_from_sample_f32 - sample_state.get_pos()) as usize;
 
-	    // println!("-- in@{in_pos} out@{out_pos}");
-	    // println!("   freqs={}", self.freqs);
-	    // println!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
-	    // println!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
-	    // println!("     -> expected max-for-outbuf={out_from_sample}   <- {out_from_sample_f32} - {}", sample_state.get_pos());
-	    // println!("        bufsize = {}", self.buf.len());
-	    // println!("        expected read: [{in_pos}..{}] (from max {})", in_pos + in_from_sample, in_pos + max_in_from_sample);
-	    // println!("        it: {sample_state}");
+	    trace!("-- in@{in_pos} out@{out_pos}");
+	    trace!("   freqs={}", self.freqs);
+	    trace!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
+	    trace!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
+	    trace!("     -> expected max-for-outbuf={out_from_sample}   <- {out_from_sample_f32} - {}", sample_state.get_pos());
+	    trace!("        bufsize = {}", self.buf.len());
+	    trace!("        expected read: [{in_pos}..{}] (from max {})", in_pos + in_from_sample, in_pos + max_in_from_sample);
+	    trace!("        it: {sample_state}");
 
 	    if out_from_sample == 0 {
 		break; // Need to get more samples first
@@ -144,51 +146,35 @@ impl LinearFilter {
 
 	    if out_remaining > out_from_sample {
 		// Sample will finish before / as we fill the output buffer
-		// println!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
-		// 	 out_pos, out_pos+out_from_sample,
-		// 	 in_pos, in_pos+in_from_sample);
+		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		       out_pos, out_pos+out_from_sample,
+		       in_pos, in_pos+in_from_sample);
 
 		sample_state.resample(&mut output[out_pos..out_pos+out_from_sample],
 				      // +1 so that we can interpolate to the next sample:
 				      &self.buf[in_pos..in_pos+in_from_sample + 1]);
-		//in_pos += in_from_sample;
 		out_pos += out_from_sample;
-		// if Some(in_from_sample) == max_in_samples {
-		//     println!("!! Reset sample state (1)");
-		//     self.state = None;
-		// } else {
-		//     self.state = Some(sample_state);
-		// }
 
 	    } else {
 		// We will fill the output buffer before the sample is done
-		// println!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
-		// 	 out_pos, out_pos+out_from_sample,
-		// 	 in_pos, in_pos+in_from_sample);
+		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		       out_pos, out_pos+out_from_sample,
+		       in_pos, in_pos+in_from_sample);
 		sample_state.resample(&mut output[out_pos..out_len],
 				      // +1 so that we can interpolate to the next sample:
 				      &self.buf[in_pos..in_pos+in_from_sample + 1]);
-		// println!("        -> it': {sample_state}");
+		trace!("        -> it': {sample_state}");
 
 		out_pos = out_len;
-
-		// move int offset in sapmler state back to main object so that we can flush more data
-		//println!("           resetting state? {in_progress} >= {in_from_sample}?");
-		// if Some(in_progress) == max_in_samples {
-		//     println!("!! Reset sample state (2)");
-		//     self.state = None;
-		// } else {
-		//     // Store sample_state for the next time we are called
-		//     self.state = Some(sample_state);
-		// }
 	    }
+	    // move int offset in sapmler state back to main object so that we can flush more data
 	    let in_progress = sample_state.sample_pos_int;
 	    sample_state.sample_pos_int = 0;
 	    in_pos += in_progress;
 
 	    self.state = Some(sample_state);
 	}
-	// println!("  cleanup: in_pos = {in_pos}");
+	trace!("  cleanup: in_pos = {in_pos}");
         self.freqs.shift(in_pos);
         let left_over_samples = in_pos..self.samples_in_buf;
         self.samples_in_buf = left_over_samples.len();
@@ -226,16 +212,16 @@ impl PCMWriter for LinearFilter {
 		    }
 		}
 	    };
-	    // println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
-	    // println!("[TOP]  out = {:?}", &output[..output_written]);
-	    // println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
+	    trace!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
+	    trace!("[TOP]  out = {:?}", &output[..output_written]);
+	    trace!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
 	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
 	    output_written += num_written;
 	    if conclude_with_silence {
 		return;
 	    }
-	    // println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
+	    trace!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
 		panic!("No progress in linear filter: buf {}/{}", self.samples_in_buf, self.buf.len());
 	    }
@@ -271,7 +257,7 @@ impl SampleState {
 
     fn resample(&mut self, outbuf : &mut [f32], inbuf : &[f32]) {
 	let sample_len = inbuf.len();
-	// println!("  ## resamp from {}", inbuf[0]);
+	trace!("  ## resamp from {}", inbuf[0]);
 	let mut pos = self.sample_pos_int;
 
 	// fractional position counter
@@ -290,7 +276,7 @@ impl SampleState {
 	    let sample_v_current_fragment = sample_v_current * (fpos_denom - fpos_nom);
 	    let sample_v_next_fragment = sample_v_next * fpos_nom;
 
-	    // println!("  ## interpol {}, {}", sample_v_current, sample_v_next);
+	    trace!("  ## interpol {}, {}", sample_v_current, sample_v_next);
 
 	    let sample_v = (sample_v_current_fragment + sample_v_next_fragment) / fpos_denom;
 

@@ -1,3 +1,4 @@
+use log::debug;
 use sdl2::{render::{Texture, TextureCreator}, pixels::PixelFormatEnum};
 
 use crate::datafiles::decode;
@@ -162,7 +163,7 @@ pub fn new(src : &[u8], width : u32, height : u32, bitplanes : u32) -> IndexedPi
 		    if (mask & 0x8000) == 0x8000 {
 			let out_pos = (y * width as u32 + x as u32) as usize;
 			if y < 2 {
-			    println!("  {pos}[{x},{y}] -> {out_pos} |= {bitplane_value}")
+			    debug!("  {pos}[{x},{y}] -> {out_pos} |= {bitplane_value}")
 			}
 			result.pixels[out_pos] |= bitplane_value;
 		    }
@@ -178,7 +179,7 @@ impl IndexedPixmap {
     pub fn with_palette(&self, palette : &Palette) -> Pixmap {
 	let mut data : Vec<u8> = vec![0; self.pixels.len() * 4];
 	let mut pos = 0;
-	println!("");
+	//println!("");
 	for pal_index in self.pixels.iter() {
 	    let col = palette.colors[(*pal_index & 0xf) as usize];
 	    /* Since we can't convert u32 to u8 vectors, we here force endianness to be little */
@@ -187,10 +188,10 @@ impl IndexedPixmap {
 	    data[pos + 1] = col.b;
 	    data[pos + 0] = col.a;
 	    pos += 4;
-	    print!("{:x}", *pal_index);
+	    //print!("{:x}", *pal_index);
 	    //print!("{:x}{:x}{:x}", col.r & 0xf, col.g & 0xf, col.b & 0xf);
 	    if pos % 320 == 0 {
-		println!("");
+		//println!("");
 	    }
 	}
 	return Pixmap {
