@@ -1,4 +1,5 @@
-use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, collections::VecDeque, rc::Rc, cell::RefCell};
+use core::time;
+use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
@@ -17,11 +18,8 @@ mod queue;
 mod iterator;
 mod samplesource;
 
-const NUM_CHANNELS : usize = 5;
-
-const AUDIO_BUF_DEFAULT_SIZE : usize = 16384;
+const AUDIO_BUF_DEFAULT_POLL_SIZE : usize = 8192; // # of bytes polled by the audio subsystem
 const AUDIO_BUF_MAX_SIZE : usize = 16384;
-pub const MAX_VOLUME : f32 = 1.0;
 
 // ================================================================================
 // Filter
@@ -67,7 +65,7 @@ struct OutputBuffer {
 impl OutputBuffer {
     fn new() -> OutputBuffer {
 	OutputBuffer {
-	    last_poll : AUDIO_BUF_MAX_SIZE,
+	    last_poll : AUDIO_BUF_DEFAULT_POLL_SIZE,
 	    write_pos : 0,
 	    read_pos : 0,
 	    data : [0.0; AUDIO_BUF_MAX_SIZE * 2],
@@ -78,19 +76,32 @@ impl OutputBuffer {
 	return self.data.len();
     }
 
+    pub fn remaining_capacity(&self) -> usize {
+	return self.capacity() - self.len();
+    }
+
     pub fn is_full(&self) -> bool {
 	return self.write_pos == OUTPUT_BUFFER_IS_FULL;
+    }
+
+    pub fn is_empty(&self) -> bool {
+	return self.len() == 0;
     }
 
     pub fn len(&self) -> usize {
 	let cap = self.capacity();
 	if self.is_full() {
-	    cap;
+	    return cap;
 	};
 	if self.write_pos < self.read_pos {
-	    self.write_pos + cap - self.read_pos;
+	    return self.write_pos + cap - self.read_pos;
 	}
 	return self.write_pos - self.read_pos;
+    }
+
+    /// How much are we expecting to read from here?
+    pub fn expected_read(&self) -> usize {
+	return self.last_poll;
     }
 
     fn can_read_to_end_of_buffer(&self) -> bool{
@@ -106,7 +117,7 @@ impl OutputBuffer {
 	let to_write = usize::min(avail, requested);
 
 	if to_write > 0 {
-	    dest.copy_from_slice(&self.data[self.read_pos..self.read_pos + avail]);
+	    dest[0..to_write].copy_from_slice(&self.data[self.read_pos..self.read_pos + to_write]);
 
 	    if self.is_full() {
 		self.write_pos = self.read_pos;
@@ -171,9 +182,6 @@ impl AudioCallback for Callback {
 	let buf = guard.deref_mut();
 	buf.last_poll = output.len();
 	let num_written = buf.write_to(output);
-	if num_written < output.len() {
-	    println!("[Audio] Buffer underrun: {num_written}/{}", output.len())
-	}
 	for x in output[num_written..].iter_mut() {
 	    *x = 0.0;
 	}
@@ -302,6 +310,7 @@ struct MixerThread {
     pipeline : LinearFilteringPipeline,
     control_channel : Receiver<u8>,
     buf : Arc<Mutex<OutputBuffer>>,
+    tmp_buf : OutputBuffer,
     arcit_updates : Arc<Mutex<Vec<ArcIt>>>,
 }
 
@@ -311,12 +320,19 @@ fn run_mixer_thread(freq : Freq,
 		    arcit_updates : Arc<Mutex<Vec<ArcIt>>>,
 		    control_channel : Receiver<u8>)
 {
-    let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
-    let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq);
+    //let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
+    //let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq);
+
+    let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
+    let pipeline = LinearFilteringPipeline::new(iterator::simple(vec![AQOp::SetFreq(1000),
+								      AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0, 2))]),
+								      AQOp::WaitMillis(10000)]), sample_source, freq);
+
     let mut mt = MixerThread {
 	pipeline,
 	control_channel,
 	buf,
+	tmp_buf : OutputBuffer::new(),
 	arcit_updates,
     };
     mt.run();
@@ -324,148 +340,89 @@ fn run_mixer_thread(freq : Freq,
 
 impl MixerThread {
     fn run(&mut self) {
-	loop{}
+	loop{
+	    self.check_messages();
+
+	    let samples_needed = self.check_samples_needed();
+	    let samples_available = self.check_samples_available();
+	    let samples_missing = if samples_needed < samples_available {0} else {samples_needed - samples_available};
+	    let samples_to_request = self.fill_heuristic(samples_available, samples_needed, samples_missing);
+
+	    println!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
+	    if samples_to_request > 0 {
+		self.fill_samples(samples_to_request);
+	    }
+
+	    self.fill_buffer();
+
+	    // Done for now, wait
+	    thread::sleep(time::Duration::from_millis(10));
+	}
+    }
+
+    fn check_messages(&mut self) {
+    }
+
+    fn check_samples_needed(&mut self) -> usize {
+	let guard = self.buf.lock().unwrap();
+	return guard.expected_read();
+    }
+
+    fn check_samples_available(&mut self) -> usize {
+	let sdlbuf_available = {let guard = self.buf.lock().unwrap();
+				guard.len() };
+	return sdlbuf_available + self.tmp_buf.len();
+    }
+
+    // Decide how much to add
+    fn fill_heuristic(&self, currently_available : usize, average_read : usize, current_needed : usize) -> usize {
+	const PROVISION_FACTOR : usize = 1;
+
+	let desired = average_read * (PROVISION_FACTOR + 1);
+
+	if current_needed == 0 && currently_available >= average_read * PROVISION_FACTOR {
+	    // twice as many as needed: we're good
+	    return 0;
+	}
+	return (desired - currently_available + 1) & !1; // always even
+    }
+
+    // Run the pipeline
+    fn fill_samples(&mut self, samples_to_pull : usize) {
+	const FILL_BUFFER_SIZE : usize = 64;
+
+	let mut inner_buf : [f32; FILL_BUFFER_SIZE] = [0.0; FILL_BUFFER_SIZE];
+
+	let mut samples_transferred = 0;
+	while samples_transferred < samples_to_pull {
+	    if samples_transferred > 0 {
+		inner_buf.fill(0.0);
+	    }
+	    self.pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
+	    samples_transferred += FILL_BUFFER_SIZE;
+	    self.tmp_buf.read_from(&inner_buf);
+	}
+    }
+
+    // Write to the output buffer
+    fn fill_buffer(&mut self) {
+	const FILL_BUFFER_SIZE : usize = 64;
+
+	let mut inner_buf : [f32; FILL_BUFFER_SIZE] = [0.0; FILL_BUFFER_SIZE];
+
+	let mut guard = self.buf.lock().unwrap();
+	let outbuf = guard.deref_mut();
+
+	let mut samples_transferred = 0;
+	while !outbuf.is_full() && !self.tmp_buf.is_empty() {
+	    if samples_transferred > 0 {
+		inner_buf.fill(0.0);
+	    }
+	    let max_transfer = usize::min(FILL_BUFFER_SIZE,
+					  outbuf.remaining_capacity());
+	    let read_samples = self.tmp_buf.write_to(&mut inner_buf[0..max_transfer]);
+	    samples_transferred += outbuf.read_from(&inner_buf[0..read_samples]);
+	}
     }
 }
-
-
-// ================================================================================
-// Mixer
-
-
-
-// struct ChannelState {
-//     chan : Channel,
-//     iterator_new : bool,
-//     iterator : ArcIt,
-// }
-
-// impl ChannelState {
-//     fn init(&mut self, sample_source : Rc<dyn SampleSource>, freq : Freq) {
-// 	let it = self.iterator.clone();
-// 	self.pipeline.borrow_mut() = Some(LinearFilteringPipeline::new(it, sample_source, freq));
-//     }
-
-//     fn set_iterator(&mut self, it : ArcIt) {
-// 	self.iterator = it.clone();
-// 	match self.pipeline.borrow() {
-// 	    None => {},
-// 	    Some( p ) => p.set_iterator(it.clone()),
-// 	}
-//     }
-// }
-
-
-// /// Asynchronous audio processor
-// /// Provides an audio callback in the main thread but defers all updates to side threads.
-// struct AudioProcessor {
-//     audio_spec : Option<AudioSpec>,
-//     channels : [ChannelState; NUM_CHANNELS],
-//     pipelines : [Box<Option<LinearFilteringPipeline>>; NUM_CHANNELS],
-//     sample_data : Vec<i8>,
-// }
-
-// pub struct Mixer {
-//     processor : Mutex<AudioProcessor>,
-// }
-
-// impl Mixer {
-// }
-
-// #[allow(unused)]
-// impl AudioCallback for &Mixer {
-//     type Channel = f32;
-
-//     fn callback(&mut self, output: &mut [Self::Channel]) {
-// 	let mut amplitude = 0;
-// 	let freq = mixer_audio_spec(self).freq as u32;
-
-// 	{
-// 	    let mut guard = MIXER.processor.lock().unwrap();
-// 	    let proc = guard.deref_mut();
-// 	    let chan = &proc.channels[0];
-
-// 	    let mut guard = chan.iterator.lock().unwrap();
-// 	    let chan_iterator = guard.deref_mut();
-
-// 	    // for op in chan_iterator.next() {
-// 	    // 	match op {
-// 	    // 	    AQOp::SetVolume(v) => {amplitude = (v * 20000.0) as i16},
-// 	    // 	    _ => {},
-// 	    // 	}
-// 	    // }
-// 	}
-//         for x in output.iter_mut() {
-// 	    *x = 0.0;
-// 	}
-// 	mixer_copy_sample(self, output, (1.0, 1.0), 0x744, 0x2fc2);
-// 	// Clamp
-//         for x in output.iter_mut() {
-// 	    let v = *x;
-// 	    *x = f32::min(1.0, f32::max(-1.0, v));
-// 	}
-//     }
-// }
-
-// fn mixer_audio_spec(mixer : &&Mixer) -> AudioSpec {
-//     let mut guard = mixer.processor.lock().unwrap();
-//     let proc = guard.deref_mut();
-//     return proc.audio_spec.unwrap()
-// }
-
-// fn mixer_copy_sample(mixer : &&Mixer, outbuf : &mut [f32], volume : (f32, f32), start : usize, end : usize) {
-//     let mut guard = mixer.processor.lock().unwrap();
-//     let proc = guard.deref_mut();
-//     let sample_data = &proc.sample_data;
-//     let sample = &sample_data[start..end];
-//     let sample_length = end - start;
-//     let (vol_l, vol_r) = volume;
-
-//     let mut sample_i = 0;
-
-//     for out_i in (0..outbuf.len()).step_by(2) {
-// 	let sample_v = sample[sample_i & sample_length] as f32 * ONE_128TH;
-// 	outbuf[out_i] = sample_v * vol_l;
-// 	outbuf[out_i + 1] = sample_v * vol_r;
-// 	sample_i += 1;
-//     }
-// }
-
-
-// impl Mixer {
-//     pub fn init(&'static self, spec : AudioSpec) -> &Mixer {
-// 	let mut guard = self.processor.lock().unwrap();
-// 	let proc = guard.deref_mut();
-// 	let audio_spec = &mut proc.audio_spec;
-// 	*audio_spec = Some(spec);
-// 	return self;
-//     }
-
-
-//     pub fn set_channel(&self, c : Channel, source : ArcIt) {
-// 	mixer_set_channel(c, source);
-//     }
-// }
-
-
-// fn mixer_set_channel(c : Channel, source : ArcIt) {
-//     let it = source.clone();
-//     let _ = thread::spawn(move || {
-// 	let mut guard = MIXER.processor.lock().unwrap();
-// 	let proc = guard.deref_mut();
-// 	let channels = &mut proc.channels;
-// 	channels[c.id as usize].iterator = Some(it);
-// 	channels[c.id as usize].iterator_new = true;
-//     });
-// }
-
-
-
-// pub fn new(sample_data : Vec<i8>) -> &'static Mixer {
-//     // return Mixer {
-//     let mut guard = MIXER.processor.lock().unwrap();
-//     let proc = guard.deref_mut();
-//     proc.sample_data = sample_data;
-//     return &MIXER;
-// }
 

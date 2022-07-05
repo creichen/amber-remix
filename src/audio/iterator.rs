@@ -45,7 +45,7 @@ pub fn simple(v : Vec<AQOp>) -> ArcIt {
 }
 
 pub fn silent() -> ArcIt {
-    return simple(vec![AQOp::WaitMillis(1000)]);
+    return simple(vec![AQOp::SetFreq(1000), AQOp::WaitMillis(1000)]);
 }
 
 /// MockAudioIterator For testing
