@@ -2,7 +2,7 @@ use std::{sync::{Arc, Mutex}, thread, collections::VecDeque, rc::Rc, cell::RefCe
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback};
 
-use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, frequency_range::Freq}, queue::AudioQueue, samplesource::SimpleSampleSource};
+use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, frequency_range::Freq, writer::FlexPCMWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
 pub use self::iterator::AudioIterator;
 pub use self::iterator::MockAudioIterator;
 pub use self::iterator::AQOp;
@@ -83,17 +83,17 @@ pub const CHANNELS : [Channel;5] = [
 
 
 struct LinearFilteringPipeline<'a> {
-    aqueue : RefCell<AudioQueue<'a>>,
-    linear_filter : RefCell<LinearFilter<'a>>,
-    stereo_mapper : RefCell<StereoMapper<'a>>,
+    aqueue : Rc<RefCell<AudioQueue<'a>>>,
+    linear_filter : Rc<RefCell<LinearFilter<'a>>>,
+    stereo_mapper : Rc<RefCell<StereoMapper<'a>>>,
 }
 
 impl<'a> LinearFilteringPipeline<'a> {
     fn new(sample_source : &'a SimpleSampleSource, freq : Freq) -> LinearFilteringPipeline<'a> {
 	let mut mai = MockAudioIterator::new(vec![]);
-	let aqueue = RefCell::new(AudioQueue::new(&mut mai, sample_source));
-	let linear_filter = RefCell::new(LinearFilter::new(40000, freq, aqueue));
-	let stereo_mapper = RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter));
+	let aqueue = Rc::new(RefCell::new(&mut AudioQueue::new(&mut mai, sample_source)));
+	let linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, freq, aqueue)));
+	let stereo_mapper = Rc::new(RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter)));
 	return LinearFilteringPipeline {
 	    // aqueue : &aqueue,
 	    // linear_filter : &linear_filter,

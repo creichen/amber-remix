@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt::Display;
+use std::rc::Rc;
 
 /// Linearly interpolating remixer
 ///
@@ -18,12 +20,12 @@ pub struct LinearFilter<'a> {
     out_freq : Freq,
     buf : Vec<f32>,
     samples_in_buf : usize, // Valid data left in buffer
-    source : &'a mut dyn FlexPCMWriter,
+    source : Rc<RefCell<dyn FlexPCMWriter>>,
     freqs : FreqRange<'a>,
 }
 
 impl<'a> LinearFilter<'a> {
-    pub fn new(max_in_freq : Freq, out_freq : Freq, source : &'a mut dyn FlexPCMWriter) -> LinearFilter<'a> {
+    pub fn new(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter<'a> {
 	return LinearFilter {
 	    state : None,
 	    max_in_freq,
@@ -64,8 +66,8 @@ impl<'a> LinearFilter<'a> {
 
         let write_result = {
 	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
-	    self.source.write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset,
-				       usize::max(1, missing_in_millis))
+	    self.source.borrow_mut().write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset,
+						    usize::max(1, missing_in_millis))
 	};
 
 	if let FlexPCMResult::Wrote(num_written) = write_result {
@@ -527,7 +529,7 @@ fn test_linear_filter_resampling_incremental() {
 	],
 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
     };
-    let mut lf = LinearFilter::new(20000, 10000, &mut flexwriter);
+    let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[0..1]);
     assert_eq!( [1.0,
 		 0.0, 0.0, 0.0,
@@ -607,7 +609,7 @@ fn test_linear_filter_resampling() {
 	],
 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
     };
-    let mut lf = LinearFilter::new(20000, 10000, &mut flexwriter);
+    let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[..]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -631,7 +633,7 @@ fn test_linear_filter_limit_writes() {
 	    ],
 	    f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
 	};
-	let mut lf = LinearFilter::new(20000, 10000, &mut flexwriter);
+	let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
 	lf.write_pcm(&mut outbuf[..]);
 	assert_eq!( [1.0, 2.0,
 		     3.0, 5.0,
@@ -654,7 +656,7 @@ fn test_linear_filter_tiny_buffer() {
 	],
 	f : vec![(0, 40), (2, 80), (6, 20), (9, 60)],
     };
-    let mut lf = LinearFilter::new(80, 40, &mut flexwriter);
+    let mut lf = LinearFilter::new(80, 40, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[..]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,

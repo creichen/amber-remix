@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use super::writer::PCMWriter;
 
 const BUF_SIZE : usize = 32;
@@ -6,11 +8,11 @@ pub struct StereoMapper<'a> {
     left : f32,
     right : f32,
     buf : [f32; BUF_SIZE],
-    source : &'a mut dyn PCMWriter,
+    source : Rc<RefCell<&'a mut dyn PCMWriter>>,
 }
 
 impl<'a> StereoMapper<'a> {
-    pub fn new(left : f32, right : f32, source : &'a mut dyn PCMWriter) -> StereoMapper<'a> {
+    pub fn new(left : f32, right : f32, source : Rc<RefCell<&'a mut dyn PCMWriter>>) -> StereoMapper<'a> {
 	return StereoMapper {
 	    left,
 	    right,
@@ -35,7 +37,7 @@ impl<'a> StereoMapper<'a> {
 	while mono_samples_processed < mono_samples_requested {
 	    let mono_samples_remaining = mono_samples_requested - mono_samples_processed;
 	    let len_next_chunk = usize::min(mono_samples_remaining, BUF_SIZE);
-	    self.source.write_pcm(&mut buf[0..len_next_chunk]);
+	    self.source.borrow_mut().write_pcm(&mut buf[0..len_next_chunk]);
 
 	    let out_end = out_pos + len_next_chunk * 2;
 	    let mut buf_pos = 0;
