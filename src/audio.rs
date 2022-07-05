@@ -1,17 +1,19 @@
-use core::time;
+use core::{time, borrow};
 use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
+//use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell, borrow::BorrowMut};
 use std::ops::DerefMut;
-use log::trace;
+use log::{trace, debug, log_enabled, Level, warn, info};
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
-use self::{queue::AudioIteratorProcessor, samplesource::SampleSource};
+use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::vtracker::{TrackerSensor, Tracker}};
 #[allow(unused)]
-use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, frequency_range::Freq, writer::FlexPCMWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
+use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::FlexPCMWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
 pub use self::iterator::AudioIterator;
 pub use self::iterator::MockAudioIterator;
 pub use self::iterator::AQOp;
 pub use self::iterator::AQSample;
 pub use self::queue::SampleRange;
+pub use self::dsp::frequency_range::Freq;
 pub use self::iterator::ArcIt;
 
 mod dsp;
@@ -33,10 +35,11 @@ struct LinearFilteringPipeline {
 }
 
 impl LinearFilteringPipeline {
-    fn new(it : ArcIt, sample_source : Rc<dyn SampleSource>, output_freq : Freq) -> LinearFilteringPipeline {
-	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source)));
-	let linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, output_freq, aqueue.clone())));
-	let stereo_mapper = Rc::new(RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter.clone())));
+    fn new(it : ArcIt, sample_source : Rc<dyn SampleSource>, output_freq : Freq,
+	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> LinearFilteringPipeline {
+	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue)));
+	let linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, output_freq, aqueue.clone(), sen_linear)));
+	let stereo_mapper = Rc::new(RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter.clone(), sen_stereo)));
 	return LinearFilteringPipeline {
 	    it_proc : aqueue.clone(),
 	    aqueue,
@@ -173,6 +176,7 @@ impl OutputBuffer {
 struct Callback {
     spec : AudioSpec,
     shared_buf : Arc<Mutex<OutputBuffer>>,
+    tracker : TrackerSensor,
 }
 
 impl AudioCallback for Callback {
@@ -183,16 +187,47 @@ impl AudioCallback for Callback {
 	let buf = guard.deref_mut();
 	buf.last_poll = output.len();
 	let num_written = buf.write_to(output);
+
+	if num_written < output.len() {
+	    warn!("Buffer underrun {num_written}/{}", output.len());
+	}
 	for x in output[num_written..].iter_mut() {
 	    *x = 0.0;
 	}
+	let mut debug_total = 0.0;
+	for x in output[0..num_written].iter() {
+	    debug_total += f32::abs(*x);
+	}
+	self.tracker.add_many(debug_total, output.len());
+	// if log_enabled!(Level::Debug) {
+	//     let mut debug_total : u64 = 0;
+	//     print!("[AuadioCallback--Final] output [");
+	//     let mut pos = 0;
+	//     for x in output[0..num_written].iter() {
+	// 	debug_total += f32::abs(x * 5.0) as u64;
+	// 	pos += 1;
+	// 	if (pos & 0x1f) == 0 || pos == num_written {
+	// 	    let v = debug_total;
+	// 	    let c = if v < 1 { " " }
+	// 	    else if v < 10 { "." }
+	// 	    else if v < 30 { "_" }
+	// 	    else if v < 60 { "=" }
+	// 	    else if v < 100 { "*" }
+	// 	    else { "#" };
+	// 	    print!("{c}");
+	// 	    debug_total = 0;
+	// 	}
+	//     }
+	//     println!("]");
+	// }
+
     }
 }
 
 impl Callback {
-    fn new(spec : AudioSpec, shared_buf : Arc<Mutex<OutputBuffer>>) -> Callback {
+    fn new(spec : AudioSpec, shared_buf : Arc<Mutex<OutputBuffer>>, tracker : TrackerSensor) -> Callback {
 	return Callback {
-	    spec, shared_buf,
+	    spec, shared_buf, tracker,
 	}
     }
 }
@@ -204,17 +239,18 @@ pub struct AudioCore {
     spec : AudioSpec,
     shared_buf : Arc<Mutex<OutputBuffer>>,
     device : Option<sdl2::audio::AudioDevice<Callback>>,
+    callback_tracker_sensor : TrackerSensor,
 }
 
 impl AudioCore {
     fn init(&mut self, spec : AudioSpec) -> Callback {
 	self.spec = spec;
-	return Callback::new(self.spec, self.shared_buf.clone());
+	return Callback::new(self.spec, self.shared_buf.clone(), self.callback_tracker_sensor.clone());
     }
 
     pub fn start_mixer<'a>(&mut self, sample_data : &'a [i8]) -> Mixer {
 	let freq = self.spec.freq as Freq;
-	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone());
+	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone(), self.callback_tracker_sensor.clone());
 	self.device.as_ref().unwrap().resume();
 	return mixer;
     }
@@ -254,6 +290,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	},
 	shared_buf : Arc::new(Mutex::new(OutputBuffer::new())),
 	device : None,
+	callback_tracker_sensor : TrackerSensor::new(),
     }));
     let core_clone = core.clone();
 
@@ -277,30 +314,30 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 // ================================================================================
 // Mixer
 
+#[derive(Clone)]
+enum MixerOp {
+    ShutDown,
+    SetIterator(ArcIt),
+}
+
 pub struct Mixer {
-    iterator_updates : Arc<Mutex<Vec<ArcIt>>>,
-    control_channel : Sender<u8>,
+    control_channel : Sender<MixerOp>,
 }
 
 impl Mixer {
-    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<OutputBuffer>>) -> Mixer {
-	let iterator_updates = Arc::new(Mutex::new(Vec::new()));
-	let iterator_clone = iterator_updates.clone();
+    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<OutputBuffer>>, callback_vtsensor : TrackerSensor) -> Mixer {
 	let (tx, rx) = mpsc::channel();
 
 	let _ = thread::spawn(move || {
-	    run_mixer_thread(freq, samples, out_buf.clone(), iterator_clone, rx);
+	    run_mixer_thread(freq, samples, out_buf.clone(), rx, callback_vtsensor);
 	});
 
 	return Mixer {
-	    iterator_updates : iterator_updates.clone(),
 	    control_channel : tx,
 	}
     }
     pub fn set_iterator(&mut self, it : ArcIt) {
-	let mut guard = self.iterator_updates.lock().unwrap();
-	let v = guard.deref_mut();
-	v.push(it.clone());
+	self.control_channel.send(MixerOp::SetIterator(it)).unwrap();
     }
 }
 
@@ -309,20 +346,26 @@ impl Mixer {
 
 struct MixerThread {
     pipeline : LinearFilteringPipeline,
-    control_channel : Receiver<u8>,
+    control_channel : Receiver<MixerOp>,
     buf : Arc<Mutex<OutputBuffer>>,
     tmp_buf : OutputBuffer,
-    arcit_updates : Arc<Mutex<Vec<ArcIt>>>,
+    trackers : Vec<RefCell<Tracker>>,
 }
 
 fn run_mixer_thread(freq : Freq,
 		    samples : Arc<Vec<i8>>,
 		    buf : Arc<Mutex<OutputBuffer>>,
-		    arcit_updates : Arc<Mutex<Vec<ArcIt>>>,
-		    control_channel : Receiver<u8>)
+		    control_channel : Receiver<MixerOp>,
+		    callback_vtsensor : TrackerSensor)
 {
     let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
-    let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq);
+    let tracker_stereo = Tracker::new("Stereo".to_string());
+    let tracker_aqueue = Tracker::new("AudioQueue".to_string());
+    let tracker_linear = Tracker::new("LinearFilter".to_string());
+    let mut tracker_callback = Tracker::new("Callback".to_string());
+    tracker_callback.replace_tracker(callback_vtsensor);
+    let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq,
+						tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
 
     // let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
     // let pipeline = LinearFilteringPipeline::new(iterator::simple(vec![AQOp::SetFreq(1000),
@@ -334,7 +377,7 @@ fn run_mixer_thread(freq : Freq,
 	control_channel,
 	buf,
 	tmp_buf : OutputBuffer::new(),
-	arcit_updates,
+	trackers : vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo), RefCell::new(tracker_callback)],
     };
     mt.run();
 }
@@ -342,14 +385,24 @@ fn run_mixer_thread(freq : Freq,
 impl MixerThread {
     fn run(&mut self) {
 	loop{
-	    self.check_messages();
+	    if self.check_messages() {
+		break;
+	    }
 
 	    let samples_needed = self.check_samples_needed();
 	    let samples_available = self.check_samples_available();
 	    let samples_missing = if samples_needed < samples_available {0} else {samples_needed - samples_available};
 	    let samples_to_request = self.fill_heuristic(samples_available, samples_needed, samples_missing);
 
-	    trace!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
+	    debug!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
+	    if log_enabled!(Level::Info) {
+		for tracker in self.trackers.iter() {
+		    info!("Volume {}", tracker.borrow());
+		}
+	    }
+	    for tracker in self.trackers.iter() {
+		tracker.borrow_mut().shift();
+	    }
 	    if samples_to_request > 0 {
 		self.fill_samples(samples_to_request);
 	    }
@@ -357,11 +410,18 @@ impl MixerThread {
 	    self.fill_buffer();
 
 	    // Done for now, wait
-	    thread::sleep(time::Duration::from_millis(10));
+	    thread::sleep(time::Duration::from_millis(30));
 	}
     }
 
-    fn check_messages(&mut self) {
+    fn check_messages(&mut self) -> bool {
+	for op in self.control_channel.try_iter() {
+	    match op {
+		MixerOp::ShutDown        => { return true },
+		MixerOp::SetIterator(it) => { self.pipeline.set_iterator(it) },
+	    }
+	};
+	return false;
     }
 
     fn check_samples_needed(&mut self) -> usize {
@@ -427,3 +487,11 @@ impl MixerThread {
     }
 }
 
+// ================================================================================
+// Test / demo functionality
+
+pub fn make_note(f : Freq, aqop : AQOp, millis : usize) -> ArcIt{
+    let mut ops = vec![AQOp::SetFreq(f), aqop, AQOp::WaitMillis(millis)];
+
+    return iterator::simple(ops);
+}

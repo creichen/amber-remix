@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, sync::{Arc, Mutex}};
 
+use crate::datafiles::music::BasicSample;
+
 use super::{dsp::frequency_range::Freq, SampleRange};
 
 
@@ -27,6 +29,16 @@ pub enum AQSample {
     Loop(SampleRange),
     /// Play specified sample once
     Once(SampleRange),
+}
+
+impl From<BasicSample> for AQOp {
+    fn from(bs: BasicSample) -> Self {
+	let att = AQSample::Once(bs.attack);
+	match bs.looping {
+	    None    => AQOp::SetSamples(vec![att]),
+	    Some(l) => AQOp::SetSamples(vec![att, AQSample::Loop(l)]),
+	}
+    }
 }
 
 pub type ArcIt = Arc<Mutex<dyn AudioIterator>>;

@@ -2,6 +2,8 @@
 //extern crate lazy_static;
 use std::{io, time::Duration, env, sync::{Arc, Mutex}, collections::VecDeque};
 
+use audio::{Mixer, AQOp};
+use datafiles::music;
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired};
 
 mod datafiles;
@@ -31,10 +33,37 @@ fn print_strings(data : &datafiles::AmberStarFiles) {
 
 }
 
-struct D {}
-impl audio::AudioIterator for D {
-    fn next(&mut self, queue : &mut VecDeque<audio::AQOp>) {
-	queue.push_back(audio::AQOp::SetVolume(0.05));
+struct InstrSelect<'a> {
+    data : &'a datafiles::AmberStarFiles,
+    mixer : &'a mut Mixer,
+    song_nr   : usize,
+    sample_nr : usize,
+}
+
+impl<'a> InstrSelect<'a> {
+    fn move_sample(&mut self, dir : isize) {
+	self.sample_nr = (((self.sample_nr + self.num_samples()) as isize + dir) as usize) % self.num_samples();
+	self.print_config();
+    }
+    fn move_song(&mut self, dir : isize) {
+	self.song_nr = (((self.song_nr + self.num_songs()) as isize + dir) as usize) % self.num_songs();
+	if self.sample_nr > self.num_samples() {
+	    self.sample_nr = self.num_samples() - 1;
+	}
+	self.print_config();
+    }
+    fn num_samples(&self) -> usize { self.data.songs[self.song_nr].basic_samples.len() }
+    fn num_songs(&self)   -> usize { self.data.songs.len() }
+    fn play(&mut self, note : usize) {
+	let sampleinfo = self.data.songs[self.song_nr].basic_samples[self.sample_nr];
+	let sample = AQOp::from(sampleinfo);
+	let period = music::PERIODS[note];
+	let freq = music::period_to_freq(period);
+	println!(" .. playing {sampleinfo} at freq {freq}");
+	self.mixer.set_iterator(audio::make_note(freq, sample, 1000));
+    }
+    fn print_config(&self) {
+	println!("Switched to: Song {}/{}, instrument {}/{}", self.song_nr, self.num_songs(), self.sample_nr, self.num_samples());
     }
 }
 
@@ -50,25 +79,8 @@ fn show_images(data : &datafiles::AmberStarFiles) {
     let mut canvas = window.into_canvas().build().unwrap();
 
     let mut audiocore = audio::init(&sdl_context);
-    audiocore.start_mixer(&data.sample_data.data[..]);
-
-    // let audio = sdl_context.audio().unwrap();
-
-    // let requested_audio = AudioSpecDesired {
-    // 	freq: Some(44100),
-    // 	channels: Some(2),
-    // 	samples: None
-    // };
-
-    // let mixer = audio::new(data.sample_data.data.clone());
-
-    // let device = audio.open_playback(None, &requested_audio, |spec| {
-    // 	return mixer.init(spec);
-    // 	//return mixer;
-    // }).unwrap();
-    // device.resume();
-    // let d = Arc::new(Mutex::new(D{}));
-    // mixer.set_channel(audio::CHANNELS[0], d);
+    let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
+    let mut instr = InstrSelect { data, mixer:&mut mixer, song_nr : 0, sample_nr : 0 };
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -96,7 +108,21 @@ fn show_images(data : &datafiles::AmberStarFiles) {
             match event {
                 Event::Quit {..} |
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running
+		    break 'running
+                },
+                Event::KeyDown { keycode : Some(kc), .. } => {
+		    match kc {
+			Keycode::Num1 => instr.move_song(-1),
+			Keycode::Num2 => instr.move_song(1),
+			Keycode::Num3 => instr.move_sample(-1),
+			Keycode::Num4 => instr.move_sample(1),
+			Keycode::A => instr.play(12),
+			Keycode::W => instr.play(13),
+			Keycode::S => instr.play(14),
+			Keycode::E => instr.play(15),
+			Keycode::D => instr.play(16),
+			    _ => { println!("<ESC>: quit; 1/2 : fwd/backwd song, 3/4: fwd/backwd instrument, asd... -> play note")},
+		    }
                 },
                 _ => {}
             }
@@ -110,6 +136,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 
 // ================================================================================
 fn main() -> io::Result<()> {
+    env_logger::init();
     let data = datafiles::AmberStarFiles::load("data");
 
     let args : Vec<String> = env::args().collect();

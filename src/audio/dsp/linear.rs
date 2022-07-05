@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use log::debug;
 use log::trace;
 
 /// Linearly interpolating remixer
@@ -13,6 +14,7 @@ use crate::audio::dsp::writer::FlexPCMWriter;
 use crate::audio::dsp::writer::FlexPCMResult;
 use super::frequency_range::Freq;
 use super::frequency_range::FreqRange;
+use super::vtracker::TrackerSensor;
 
 const BUFFER_SIZE_MILLIS : usize = 100;
 
@@ -24,10 +26,15 @@ pub struct LinearFilter {
     samples_in_buf : usize, // Valid data left in buffer
     source : Rc<RefCell<dyn FlexPCMWriter>>,
     freqs : FreqRange,
+    tracker : TrackerSensor,
 }
 
 impl LinearFilter {
-    pub fn new(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter {
+    fn nw(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter {
+	return LinearFilter::new(max_in_freq, out_freq, source, TrackerSensor::new());
+    }
+
+    pub fn new(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>, tracker : TrackerSensor) -> LinearFilter {
 	return LinearFilter {
 	    state : None,
 	    max_in_freq,
@@ -36,6 +43,7 @@ impl LinearFilter {
 	    samples_in_buf : 0,
 	    source,
 	    freqs : FreqRange::new(),
+	    tracker,
 	};
     }
 
@@ -144,6 +152,7 @@ impl LinearFilter {
 		break; // Need to get more samples first
 	    }
 
+	    let old_out_pos = out_pos;
 	    if out_remaining > out_from_sample {
 		// Sample will finish before / as we fill the output buffer
 		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
@@ -167,6 +176,14 @@ impl LinearFilter {
 
 		out_pos = out_len;
 	    }
+
+	    // tracker
+	    let mut tracker_acc = 0.0;
+	    for n in old_out_pos..out_pos {
+		tracker_acc += f32::abs(output[n]);
+	    }
+	    self.tracker.add_many(tracker_acc, out_pos - old_out_pos);
+
 	    // move int offset in sapmler state back to main object so that we can flush more data
 	    let in_progress = sample_state.sample_pos_int;
 	    sample_state.sample_pos_int = 0;
@@ -203,6 +220,7 @@ impl PCMWriter for LinearFilter {
 		    },
 		    FlexPCMResult::Flush => {
 			self.samples_in_buf = 0;
+			self.freqs = FreqRange::new();
 			self.state = None;
 			continue;
 		    }
@@ -212,16 +230,16 @@ impl PCMWriter for LinearFilter {
 		    }
 		}
 	    };
-	    trace!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
-	    trace!("[TOP]  out = {:?}", &output[..output_written]);
-	    trace!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
+	    // trace!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
+	    // trace!("[TOP]  out = {:?}", &output[..output_written]);
+	    debug!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
 	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
 	    output_written += num_written;
 	    if conclude_with_silence {
 		return;
 	    }
-	    trace!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
+	    debug!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
 		panic!("No progress in linear filter: buf {}/{}", self.samples_in_buf, self.buf.len());
 	    }
@@ -515,7 +533,7 @@ fn test_linear_filter_resampling_incremental() {
 	],
 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
     };
-    let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[0..1]);
     assert_eq!( [1.0,
 		 0.0, 0.0, 0.0,
@@ -595,7 +613,7 @@ fn test_linear_filter_resampling() {
 	],
 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
     };
-    let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[..]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,
@@ -619,7 +637,7 @@ fn test_linear_filter_limit_writes() {
 	    ],
 	    f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
 	};
-	let mut lf = LinearFilter::new(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
 	lf.write_pcm(&mut outbuf[..]);
 	assert_eq!( [1.0, 2.0,
 		     3.0, 5.0,
@@ -642,7 +660,7 @@ fn test_linear_filter_tiny_buffer() {
 	],
 	f : vec![(0, 40), (2, 80), (6, 20), (9, 60)],
     };
-    let mut lf = LinearFilter::new(80, 40, Rc::new(RefCell::new(flexwriter)));
+    let mut lf = LinearFilter::nw(80, 40, Rc::new(RefCell::new(flexwriter)));
     lf.write_pcm(&mut outbuf[..]);
     assert_eq!( [1.0, 2.0,
 		 3.0, 5.0,

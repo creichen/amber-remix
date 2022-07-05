@@ -1,3 +1,4 @@
+use core::fmt;
 use std::rc::Rc;
 
 //use super::dsp::frequency_range::Freq;
@@ -8,6 +9,15 @@ const ONE_128TH : f32 = 1.0 / 128.0;
 pub struct SampleRange {
     pub start : usize,
     pub len : usize,
+}
+
+impl fmt::Display for SampleRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, " samplerange[0x{:x}..0x{:x} ({}..{}) (len=0x{:x} ({}))]",
+	       self.start, self.start+self.len,
+	       self.start, self.start+self.len,
+	       self.len, self.len)
+    }
 }
 
 impl SampleRange {

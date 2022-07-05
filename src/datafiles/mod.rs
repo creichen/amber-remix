@@ -10,6 +10,8 @@ use log::{trace, debug};
 use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
 
+use self::music::Song;
+
 const DEBUG : bool = true;
 
 mod string_fragment_table;
@@ -17,7 +19,7 @@ mod map_string_table;
 mod decode;
 mod palette;
 mod pixmap;
-mod music;
+pub mod music;
 pub mod sampledata;
 
 #[derive(Debug)]
@@ -424,6 +426,7 @@ pub struct AmberStarFiles {
     pub pic_intro : Pixmap,
     pub palettes : Vec<Palette>,
     pub sample_data : sampledata::SampleData,
+    pub songs : Vec<Song>,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -478,8 +481,9 @@ impl AmberStarFiles {
 	let pic_intro = pic_intro_raw.with_palette(&palettes[0]);
 
 	let mut songseeker = music::seeker(&amberdev, 0x4cd00);
-	while let Some(_song) = songseeker.next() {
-//	    break;
+	let mut songs = vec![];
+	while let Some(song) = songseeker.next() {
+	    songs.push(song);
 	}
 
 	let mut sampledata_f = load_relative(path, "SAMPLEDA.IMG");
@@ -494,6 +498,7 @@ impl AmberStarFiles {
 	    pic_intro,
 	    palettes,
 	    sample_data,
+	    songs,
 	}
     }
 }
