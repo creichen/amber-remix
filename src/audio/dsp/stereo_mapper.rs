@@ -4,15 +4,15 @@ use super::writer::PCMWriter;
 
 const BUF_SIZE : usize = 32;
 
-pub struct StereoMapper<'a> {
+pub struct StereoMapper {
     left : f32,
     right : f32,
     buf : [f32; BUF_SIZE],
-    source : Rc<RefCell<&'a mut dyn PCMWriter>>,
+    source : Rc<RefCell<dyn PCMWriter>>,
 }
 
-impl<'a> StereoMapper<'a> {
-    pub fn new(left : f32, right : f32, source : Rc<RefCell<&'a mut dyn PCMWriter>>) -> StereoMapper<'a> {
+impl<'a> StereoMapper {
+    pub fn new(left : f32, right : f32, source : Rc<RefCell<dyn PCMWriter>>) -> StereoMapper {
 	return StereoMapper {
 	    left,
 	    right,
@@ -43,8 +43,8 @@ impl<'a> StereoMapper<'a> {
 	    let mut buf_pos = 0;
 	    while out_pos < out_end {
 		let sample = buf[buf_pos];
-		out[out_pos] = left_v * sample;
-		out[out_pos + 1] = right_v * sample;
+		out[out_pos] += left_v * sample;
+		out[out_pos + 1] += right_v * sample;
 		out_pos += 2;
 		buf_pos += 1;
 	    }

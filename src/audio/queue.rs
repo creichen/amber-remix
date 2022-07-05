@@ -1,5 +1,10 @@
 use std::collections::VecDeque;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::ops::DerefMut;
 
+use super::ArcIt;
 use super::dsp::frequency_range::Freq;
 use super::dsp::writer::FlexPCMWriter;
 use super::dsp::writer::FlexPCMResult;
@@ -10,18 +15,24 @@ use super::iterator::AudioIterator;
 pub use super::samplesource::SampleRange;
 use super::samplesource::SampleSource;
 use super::samplesource::SampleWriter;
-use super::iterator::MockAudioIterator;
 
 #[cfg(test)]
 use super::samplesource::SimpleSampleSource;
 
+#[cfg(test)]
+use crate::audio::iterator;
 
-pub struct AudioQueue<'a> {
-    sample_source : &'a dyn SampleSource,
-    current_sample : SampleWriter<'a>, // sample to play right now
+pub trait AudioIteratorProcessor {
+    fn flush(&mut self);
+    fn set_source(&mut self, new_it : ArcIt);
+}
+
+pub struct AudioQueue {
+    sample_source : Rc<dyn SampleSource>,
+    current_sample : SampleWriter, // sample to play right now
     current_sample_vec : VecDeque<AQSample>,   // enqueued sapmles
 
-    audio_source : &'a mut dyn AudioIterator,
+    audio_source : ArcIt,
     queue : VecDeque<AQOp>,  // unprocessed AQOps
     flush_requested : bool,
     freq : Freq,
@@ -30,8 +41,8 @@ pub struct AudioQueue<'a> {
     remaining_secs : f64,    // seconds during which the current state applies
 }
 
-impl<'a> AudioQueue<'a> {
-    pub fn new(audio_source : &'a mut dyn AudioIterator, sample_source : &'a dyn SampleSource) -> AudioQueue<'a> {
+impl AudioQueue {
+    pub fn new(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>) -> AudioQueue {
 	return AudioQueue {
 	    sample_source,
 	    current_sample : SampleWriter::empty(),
@@ -53,19 +64,6 @@ impl<'a> AudioQueue<'a> {
 	self.remaining_secs = self.secs_remaining_in_sample();
     }
 
-    // Finishes playing the current sample
-    pub fn flush(&mut self) {
-	self.soft_reset();
-	self.flush_requested = true;
-    }
-
-    pub fn set_source(&mut self, source : &'a mut dyn AudioIterator) {
-	// commented out: stopping the current sample will probably not yield good results
-	//self.current_sample = SampleWriter::empty();
-	self.audio_source = source;
-	self.soft_reset();
-    }
-
     pub fn secs_remaining_in_sample(&self) -> f64 {
 	return self.current_sample.remaining() as f64 / self.freq as f64;
     }
@@ -73,7 +71,7 @@ impl<'a> AudioQueue<'a> {
 
 const INV_1000 : f64 = 0.001;
 
-impl<'a> FlexPCMWriter for AudioQueue<'a> {
+impl FlexPCMWriter for AudioQueue {
     fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange, msecs_requested : usize) -> FlexPCMResult {
 	if self.flush_requested {
 	    self.flush_requested = false;
@@ -155,7 +153,9 @@ impl<'a> FlexPCMWriter for AudioQueue<'a> {
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
 		if self.queue.len() == 0 {
-		    self.audio_source.next(&mut self.queue);
+		    let mut guard = self.audio_source.lock().unwrap();
+		    let src = guard.deref_mut();
+		    src.next(&mut self.queue);
 		}
 		if self.queue.len() == 0 {
 		    // Iterator has given up on us?
@@ -185,25 +185,40 @@ impl<'a> FlexPCMWriter for AudioQueue<'a> {
     }
 }
 
+impl AudioIteratorProcessor for AudioQueue {
+    // Finishes playing the current sample
+    fn flush(&mut self) {
+	self.soft_reset();
+	self.flush_requested = true;
+    }
+
+    fn set_source(&mut self, source : ArcIt) {
+	// commented out: stopping the current sample will probably not yield good results
+	//self.current_sample = SampleWriter::empty();
+	self.audio_source = source;
+	self.soft_reset();
+    }
+}
+
 // ----------------------------------------
 
 #[cfg(test)]
-fn setup_samplesource() -> SimpleSampleSource {
+fn setup_samplesource() -> Rc<dyn SampleSource> {
     let mut v = vec![];
     for i in 1..1000 {
 	v.push(i as f32);
     }
-    return SimpleSampleSource::new_float(v);
+    return Rc::new(SimpleSampleSource::new_float(v));
 }
 
 #[cfg(test)]
 #[test]
 fn test_default_silence_bufsize_limited() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(100),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(100),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 100);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -217,10 +232,10 @@ fn test_default_silence_bufsize_limited() {
 #[test]
 fn test_default_silence_time_limited() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 4);
     assert_eq!(FlexPCMResult::Wrote(4), r);
@@ -234,11 +249,11 @@ fn test_default_silence_time_limited() {
 #[test]
 fn test_sample_bufsize_limited() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 10);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -252,11 +267,11 @@ fn test_sample_bufsize_limited() {
 #[test]
 fn test_sample_time_limited() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 4);
     assert_eq!(FlexPCMResult::Wrote(4), r);
@@ -270,14 +285,14 @@ fn test_sample_time_limited() {
 #[test]
 fn test_sample_switch() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
-						   AQOp::WaitMillis(2)],
-					      vec![
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,20))]),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(2)],
+				  vec![
+				      AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,20))]),
+				      AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -291,12 +306,12 @@ fn test_sample_switch() {
 #[test]
 fn test_sample_loop() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,2)),
-						   ]),
-						   AQOp::WaitMillis(20)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,2)),
+				       ]),
+				       AQOp::WaitMillis(20)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -310,13 +325,13 @@ fn test_sample_loop() {
 #[test]
 fn test_sample_once_loop() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,2)),
-									 AQSample::Loop(SampleRange::new(0,3)),
-						   ]),
-						   AQOp::WaitMillis(20)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,2)),
+							     AQSample::Loop(SampleRange::new(0,3)),
+				       ]),
+				       AQOp::WaitMillis(20)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -330,14 +345,14 @@ fn test_sample_once_loop() {
 #[test]
 fn test_sample_twice_loop() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,2)),
-									 AQSample::Once(SampleRange::new(20,1)),
-									 AQSample::Loop(SampleRange::new(0,2)),
-						   ]),
-						   AQOp::WaitMillis(20)]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,2)),
+							     AQSample::Once(SampleRange::new(20,1)),
+							     AQSample::Loop(SampleRange::new(0,2)),
+				       ]),
+				       AQOp::WaitMillis(20)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -351,19 +366,19 @@ fn test_sample_twice_loop() {
 #[test]
 fn test_freq_switch_sample_boundary() {
     let mut outbuf = [-1.0; 10];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,2))]),
-						   AQOp::WaitMillis(2),
-						   AQOp::SetFreq(2000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
-						   AQOp::WaitMillis(1),
-						   AQOp::SetFreq(500),
-						   AQOp::WaitMillis(1),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(20,10))]),
-						   AQOp::WaitMillis(20),
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,2))]),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
+				       AQOp::WaitMillis(1),
+				       AQOp::SetFreq(500),
+				       AQOp::WaitMillis(1),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(20,10))]),
+				       AQOp::WaitMillis(20),
     ]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 7);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -378,17 +393,17 @@ fn test_freq_switch_sample_boundary() {
 #[test]
 fn test_volume() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,20))]),
-						   AQOp::SetVolume(10.0),
-						   AQOp::WaitMillis(2),
-						   AQOp::SetVolume(1.0),
-						   AQOp::WaitMillis(2),
-						   AQOp::SetVolume(2.0),
-						   AQOp::WaitMillis(20),
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,20))]),
+				       AQOp::SetVolume(10.0),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(1.0),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(2.0),
+				       AQOp::WaitMillis(20),
     ]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
@@ -401,12 +416,12 @@ fn test_volume() {
 #[test]
 fn test_run_out() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
-						   AQOp::WaitMillis(5),
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(5),
     ]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 10);
     assert_eq!(FlexPCMResult::Wrote(5), r);
@@ -421,11 +436,11 @@ fn test_run_out() {
 #[test]
 fn test_replace_iterator() {
     let mut outbuf = [-1.0; 8];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(2000),
-						   AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
-						   AQOp::WaitMillis(1000)]]);
-    let mut ssrc = setup_samplesource();
-    let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
 
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 1);
@@ -435,10 +450,10 @@ fn test_replace_iterator() {
     assert_eq!([11.0, 12.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
 	       &outbuf[..]);
 
-    let mut ait2 = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						    AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
-						    AQOp::WaitMillis(1000)]]);
-    aq.set_source(&mut ait2);
+    let ait2 = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+					AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
+					AQOp::WaitMillis(1000)]]);
+    aq.set_source(ait2);
     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2), 10);
     assert_eq!(FlexPCMResult::Wrote(6), r);
 
@@ -453,17 +468,19 @@ fn test_replace_iterator() {
 #[cfg(test)]
 #[test]
 fn test_sample_loop_uninterrupted() {
+
     let mut outbuf = [-1.0; 12];
-    let mut ait = MockAudioIterator::new(vec![vec![AQOp::SetFreq(1000),
-						   AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
-						   AQOp::WaitMillis(4),
-						   AQOp::SetVolume(100.0),
-						   AQOp::SetFreq(2000),
-						   AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
-						   AQOp::WaitMillis(4),
+
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(4),
+				       AQOp::SetVolume(100.0),
+				       AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
+				       AQOp::WaitMillis(4),
     ]]);
-    let mut ssrc = setup_samplesource();
-	let mut aq = AudioQueue::new(&mut ait, &mut ssrc);
+    let ssrc = setup_samplesource();
+    let mut aq = AudioQueue::new(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 7);
     assert_eq!(FlexPCMResult::Wrote(8), r);

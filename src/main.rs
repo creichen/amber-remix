@@ -1,5 +1,5 @@
-#[macro_use(lazy_static)]
-extern crate lazy_static;
+//#[macro_use(lazy_static)]
+//extern crate lazy_static;
 use std::{io, time::Duration, env, sync::{Arc, Mutex}, collections::VecDeque};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired};
@@ -49,23 +49,26 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 
     let mut canvas = window.into_canvas().build().unwrap();
 
-    let audio = sdl_context.audio().unwrap();
+    let mut audiocore = audio::init(&sdl_context);
+    audiocore.start_mixer(&data.sample_data.data[..]);
 
-    let requested_audio = AudioSpecDesired {
-	freq: Some(44100),
-	channels: Some(2),
-	samples: None
-    };
+    // let audio = sdl_context.audio().unwrap();
 
-    let mixer = audio::new(data.sample_data.data.clone());
+    // let requested_audio = AudioSpecDesired {
+    // 	freq: Some(44100),
+    // 	channels: Some(2),
+    // 	samples: None
+    // };
 
-    let device = audio.open_playback(None, &requested_audio, |spec| {
-	return mixer.init(spec);
-	//return mixer;
-    }).unwrap();
-    device.resume();
-    let d = Arc::new(Mutex::new(D{}));
-    mixer.set_channel(audio::CHANNELS[0], d);
+    // let mixer = audio::new(data.sample_data.data.clone());
+
+    // let device = audio.open_playback(None, &requested_audio, |spec| {
+    // 	return mixer.init(spec);
+    // 	//return mixer;
+    // }).unwrap();
+    // device.resume();
+    // let d = Arc::new(Mutex::new(D{}));
+    // mixer.set_channel(audio::CHANNELS[0], d);
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();

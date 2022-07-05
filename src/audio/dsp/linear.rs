@@ -14,18 +14,18 @@ use super::frequency_range::FreqRange;
 
 const BUFFER_SIZE_MILLIS : usize = 100;
 
-pub struct LinearFilter<'a> {
+pub struct LinearFilter {
     state : Option<SampleState>,
     max_in_freq : Freq,
     out_freq : Freq,
     buf : Vec<f32>,
     samples_in_buf : usize, // Valid data left in buffer
     source : Rc<RefCell<dyn FlexPCMWriter>>,
-    freqs : FreqRange<'a>,
+    freqs : FreqRange,
 }
 
-impl<'a> LinearFilter<'a> {
-    pub fn new(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter<'a> {
+impl LinearFilter {
+    pub fn new(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter {
 	return LinearFilter {
 	    state : None,
 	    max_in_freq,
@@ -198,7 +198,7 @@ impl<'a> LinearFilter<'a> {
 
 }
 
-impl<'a> PCMWriter for LinearFilter<'a> {
+impl PCMWriter for LinearFilter {
     fn frequency(&self) -> Freq {
 	return self.out_freq;
     }
@@ -520,7 +520,7 @@ impl FlexPCMWriter for MockFlexWriter {
 #[test]
 fn test_linear_filter_resampling_incremental() {
     let mut outbuf = [0.0; 14];
-    let mut flexwriter = MockFlexWriter {
+    let flexwriter = MockFlexWriter {
 	maxwrite : 100,
 	s : vec![1.0, 2.0,                           // 1:1
 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
@@ -600,7 +600,7 @@ fn test_linear_filter_resampling_incremental() {
 #[test]
 fn test_linear_filter_resampling() {
     let mut outbuf = [0.0; 14];
-    let mut flexwriter = MockFlexWriter {
+    let flexwriter = MockFlexWriter {
 	maxwrite : 100,
 	s : vec![1.0, 2.0,                           // 1:1
 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
@@ -624,7 +624,7 @@ fn test_linear_filter_resampling() {
 fn test_linear_filter_limit_writes() {
     for i in 1..3 {
 	let mut outbuf = [0.0; 14];
-	let mut flexwriter = MockFlexWriter {
+	let flexwriter = MockFlexWriter {
 	    maxwrite : i,
 	    s : vec![1.0, 2.0,                           // 1:1
 		     3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
@@ -647,7 +647,7 @@ fn test_linear_filter_limit_writes() {
 #[test]
 fn test_linear_filter_tiny_buffer() {
     let mut outbuf = [0.0; 14];
-    let mut flexwriter = MockFlexWriter {
+    let flexwriter = MockFlexWriter {
 	maxwrite : 1000,
 	s : vec![1.0, 2.0,                           // 1:1
 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)

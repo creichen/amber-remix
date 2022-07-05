@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, cell::RefCell, rc::Rc};
 
 /// Frequency range for FlexPCMWriter
 
@@ -6,9 +6,10 @@ pub type Freq = usize;
 
 /// A FreqRange is a range position-to-frequency mappings,
 /// open to the end.
-pub enum FreqRange<'a> {
-    Base(FreqRangeBase),
-    AtOffset(&'a mut FreqRangeBase, usize),
+#[derive(Clone)]
+pub enum FreqRange {
+    Base(Rc<RefCell<FreqRangeBase>>),
+    AtOffset(Rc<RefCell<FreqRangeBase>>, usize),
 }
 
 struct FreqRangeBase {
@@ -87,47 +88,47 @@ impl Display for FreqRangeBase {
     }
 }
 
-impl<'a> Display for FreqRange<'a> {
+impl<'a> Display for FreqRange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 	match self {
-	    FreqRange::Base(b)        => write!(f, "B({b})"),
-	    FreqRange::AtOffset(b, o) => write!(f, "O({b} + {o})"),
+	    FreqRange::Base(b)        => write!(f, "B({})", b.borrow()),
+	    FreqRange::AtOffset(b, o) => write!(f, "O({} + {o})", b.borrow()),
 	}
     }
 }
 
-impl<'a> FreqRange<'a> {
-    pub fn new() -> FreqRange<'a> {
-	return FreqRange::Base(FreqRangeBase::new());
+impl FreqRange {
+    pub fn new() -> FreqRange {
+	return FreqRange::Base(Rc::new(RefCell::new(FreqRangeBase::new())));
     }
 
     pub fn append(&mut self, pos : usize, freq : Freq) {
 	match self {
-	    FreqRange::Base(f)                => f.append(pos, freq),
-	    FreqRange::AtOffset(bref, offset) => { bref.append(pos + *offset, freq)},
+	    FreqRange::Base(f)                => f.borrow_mut().append(pos, freq),
+	    FreqRange::AtOffset(bref, offset) => { bref.borrow_mut().append(pos + *offset, freq)},
 	}
     }
 
     /// Frequency and remaining samples after the given position
     pub fn get(&self, pos : usize) -> (Freq, Option<usize>) {
 	match self {
-	    FreqRange::Base(f)                => f.get(pos),
-	    FreqRange::AtOffset(bref, offset) => bref.get(pos + offset),
+	    FreqRange::Base(f)                => f.borrow().get(pos),
+	    FreqRange::AtOffset(bref, offset) => bref.borrow().get(pos + offset),
 	}
     }
 
     /// Slide window to the left, discarding old data
     pub fn shift(&mut self, offset : usize) {
 	match self {
-	    FreqRange::Base(f)           => f.slide(offset),
-	    FreqRange::AtOffset(bref, _) => bref.slide(offset),
+	    FreqRange::Base(f)           => f.borrow_mut().slide(offset),
+	    FreqRange::AtOffset(bref, _) => bref.borrow_mut().slide(offset),
 	}
     }
 
     pub fn at_offset(&mut self, offset : usize) -> FreqRange {
 	match self {
-	    FreqRange::Base(f)           => FreqRange::AtOffset(f, offset),
-	    FreqRange::AtOffset(bref, o) => FreqRange::AtOffset(bref, offset + *o),
+	    FreqRange::Base(f)           => FreqRange::AtOffset(f.clone(), offset),
+	    FreqRange::AtOffset(bref, o) => FreqRange::AtOffset(bref.clone(), offset + *o),
 	}
     }
 }
@@ -161,7 +162,7 @@ fn test_slide() {
 
     if let FreqRange::Base(ref frr) = fr {
 	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-		   &frr.frequencies[..]);
+		   &frr.borrow().frequencies[..]);
     } else { panic!(); }
 
     assert_eq!((100, Some(3)), fr.get(0));
@@ -177,7 +178,7 @@ fn test_slide() {
 
     if let FreqRange::Base(ref frr) = fr {
 	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-		   &frr.frequencies[..]);
+		   &frr.borrow().frequencies[..]);
     } else { panic!(); }
 
     assert_eq!((100, Some(3)), fr.get(0));
@@ -193,7 +194,7 @@ fn test_slide() {
 
     if let FreqRange::Base(ref frr) = fr {
 	assert_eq!([(0, 100), (2, 101), (6, 102), (11, 103)],
-		   &frr.frequencies[..]);
+		   &frr.borrow().frequencies[..]);
     } else { panic!(); }
 
     assert_eq!((100, Some(2)), fr.get(0));
@@ -222,7 +223,7 @@ fn test_slide() {
     assert_eq!((103, None), fr.get(100));
 
     if let FreqRange::Base(ref frr) = fr {
-	assert_eq!(2, frr.frequencies.len());
+	assert_eq!(2, frr.borrow().frequencies.len());
     } else { panic!(); }
 
     fr.shift(10000);
@@ -231,7 +232,7 @@ fn test_slide() {
     assert_eq!((103, None), fr.get(100));
 
     if let FreqRange::Base(ref frr) = fr {
-	assert_eq!(1, frr.frequencies.len());
+	assert_eq!(1, frr.borrow().frequencies.len());
     } else { panic!(); }
 }
 
@@ -330,7 +331,7 @@ fn test_at_offset_append() {
 }
 
 #[cfg(test)]
-fn require_base<'a>(r : &'a FreqRange)  -> &'a FreqRangeBase {
+fn require_base(r : &FreqRange) -> &Rc<RefCell<FreqRangeBase>> {
     match r {
 	FreqRange::Base(b) => b,
 	_ => panic!(),
@@ -348,7 +349,7 @@ fn test_at_offset_slide() {
 
     let frr = require_base(&fr_base);
     assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-	       &frr.frequencies[..]);
+	       &frr.borrow().frequencies[..]);
 
     assert_eq!((100, Some(3)), fr_base.get(0));
     assert_eq!((100, Some(1)), fr_base.get(2));
@@ -367,7 +368,7 @@ fn test_at_offset_slide() {
     {
 	let frr = require_base(&fr_base);
 	assert_eq!([(0, 100), (3, 101), (7, 102), (12, 103)],
-		   &frr.frequencies[..]);
+		   &frr.borrow().frequencies[..]);
     }
 
     {
@@ -388,7 +389,7 @@ fn test_at_offset_slide() {
     {
 	let frr = require_base(&fr_base);
 	assert_eq!([(0, 100), (2, 101), (6, 102), (11, 103)],
-		   &frr.frequencies[..]);
+		   &frr.borrow().frequencies[..]);
     }
 
     assert_eq!((100, Some(2)), fr_base.get(0));

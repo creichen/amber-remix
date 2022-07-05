@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 //use super::dsp::frequency_range::Freq;
 
 const ONE_128TH : f32 = 1.0 / 128.0;
@@ -16,28 +18,31 @@ impl SampleRange {
     }
 }
 
-pub struct SampleWriter<'a> {
-    data : &'a [f32],
-    pos : usize,
+pub struct SampleWriter {
+    data : Rc<Vec<f32>>,
+    range : SampleRange,
+    count : usize,
 }
 
-impl<'a> SampleWriter<'a> {
-    fn new(data : &'a [f32]) -> SampleWriter<'a> {
+impl SampleWriter {
+    fn new(all_data : Rc<Vec<f32>>, range : SampleRange) -> SampleWriter {
 	return SampleWriter {
-	    data,
-	    pos : 0,
+	    data: all_data,
+	    range,
+	    count : 0,
 	}
     }
 
-    pub fn empty() -> SampleWriter<'a> {
+    pub fn empty() -> SampleWriter {
 	return SampleWriter {
-	    data : &[],
-	    pos : 0,
+	    data : Rc::new(Vec::new()),
+	    range : SampleRange::new(0, 0),
+	    count : 0,
 	}
     }
 
     pub fn remaining(&self) -> usize {
-	return self.data.len() - self.pos;
+	return self.range.len - self.count;
     }
 
     pub fn done(&self) -> bool {
@@ -46,41 +51,45 @@ impl<'a> SampleWriter<'a> {
 
     pub fn write(&mut self, dest : &mut [f32]) -> usize {
 	let max_write = usize::min(dest.len(),
-				   self.data.len() - self.pos);
-	let data = &self.data;
-	let slice = &data[self.pos..self.pos+max_write];
+				   self.remaining());
+	let start_pos = self.range.start + self.count;
+	let slice = &self.data[start_pos..start_pos+max_write];
 	dest.copy_from_slice(slice);
-	self.pos += max_write;
+	self.count += max_write;
 	return max_write;
     }
 }
 
 pub trait SampleSource {
     /// Gets the sample that corresponds to the specified sample range.
-    fn get_sample<'a>(&'a self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter<'a>;
+    fn get_sample(&self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter;
 }
 
+#[derive(Clone)]
 pub struct SimpleSampleSource {
-    data : Vec<f32>,
+    data : Rc<Vec<f32>>,
 }
 
 impl SimpleSampleSource {
     pub fn new(data : Vec<i8>) -> SimpleSampleSource {
 	return SimpleSampleSource {
-	    data : data.iter().map(|x| { *x as f32 * ONE_128TH }).collect(),
+	    data : Rc::new(data.iter().map(|x| { *x as f32 * ONE_128TH }).collect()),
+	};
+    }
+    pub fn from_iter<'a>(data : std::slice::Iter<'a, i8>) -> SimpleSampleSource {
+	return SimpleSampleSource {
+	    data : Rc::new(data.map(|x| { *x as f32 * ONE_128TH }).collect()),
 	};
     }
     pub fn new_float(data : Vec<f32>) -> SimpleSampleSource {
 	return SimpleSampleSource {
-	    data,
+	    data : Rc::new(data),
 	};
     }
 }
 
 impl SampleSource for SimpleSampleSource {
-    fn get_sample<'a>(&'a self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter<'a> {
-	let data = &self.data;
-	let r = range.start..range.start+range.len;
-	return SampleWriter::new(&data[r]);
+    fn get_sample(&self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter {
+	return SampleWriter::new(self.data.clone(), range);
     }
 }
