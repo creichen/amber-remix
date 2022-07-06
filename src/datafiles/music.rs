@@ -3,7 +3,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use core::fmt;
 use std::collections::HashMap;
-use crate::{datafiles::decode, audio::{SampleRange, Freq}};
+use crate::{datafiles::decode, audio::SampleRange};
 
 // ================================================================================
 // Samples
