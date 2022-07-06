@@ -96,13 +96,91 @@ impl InstrumentOp {
 }
 
 // ================================================================================
-// Song
+// Timbres
 
+
+#[derive(Clone, Copy)]
+pub struct Vibrato {
+    pub slope : isize,
+    pub depth : isize,
+}
+
+impl fmt::Display for Vibrato {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "Vib({} +/- {})", self.depth, self.slope)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct VolumeSpec {
+    pub volume   : u8,    // 0-64
+    pub duration : usize, // ticks to hold before moving on
+}
+
+impl fmt::Display for VolumeSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "{}x{}t", self.volume, self.duration)
+    }
+}
+
+impl VolumeSpec {
+    pub fn fmt_slice(vec : &[VolumeSpec]) -> String {
+	let mut s : String = "".to_string();
+	for x in vec {
+	    if s.len() > 0 {
+		s.push_str("  ");
+	    }
+	    let str = format!("{}", x);
+	    s.push_str(&str);
+	}
+	return s;
+    }
+}
+
+#[derive(Clone)]
+pub struct VolumeEnvelope {
+    pub attack   : Vec<VolumeSpec>,
+    pub sustain  : Vec<VolumeSpec>,
+}
+
+impl fmt::Display for VolumeEnvelope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	if self.sustain.len() > 0 {
+	    write!(f, "VolEnv [{} | loop: {}]", VolumeSpec::fmt_slice(&self.attack), VolumeSpec::fmt_slice(&self.sustain))
+	} else {
+	    write!(f, "VolEnv [{}]", VolumeSpec::fmt_slice(&self.attack))
+	}
+    }
+}
+
+#[derive(Clone)]
+pub struct Timbre {
+    pub envelope_speed : u8, // default ticks per step in the volume envelope
+    pub instrument     : Option<u8>, // Default instrument
+    pub vibrato        : Vibrato,
+    pub vibrato_delay  : usize, // Ticks before vibrato sets in
+    pub vol            : VolumeEnvelope,
+}
+
+impl fmt::Display for Timbre {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	let insn = match self.instrument {
+	    None    => "_".to_string(),
+	    Some(n) => format!("{}",n),
+	};
+	write!(f, "insn#{insn} {} after {} {}",
+	       self.vibrato, self.vibrato_delay, self.vol)
+    }
+}
+
+// ================================================================================
+// Song
 
 pub struct Song {
     pub basic_samples : Vec<BasicSample>,
     //   pub slide_samples : Vec<Vec<SampleRange>>, // Samples used by Slide instrument effects
     pub instruments : Vec<Instrument>,
+    pub timbres : Vec<Timbre>,
 }
 
 struct TableIndexedData<'a> {
@@ -347,65 +425,131 @@ impl<'a> RawSong<'a> {
 	return result;
     }
 
-	// // // -- ----------------------------------------
-	// // // frqseqs -> Instruments
-	// let frqseqs = TableIndexedData::new(data, pos_frqseqs, pos_volumes, num_freqs);
-	// for f in frqseqs {
-	//     print!("frqseq[{:x}] @ {:03x}:{:x} =  ",
-	// 	   f.index, f.offset, npos + f.offset);
-	//     let mut pos = 0;
-	//     while pos < f.end_offset {
-	// 	let insn = f.u8(pos);
-	// 	pos += 1;
-	// 	match insn {
-	// 	    0xe0 => {
-	// 		let newpos = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  GOTO({newpos}) ")
-	// 	    },
-	// 	    0xe1 => print!(" -STOP- "),
-	// 	    0xe2 | 0xe4 | 0xe7 => {
-	// 		let sample = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  {insn:x}_SET-SAMPLE({sample:x})");
-	// 	    }
-	// 	    0xe5 => {
-	// 		let sample = f.u8(pos);
-	// 		let sample_slide_loop = f.u16(pos + 1);
-	// 		let sample_slide_len = f.u16(pos + 3);
-	// 		let sample_slide_delta = f.u16(pos + 5) as i16;
-	// 		let sample_slide_speed = f.u8(pos + 6);
-	// 		pos += 1+7;
-	// 		print!("  {insn:x}_SET-SAMPLE-SLIDE({sample:x}, speed={sample_slide_speed:x}, loop_pos/2={sample_slide_loop:x}, len/2={sample_slide_len:x}, delta={sample_slide_delta:x})");
-	// 	    }
-	// 	    // 0xe5 => {
-	// 	    // 	let sample = f.u8(pos);
-	// 	    // 	let sample_subindex = f.u8(pos + 1);
-	// 	    // 	pos += 2;
-	// 	    // 	print!("  {insn:x}_SET-SAMPLE-SUB({sample:x}, {sample_subindex:x})");
-	// 	    // }
-	// 	    0xe3 => {
-	// 		let vibspeed = f.u8(pos);
-	// 		let vibdepth = f.u8(pos + 1);
-	// 		pos += 2;
-	// 		print!("  VIBRATO({vibspeed} at {vibdepth}) ")
-	// 	    },
-	// 	    // 0xe6 also?
-	// 	    //0xe5 => print!("  {insn:x}_UNSUPPORTED"),
-	// 	    0xe6 => print!("  {insn:x}_UNSUPPORTED"),
+    fn timbres(&self) -> Vec<Timbre> {
+	let mut result : Vec<Timbre> = vec![];
+	let timbre_table = self.table_index(self.timbres);
+	for mut raw_tmb in timbre_table {
+
+	    if raw_tmb.available(6) {
+		info!("Empty timbre definition after {} timbres, stopping",
+		      result.len());
+		break;
+	    }
+
+	    let vol_envelope_default_duration = raw_tmb.u8();
+	    let instrument = {
+		let i = raw_tmb.u8();
+	        if i == 0x80 { None } else { Some(i) }
+	    };
+	    let vibrato = {
+		let slope = (raw_tmb.u8() as i8) as isize;
+		let depth = (raw_tmb.u8() as i8) as isize;
+		Vibrato { slope, depth }
+	    };
+	    let vibrato_delay = raw_tmb.u8() as usize;
+
+	    let mut ops = vec![];
+	    let mut pos_map = HashMap::new();
+	    let mut goto_label = None;
+	    let mut duration = vol_envelope_default_duration as usize;
+
+	    while !raw_tmb.at_end() {
+		pos_map.insert(raw_tmb.relative_offset(), ops.len());
+		let op = raw_tmb.u8();
+
+		const OP_SUSTAIN : u8 = 0xe8;
+		const OP_LOOP    : u8 = 0xe0;
+
+		match op {
+		    OP_SUSTAIN => {
+			duration = raw_tmb.u8() as usize;
+		    },
+		    // End of envelope
+		    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
+			break;
+		    },
+		    OP_LOOP => {
+			goto_label = Some((raw_tmb.u8() as isize) - 5);
+			break;
+		    },
+		    volume  => ops.push(VolumeSpec{ volume, duration }),
+		}
+	    }
+
+	    let mut loop_ops = vec![];
+
+	    match goto_label {
+		None        => {},
+		Some(label) => match pos_map.get(&(label as usize)) {
+		    None => {
+			error!("Timbre definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
+			       raw_tmb.start, label, label)},
+		    Some(ops_index) => {
+			let lhs = &ops[..*ops_index];
+			let rhs = &ops[*ops_index..];
+			if rhs.len() > 0 {
+			    loop_ops = rhs.to_vec();
+			    ops = lhs.to_vec();
+			}
+		    }
+		}
+	    }
+
+	    result.push(Timbre {
+		envelope_speed : vol_envelope_default_duration,
+		instrument,
+		vibrato,
+		vibrato_delay,
+		vol : VolumeEnvelope {
+		    attack  : ops,
+		    sustain : loop_ops,
+		}
+	    });
+	    info!("Timbre #{} (0x{:x}) : {}", result.len(), raw_tmb.start, result.last().unwrap());
+
+	// // -- ----------------------------------------
+	// // volumes -> Timbres and Volume Envelopes
+	// let volumes = TableIndexedData::new(data, pos_volumes, pos_patterns, num_volumes);
+	// for v in volumes {
+	//     let vol_speed = v.u8(0);
+	//     let frq_index = v.u8(1) as i8;
+	//     let vibrato_speed = v.u8(2) as i8;
+	//     let vibrato_depth = v.u8(3) as i8;
+	//     let vibrato_delay = v.u8(4);
+
+	//     println!("vol[{:03x}] @ {:03x}:{:x}  = {vol_speed:5o}  frq:{}  vibrato=[{vibrato_speed} at {vibrato_depth} after {vibrato_delay}]",
+	// 	     v.index, v.offset,
+	// 	     npos + v.offset, if frq_index == -128 { "#".to_string() } else { format!("{frq_index}") });
+
+	//     let mut vol_pos = 5;
+	//     let vol_end = v.end_offset;
+	//     while vol_pos < vol_end {
+	// 	let vol_insn = v.u8(vol_pos);
+	// 	vol_pos += 1;
+	// 	print!("\t{:02x}: ", vol_pos);
+	// 	match vol_insn {
 	// 	    0xe8 => {
-	// 		let delay = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  DELAY({delay}) ")
+	// 		let sustain = v.u8(vol_pos);
+	// 		vol_pos += 1;
+	// 		println!("\tsustain {sustain}")
 	// 	    },
-	// 	    0xe9 => print!("  {insn:x}_UNSUPPORTED"),
-	// 	    transpose => print!("  NOTE+({transpose}) "),
+	// 	    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
+	// 		println!("\t(maintain indefinitely)");
+	// 	    }
+	// 	    0xe0 => {
+	// 		let pos = v.u8(vol_pos) as i8 - 5;
+	// 		vol_pos += 1;
+	// 		println!("\tgoto {pos:x}")
+	// 	    },
+	// 	    _ => println!("\tvol = {vol_insn}"),
 	// 	}
 	//     }
-	//     println!("");
 	// }
 
 
+	}
+	return result;
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -486,7 +630,11 @@ impl<'a> TableIndexedElement<'a> {
     }
 
     fn at_end(&self) -> bool {
-	return self.current_pos >= self.start + self.end_offset;
+	return self.available(0);
+    }
+
+    fn available(&self, d : usize) -> bool {
+	return self.current_pos + d >= self.start + self.end_offset;
     }
 
     fn end(&self) -> usize {
@@ -496,7 +644,7 @@ impl<'a> TableIndexedElement<'a> {
     fn step(&mut self, size : usize) {
 	self.current_pos += size;
 	if self.current_pos > self.end() {
-	    error!("Stepped outside of TableIndexedElement: {:} / {:} ", self.current_pos, self.end());
+	    error!("Stepped outside of TableIndexedElement: {:x} / {:x} ", self.current_pos, self.end());
 	}
     }
 
@@ -556,8 +704,8 @@ impl<'a> SongSeeker<'a> {
 	let rawsong = RawSong::new(npos, data);
 
 	let basic_samples = rawsong.basic_samples();
-
 	let instruments = rawsong.instruments(&basic_samples);
+	let timbres = rawsong.timbres();
 
 	// // -- ----------------------------------------
 	// // Songs
@@ -676,49 +824,11 @@ impl<'a> SongSeeker<'a> {
 	//     }
 	// }
 
-	// // -- ----------------------------------------
-	// // volumes -> Timbres and Volume Envelopes
-	// let volumes = TableIndexedData::new(data, pos_volumes, pos_patterns, num_volumes);
-	// for v in volumes {
-	//     let vol_speed = v.u8(0);
-	//     let frq_index = v.u8(1) as i8;
-	//     let vibrato_speed = v.u8(2) as i8;
-	//     let vibrato_depth = v.u8(3) as i8;
-	//     let vibrato_delay = v.u8(4);
-
-	//     println!("vol[{:03x}] @ {:03x}:{:x}  = {vol_speed:5o}  frq:{}  vibrato=[{vibrato_speed} at {vibrato_depth} after {vibrato_delay}]",
-	// 	     v.index, v.offset,
-	// 	     npos + v.offset, if frq_index == -128 { "#".to_string() } else { format!("{frq_index}") });
-
-	//     let mut vol_pos = 5;
-	//     let vol_end = v.end_offset;
-	//     while vol_pos < vol_end {
-	// 	let vol_insn = v.u8(vol_pos);
-	// 	vol_pos += 1;
-	// 	print!("\t{:02x}: ", vol_pos);
-	// 	match vol_insn {
-	// 	    0xe8 => {
-	// 		let sustain = v.u8(vol_pos);
-	// 		vol_pos += 1;
-	// 		println!("\tsustain {sustain}")
-	// 	    },
-	// 	    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
-	// 		println!("\t(maintain indefinitely)");
-	// 	    }
-	// 	    0xe0 => {
-	// 		let pos = v.u8(vol_pos) as i8 - 5;
-	// 		vol_pos += 1;
-	// 		println!("\tgoto {pos:x}")
-	// 	    },
-	// 	    _ => println!("\tvol = {vol_insn}"),
-	// 	}
-	//     }
-	// }
-
 	// Found a song header!
 	return Some(Song{
 	    basic_samples,
 	    instruments,
+	    timbres,
 	});
     }
 }
