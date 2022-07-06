@@ -569,7 +569,7 @@ impl AudioIterator for ChannelIterator {
 	note.modify(self.state.base_note as isize); // for manual play
 
 	// Compute the Amiga "period", which then translates to the frequency
-	self.state.period = self.state.note.to_period();
+	self.state.period = note.to_period();
 	self.timbre.tick_vibrato(&mut self.state);
 
 	// Done with updating, send updates downstream
