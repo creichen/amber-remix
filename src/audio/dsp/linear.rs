@@ -16,7 +16,7 @@ use super::frequency_range::Freq;
 use super::frequency_range::FreqRange;
 use super::vtracker::TrackerSensor;
 
-const BUFFER_SIZE_MILLIS : usize = 10;
+const BUFFER_SIZE_MILLIS : usize = 50;
 
 pub struct LinearFilter {
     state : Option<SampleState>,
@@ -135,7 +135,7 @@ impl LinearFilter {
 
 	    // How many samples can we expect to get?
 	    let in_from_sample = usize::min(max_in_from_sample,
-					    in_remaining - 1);
+					    if in_remaining == 0 { 0 } else { in_remaining - 1 });
 	    // First double-check that we actually have enough data left
 	    if in_from_sample > in_remaining || in_from_sample == 0 {
 		break;

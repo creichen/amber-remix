@@ -3,7 +3,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 //#[macro_use(lazy_static)]
 //extern crate lazy_static;
-use std::{time::Duration, io, env};
+use std::{time::Duration, io, env, fs, path::Path};
 
 use audio::{Mixer, AQOp, SampleRange};
 use datafiles::music::{self, BasicSample};
@@ -251,6 +251,17 @@ fn main() -> io::Result<()> {
     if args.len() == 2 {
 	if args[1] == "strings" {
 	    print_strings(&data);
+	} else if args[1] == "extract" {
+	    let source = &args[2];
+	    let mut df = datafiles::DataFile::load(Path::new(source));
+	    println!("File type: {}", df.filetype);
+	    for i in 0..df.num_entries {
+		println!("Extracting {i}/{}", df.num_entries);
+		let data = df.decode(i);
+		let filename = format!("decompressed/{source}.{:04}", i);
+		println!("  -> writing {} bytes to {filename}", data.len());
+		fs::write(filename, data).expect("Unable to write file");
+	    }
 	} else {
 	    show_images(&data);
 	}
@@ -259,17 +270,3 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-// fn oldmain() -> io::Result<()> {
-//     let args : Vec<String> = env::args().collect();
-//     let source = &args[1];
-//     let mut df = datafiles::DataFile::load(&source);
-//     println!("File type: {}", df.filetype);
-//     for i in 0..df.num_entries {
-// 	println!("Extracting {i}/{}", df.num_entries);
-// 	let data = df.decode(i);
-// 	let filename = format!("decompressed/{source}.{:04}", i);
-// 	println!("  -> writing {} bytes to {filename}", data.len());
-// 	fs::write(filename, data).expect("Unable to write file");
-//     }
-//     Ok(())
-// }

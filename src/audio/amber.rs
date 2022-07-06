@@ -112,8 +112,12 @@ impl Slider {
 	return new_pos as usize;
     }
 
-    pub fn aqop(&self) -> AQOp {
-	return AQOp::SetSamples(vec![AQSample::Loop(self.current)]);
+    pub fn aqop(&self, first_time : bool) -> AQOp {
+	if first_time {
+	    return AQOp::SetSamples(vec![AQSample::Loop(self.current)]);
+	} else {
+	    return AQOp::SetSamples(vec![AQSample::OnceAtOffset(self.current, None), AQSample::Loop(self.current)]);
+	}
     }
 
     pub fn tick(&mut self) -> Option<AQOp> {
@@ -123,7 +127,7 @@ impl Slider {
 	if self.ticks_delay == 0 {
 	    self.ticks_delay = self.ticks_remaining;
 	    self.shift();
-	    return Some(self.aqop());
+	    return Some(self.aqop(false));
 	} else {
 	    self.ticks_delay -= 1;
 	}
@@ -209,7 +213,7 @@ impl AudioIterator for InstrumentIterator {
 		Some(InstrumentOp::Slide(slidingsample)) => {
 		    let slider = &Slider::from(slidingsample);
 		    self.sample = IISample::Slider(slider.clone());
-		    out_queue.push_back(AQOp::from(slider.aqop()));
+		    out_queue.push_back(AQOp::from(slider.aqop(true)));
 		},
 		// Some(InstrumentOp::ResetVolume) => {
 		// },

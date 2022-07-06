@@ -11,6 +11,16 @@ pub struct SampleRange {
     pub len : usize,
 }
 
+impl SampleRange {
+    pub fn at_offset(&self, n : usize) -> SampleRange {
+	if n > self.len {
+	    SampleRange { start : self.start, len : 0 }
+	} else {
+	    SampleRange { start : self.start + n, len : self.len - n }
+	}
+    }
+}
+
 impl fmt::Display for SampleRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[0x{:x}..0x{:x} (len=0x{:x} ({}))]",
@@ -48,6 +58,10 @@ impl SampleWriter {
 	    range : SampleRange::new(0, 0),
 	    count : 0,
 	}
+    }
+
+    pub fn get_offset(&self) -> usize {
+	return self.count;
     }
 
     pub fn len(&self) -> usize {

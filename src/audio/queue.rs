@@ -98,8 +98,7 @@ impl AudioQueue {
 		Some(AQOp::WaitMillis(0))      => { },
 		Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
 						    break; },
-		Some(AQOp::SetSamples(svec))   => { self.current_sample_vec = VecDeque::from(svec);
-						    self.stop_sample(); }
+		Some(AQOp::SetSamples(svec))   => { self.set_sample_vec(svec); },
 		//self.current_sample = SampleWriter::empty()
 		// Some(AQOp::SetFreq(freq))      => { self.next_freq = freq; }
 		Some(AQOp::SetFreq(freq))      => { self.freq = freq;
@@ -109,6 +108,18 @@ impl AudioQueue {
 	    }
 	}
 	return retval;
+    }
+
+    fn set_sample_vec(&mut self, svec : Vec<AQSample>) {
+	self.current_sample_vec.clear();
+	for x in svec {
+	    if let AQSample::OnceAtOffset(samplerange, None) = x {
+		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some(self.current_sample.get_offset())));
+	    } else {
+		self.current_sample_vec.push_back(x);
+	    }
+	}
+	self.stop_sample();
     }
 
     fn stop_sample(&mut self) {
@@ -135,8 +146,7 @@ impl FlexPCMWriter for AudioQueue {
 	let secs_requested = msecs_requested as f64 * INV_1000;
 	let outbuf_len = outbuf.len();
 	debug!("[AQ] Asked for {secs_requested}s or {outbuf_len} samples");
-	while /*outbuf_pos == 0 ||*/
-	    (secs_written < secs_requested && outbuf_pos < outbuf_len) {
+	while secs_written < secs_requested && outbuf_pos < outbuf_len {
 	    // At the current frequency, how many msecs can we fit into the buffer?
 	    let max_outbuf_write = outbuf_len - outbuf_pos;
 	    let max_outbuf_write_sec = max_outbuf_write as f64 / self.freq as f64;
@@ -162,6 +172,10 @@ impl FlexPCMWriter for AudioQueue {
 
 		    let opt_range = match self.current_sample_vec.pop_front() {
 			Some(AQSample::Once(range)) => Some(range),
+			Some(AQSample::OnceAtOffset(range, Some(off)))
+			                            => Some(range.at_offset(off)),
+			Some(AQSample::OnceAtOffset(_, None))
+			                            => panic!("Unexpected"),
 			Some(AQSample::Loop(range)) => { self.current_sample_vec.push_front(AQSample::Loop(range));
 							 Some(range) },
 			None                        => None,
