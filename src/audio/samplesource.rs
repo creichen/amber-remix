@@ -51,6 +51,10 @@ impl SampleWriter {
 	}
     }
 
+    pub fn len(&self) -> usize {
+	return self.range.len
+    }
+
     pub fn remaining(&self) -> usize {
 	return self.range.len - self.count;
     }

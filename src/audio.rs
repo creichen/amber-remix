@@ -1,8 +1,10 @@
-use core::{time, borrow};
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+
+use core::time;
 use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
 //use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell, borrow::BorrowMut};
 use std::ops::DerefMut;
-use log::{trace, debug, log_enabled, Level, warn, info};
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
 use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::vtracker::{TrackerSensor, Tracker}};
@@ -339,6 +341,10 @@ impl Mixer {
     pub fn set_iterator(&mut self, it : ArcIt) {
 	self.control_channel.send(MixerOp::SetIterator(it)).unwrap();
     }
+
+    pub fn shutdown(&mut self) {
+	self.control_channel.send(MixerOp::ShutDown).unwrap();
+    }
 }
 
 // ================================================================================
@@ -382,8 +388,15 @@ fn run_mixer_thread(freq : Freq,
     mt.run();
 }
 
+const MIXER_THREAD_FREQUENCY_MILLIS : u64 = 20;
+const MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS : u64 = 500; // once per this many milliseconds
+const MIXER_OVERPROVISION_FACTOR : f32 = 0.0; // increase prebuffering
+
 impl MixerThread {
     fn run(&mut self) {
+	let mut millis_since_last_info_dump = 0;
+	let mut fill_states_since_last_info_dump = 0;
+	let mut checks_since_last_info_dump = 0;
 	loop{
 	    if self.check_messages() {
 		break;
@@ -394,10 +407,21 @@ impl MixerThread {
 	    let samples_missing = if samples_needed < samples_available {0} else {samples_needed - samples_available};
 	    let samples_to_request = self.fill_heuristic(samples_available, samples_needed, samples_missing);
 
+	    checks_since_last_info_dump += 1;
+	    fill_states_since_last_info_dump += samples_available;
+
 	    debug!("[AudioThread] fill: {samples_available}/{samples_needed}; expect {samples_needed} -> requesting {samples_to_request}");
 	    if log_enabled!(Level::Info) {
-		for tracker in self.trackers.iter() {
-		    info!("Volume {}", tracker.borrow());
+		millis_since_last_info_dump += MIXER_THREAD_FREQUENCY_MILLIS;
+		if millis_since_last_info_dump > MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS {
+		    millis_since_last_info_dump -= MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS;
+		    for tracker in self.trackers.iter() {
+			info!("Volume {}", tracker.borrow());
+		    }
+		    info!("[AudioThread] buffer fill: {}/{samples_needed}",
+			  fill_states_since_last_info_dump / checks_since_last_info_dump);
+		    fill_states_since_last_info_dump = 0;
+		    checks_since_last_info_dump = 0;
 		}
 	    }
 	    for tracker in self.trackers.iter() {
@@ -410,7 +434,7 @@ impl MixerThread {
 	    self.fill_buffer();
 
 	    // Done for now, wait
-	    thread::sleep(time::Duration::from_millis(30));
+	    thread::sleep(time::Duration::from_millis(MIXER_THREAD_FREQUENCY_MILLIS));
 	}
     }
 
@@ -437,15 +461,16 @@ impl MixerThread {
 
     // Decide how much to add
     fn fill_heuristic(&self, currently_available : usize, average_read : usize, current_needed : usize) -> usize {
-	const PROVISION_FACTOR : usize = 1;
 
-	let desired = average_read * (PROVISION_FACTOR + 1);
+	let overprovision_desired = (average_read as f32 * MIXER_OVERPROVISION_FACTOR) as usize;
 
-	if current_needed == 0 && currently_available >= average_read * PROVISION_FACTOR {
+	if current_needed == 0 && currently_available >= average_read + overprovision_desired {
 	    // twice as many as needed: we're good
 	    return 0;
 	}
-	return (desired - currently_available + 1) & !1; // always even
+
+	return (usize::max(overprovision_desired - currently_available,
+			   current_needed) + 1) & !1; // always even
     }
 
     // Run the pipeline

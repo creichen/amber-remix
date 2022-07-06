@@ -1,7 +1,8 @@
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+
 use std::collections::VecDeque;
 use std::rc::Rc;
-use log::info;
-use log::trace;
 use std::ops::DerefMut;
 
 use super::ArcIt;
@@ -36,7 +37,7 @@ pub struct AudioQueue {
     queue : VecDeque<AQOp>,  // unprocessed AQOps
     flush_requested : bool,
     freq : Freq,
-    next_freq : Freq,
+    // next_freq : Freq,
     volume : f32,
     remaining_secs : f64,    // seconds during which the current state applies
     tracker : TrackerSensor,
@@ -57,7 +58,7 @@ impl AudioQueue {
 	    queue : VecDeque::new(),
 	    flush_requested : false,
 	    freq : 1,
-	    next_freq : 1,
+	    // next_freq : 1,
 	    volume : 1.0,
 	    remaining_secs : 0.0,
 	    tracker,
@@ -70,8 +71,42 @@ impl AudioQueue {
 	self.remaining_secs = self.secs_remaining_in_sample();
     }
 
+    fn hard_reset(&mut self) {
+	self.soft_reset();
+	self.remaining_secs = 0.0;
+	self.current_sample = SampleWriter::empty();
+    }
+
     pub fn secs_remaining_in_sample(&self) -> f64 {
 	return self.current_sample.remaining() as f64 / self.freq as f64;
+    }
+
+    fn poll_iterator_into_queue(&mut self) {
+	let mut guard = self.audio_source.lock().unwrap();
+	let src = guard.deref_mut();
+	src.next(&mut self.queue);
+    }
+
+    /// Returns the next frequency to set, if any
+    fn update_state_from_next_queue_items(&mut self) -> Option<Freq> {
+	let mut retval = None;
+        loop {
+	    let action = self.queue.pop_front();
+	    info!("[AQ]  ::update: {action:?}");
+	    match action {
+		Some(AQOp::WaitMillis(0))      => { },
+		Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
+						    break; },
+		Some(AQOp::SetSamples(svec))   => { self.current_sample_vec = VecDeque::from(svec); }
+		//self.current_sample = SampleWriter::empty()
+		// Some(AQOp::SetFreq(freq))      => { self.next_freq = freq; }
+		Some(AQOp::SetFreq(freq))      => { self.freq = freq;
+						    retval = Some(freq); }
+		Some(AQOp::SetVolume(vol))     => { self.volume = vol; },
+		None => { break; },
+	    }
+	}
+	return retval;
     }
 }
 
@@ -102,11 +137,15 @@ impl FlexPCMWriter for AudioQueue {
 	    if self.remaining_secs > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
-		    if self.next_freq != self.freq {
-			trace!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
-		    	freqrange.append(outbuf_pos, self.next_freq);
-			self.freq = self.next_freq;
+		    if self.current_sample.len() > 0 {
+			info!("[AQ] Sample finishes");
+			self.current_sample = SampleWriter::empty(); // purely to suppress repeat info! messages
 		    }
+		    // if self.next_freq != self.freq {
+		    // 	trace!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
+		    // 	freqrange.append(outbuf_pos, self.next_freq);
+		    // 	self.freq = self.next_freq;
+		    // }
 
 		    let opt_range = match self.current_sample_vec.pop_front() {
 			Some(AQSample::Once(range)) => Some(range),
@@ -145,7 +184,7 @@ impl FlexPCMWriter for AudioQueue {
 		    }
 		    outbuf_pos += num_samples_to_write;
 		} else {
-		    info!("[AQ] ** out of time!");
+		    trace!("[AQ] ** out of time");
 		    // Waiting but no current sample information?  Write silence.
 		    let num_zeroes_to_write;
 		    if num_samples_to_write_by_secs > max_outbuf_write {
@@ -164,43 +203,33 @@ impl FlexPCMWriter for AudioQueue {
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
 		if self.queue.len() == 0 {
-		    info!("[AQ] ** out of queue!");
-		    let mut guard = self.audio_source.lock().unwrap();
-		    let src = guard.deref_mut();
-		    src.next(&mut self.queue);
+		    self.poll_iterator_into_queue();
 		}
 		if self.queue.len() == 0 {
 		    // Iterator has given up on us?
 		    if outbuf_pos == 0 {
+			trace!("[AQ] ** reporting silence");
 			return FlexPCMResult::Silence;
 		    } else {
+			info!("[AQ] ** early abort!");
 			return FlexPCMResult::Wrote(outbuf_pos);
 		    }
 		}
-		loop {
-		    let action = self.queue.pop_front();
-		    trace!("[AQ]  ::update: {action:?}");
-		    match action {
-			Some(AQOp::WaitMillis(0))      => { },
-			Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
-							    break; },
-			Some(AQOp::SetSamples(svec))   => { self.current_sample_vec = VecDeque::from(svec); }
-			                                    //self.current_sample = SampleWriter::empty()
-			Some(AQOp::SetFreq(freq))      => { self.next_freq = freq; }
-			Some(AQOp::SetVolume(vol))     => { self.volume = vol; },
-			None => { break; }, // Go back and iterate as needed
-		    }
+		match self.update_state_from_next_queue_items() {
+		    Some(new_freq) => freqrange.append(outbuf_pos, new_freq),
+		    None           => {},
 		}
 	    }
 	};
 	return FlexPCMResult::Wrote(outbuf_pos);
     }
+
 }
 
 impl AudioIteratorProcessor for AudioQueue {
     // Finishes playing the current sample
     fn flush(&mut self) {
-	self.soft_reset();
+	self.hard_reset();
 	self.flush_requested = true;
     }
 
@@ -212,6 +241,7 @@ impl AudioIteratorProcessor for AudioQueue {
 	info!("[AQ] ** New iterator installed -> {} s remain ({} / {}))",
 	      self.remaining_secs,
 	      self.current_sample.remaining(), self.freq);
+	self.flush();
     }
 }
 

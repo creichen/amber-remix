@@ -12,7 +12,7 @@ pub enum FreqRange {
     AtOffset(Rc<RefCell<FreqRangeBase>>, usize),
 }
 
-struct FreqRangeBase {
+pub struct FreqRangeBase {
     frequencies : Vec<(usize, Freq)>,
 }
 
@@ -33,6 +33,14 @@ impl FreqRangeBase {
 	    }
 	}
 	self.frequencies.push((pos, freq));
+    }
+
+    pub fn is_empty(&self) -> bool {
+	return self.frequencies.len() == 0;
+    }
+
+    fn unbounded_after(&self, offset : usize) -> bool {
+	if let (_, None) = self.get(offset) { true } else { false }
     }
 
     /// Frequency and remaining samples after the given position
@@ -106,6 +114,13 @@ impl FreqRange {
 	match self {
 	    FreqRange::Base(f)                => f.borrow_mut().append(pos, freq),
 	    FreqRange::AtOffset(bref, offset) => { bref.borrow_mut().append(pos + *offset, freq)},
+	}
+    }
+
+    pub fn is_empty(&self) -> bool {
+	match self {
+	    FreqRange::Base(f)                => f.borrow().is_empty(),
+	    FreqRange::AtOffset(bref, offset) => bref.borrow().is_empty() || bref.borrow().unbounded_after(*offset),
 	}
     }
 

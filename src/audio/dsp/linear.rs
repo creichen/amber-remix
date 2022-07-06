@@ -1,9 +1,9 @@
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
-
-use log::debug;
-use log::trace;
 
 /// Linearly interpolating remixer
 ///
@@ -30,6 +30,7 @@ pub struct LinearFilter {
 }
 
 impl LinearFilter {
+    #[cfg(test)]
     fn nw(max_in_freq : Freq, out_freq : Freq, source : Rc<RefCell<dyn FlexPCMWriter>>) -> LinearFilter {
 	return LinearFilter::new(max_in_freq, out_freq, source, TrackerSensor::new());
     }
@@ -107,6 +108,9 @@ impl LinearFilter {
 
 	    trace!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
 
+	    if self.freqs.is_empty() {
+		error!("Buffer size = [{out_pos}..{out_len}] but freqs = {}", self.freqs);
+	    }
 	    // How much sample information should we write now?
 	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
 	    let num_samples_in_per_out = in_freq as f32 / self.out_freq as f32;
@@ -124,7 +128,7 @@ impl LinearFilter {
 	    let mut sample_state = match sample_state_last {
 		Some(s) => s,
 		None    => {
-		    trace!("!! Need new sample state");
+		    info!("Updating sample conversion rate: {in_freq} Hz => {} Hz ", self.out_freq);
 		    SampleState::new(in_freq, self.out_freq)},
 	    };
 

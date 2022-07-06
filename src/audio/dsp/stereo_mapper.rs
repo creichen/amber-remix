@@ -1,6 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use log::{Level, log_enabled, debug};
+use std::{cell::RefCell, rc::Rc};
 
 use super::{writer::PCMWriter, vtracker::TrackerSensor};
 
