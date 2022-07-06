@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 const ONE_128TH : f32 = 1.0 / 128.0;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SampleRange {
     pub start : usize,
     pub len : usize,

@@ -6,26 +6,9 @@ use std::collections::HashMap;
 use crate::{datafiles::decode, audio::{SampleRange, Freq}};
 
 // ================================================================================
-// Frequencies
-
-// CoSo period values
-pub const PERIODS : [u16; 7 * 12] = [
-    1712 , 1616 , 1524 , 1440 , 1356 , 1280 , 1208 , 1140 , 1076 , 1016 ,   960 ,   906,
-    856  ,  808 ,  762 ,  720 ,  678 ,  640 ,  604 ,  570 ,  538 ,  508 ,   480 ,   453,
-    428  ,  404 ,  381 ,  360 ,  339 ,  320 ,  302 ,  285 ,  269 ,  254 ,   240 ,   226,
-    214  ,  202 ,  190 ,  180 ,  170 ,  160 ,  151 ,  143 ,  135 ,  127 ,   120 ,   113,
-    113  ,  113 ,  113 ,  113 ,  113 ,  113 ,  113 ,  113 ,  113 ,  113 ,   113 ,   113,
-    3424 , 3232 , 3048 , 2880 , 2712 , 2560 , 2416 , 2280 , 2152 , 2032 ,  1920 ,  1812,
-    6848 , 6464 , 6096 , 5760 , 5424 , 5120 , 4832 , 4560 , 4304 , 4064 ,  3840 ,  3624];
-
-pub fn period_to_freq(period : u16) -> Freq {
-    return (3546894.6 / period as f32) as Freq;
-}
-
-// ================================================================================
 // Samples
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct BasicSample {
     pub attack : SampleRange,            // First sample to play
     pub looping : Option<SampleRange>,   // Then loop over this sample, if present
@@ -89,12 +72,11 @@ impl fmt::Display for InstrumentOp {
 }
 
 pub struct Instrument {
-    ops : Vec<InstrumentOp>,
+    pub ops : Vec<InstrumentOp>,
 }
 
 impl fmt::Display for Instrument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	let mut s = "".to_string();
 	write!(f, "{}", InstrumentOp::fmt_slice(&self.ops[..]))
     }
 }
@@ -245,18 +227,29 @@ impl<'a> RawSong<'a> {
 		    break;
 		}
 
+		const OP_LOOP : u8          = 0xe0;
+		const OP_COMPLETED : u8     = 0xe1;
+		const OP_SAMPLE : u8        = 0xe2;
+		const OP_VIBRATO : u8       = 0xe3;
+		const OP_SAMPLE_BRK : u8    = 0xe4;
+		const OP_SLIDER : u8        = 0xe5;
+		const OP_SLIDER_SUB : u8    = 0xe6;
+		const OP_SAMPLE_VOL : u8    = 0xe7;
+		const OP_WAIT : u8          = 0xe8;
+		const OP_SAMPLE_CUSTOM : u8 = 0xe9;
+
 		match raw_ins.u8() {
-		    0xe0 => {
+		    OP_LOOP => {
 			let newpos = raw_ins.u8() as usize;
 			goto_label = Some(newpos);
 			break;     // done: loop
 		    },
-		    0xe1 => break, // done: no loop
-		    0xe2 => {
+		    OP_COMPLETED => break, // done: no loop
+		    OP_SAMPLE => {
 			ops.push(InstrumentOp::StopSample);
 			ops.push(InstrumentOp::Sample(basic_samples[raw_ins.u8() as usize]));
 		    },
-		    0xe5 => {
+		    OP_SLIDER => {
 			let sample_index = raw_ins.u8() as usize;
 			let sample = basic_samples[sample_index].attack;
 			let loop_pos_raw = raw_ins.u16();
@@ -271,44 +264,44 @@ impl<'a> RawSong<'a> {
 			let ticks_delay = raw_ins.u8() as usize;
 			ops.push(InstrumentOp::Slide(SlidingSample {
 			    bounds : sample,
-			    subsample_start : SampleRange::new(loop_start, len),
+			    subsample_start : SampleRange::new(loop_start + sample.start, len),
 			    delta: pos_delta,
 			    delay_ticks : ticks_delay
 			}));
 			ops.push(InstrumentOp::ResetVolume);
 		    }
 
-		    0xe7 => {
+		    OP_SAMPLE_VOL => {
 			ops.push(InstrumentOp::Sample(basic_samples[raw_ins.u8() as usize]));
 			ops.push(InstrumentOp::ResetVolume);
 		    },
 
 		    // --------------------
 		    // Unsupported
-		    0xe3 => {
+		    OP_VIBRATO => {
 			let vibspeed = raw_ins.u8();
 			let vibdepth = raw_ins.u8();
 			ops.push(InstrumentOp::Unsupported(format!("E3({vibspeed}, {vibdepth})")));
 		    },
 
-		    0xe4 => {
+		    OP_SAMPLE_BRK => {
 			let sample = raw_ins.u8();
 			ops.push(InstrumentOp::Unsupported(format!("E4({sample})")));
 		    },
 
-		    0xe6 => {
+		    OP_SLIDER_SUB => {
 			let len = (raw_ins.u16()) << 1;
 			let delta = (raw_ins.u16() as i16) << 1;
 			let speed = raw_ins.u8();
 			ops.push(InstrumentOp::Unsupported(format!("E6({len}, {delta}, {speed})")));
 		    },
 
-		    0xe8 => {
+		    OP_WAIT => {
 			let delay = raw_ins.u8();
 			ops.push(InstrumentOp::Unsupported(format!("E8({delay})")));
 		    },
 
-		    0xe9 => {
+		    OP_SAMPLE_CUSTOM => {
 			let sample = raw_ins.u8();
 			let index = raw_ins.u8();
 			ops.push(InstrumentOp::Unsupported(format!("E9({sample}, {index})")));

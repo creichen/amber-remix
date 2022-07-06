@@ -16,7 +16,7 @@ use super::frequency_range::Freq;
 use super::frequency_range::FreqRange;
 use super::vtracker::TrackerSensor;
 
-const BUFFER_SIZE_MILLIS : usize = 100;
+const BUFFER_SIZE_MILLIS : usize = 10;
 
 pub struct LinearFilter {
     state : Option<SampleState>,
@@ -49,7 +49,7 @@ impl LinearFilter {
     }
 
     // May underestimate due to rounding
-    fn buffer_size_in_seconds(&self) -> f32 {
+    fn local_buffer_size_in_seconds(&self) -> f32 {
 	let mut pos = 0;
 	let mut available = 0.0;
 	while pos < self.samples_in_buf {
@@ -65,9 +65,10 @@ impl LinearFilter {
 	return available as f32;
     }
 
-    fn fill_buffer(&mut self, output: &mut [f32]) -> FlexPCMResult {
-        let requested_output_in_seconds = output.len() as f32 / self.out_freq as f32;
-        let available_in_seconds = self.buffer_size_in_seconds();
+    /// Request data from the source to fill the local buffer
+    fn fill_local_buffer(&mut self, output_len : usize) -> FlexPCMResult {
+        let requested_output_in_seconds = output_len as f32 / self.out_freq as f32;
+        let available_in_seconds = self.local_buffer_size_in_seconds();
         let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
         let missing_in_millis = f32::ceil(missing_in_seconds / 1000.0) as usize;
         let buf_offset = self.samples_in_buf;
@@ -113,7 +114,7 @@ impl LinearFilter {
 	    }
 	    // How much sample information should we write now?
 	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
-	    let num_samples_in_per_out = in_freq as f32 / self.out_freq as f32;
+	    let num_samples_out_per_in = in_freq as f32 / self.out_freq as f32;
 	    let max_in_from_sample = match max_in_samples {
 		None    => in_remaining, // infinite length -> beyond the size of the output buffer
 		Some(l) => l,
@@ -140,7 +141,7 @@ impl LinearFilter {
 		break;
 	    }
 
-	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_in_per_out;
+	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_out_per_in;
 	    let out_from_sample = (out_from_sample_f32 - sample_state.get_pos()) as usize;
 
 	    trace!("-- in@{in_pos} out@{out_pos}");
@@ -153,13 +154,24 @@ impl LinearFilter {
 	    trace!("        it: {sample_state}");
 
 	    if out_from_sample == 0 {
+		if let Some(remaining_in_this_sample) = max_in_samples {
+		    trace!(" ! not enough progress; with {remaining_in_this_sample} remaining and conversion {num_samples_out_per_in}");
+		    if (remaining_in_this_sample as f32) * num_samples_out_per_in < 1.0 {
+			trace!("  => end of sample, and not enough data left-- shift out!");
+			// Skip the rest of this sample, it's not enough
+			in_pos += remaining_in_this_sample;
+			self.freqs.shift(remaining_in_this_sample);
+			continue;
+		    }
+		}
+		trace!("  => we must requisition additional samples!");
 		break; // Need to get more samples first
 	    }
 
 	    let old_out_pos = out_pos;
 	    if out_remaining > out_from_sample {
 		// Sample will finish before / as we fill the output buffer
-		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_out_per_in}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 
@@ -170,7 +182,7 @@ impl LinearFilter {
 
 	    } else {
 		// We will fill the output buffer before the sample is done
-		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_out_per_in}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 		sample_state.resample(&mut output[out_pos..out_len],
@@ -217,7 +229,7 @@ impl PCMWriter for LinearFilter {
 	while output_written < output_requested {
 	    let mut num_read = 0;
 	    loop {
-		match self.fill_buffer(output) {
+		match self.fill_local_buffer(output.len()) {
 		    FlexPCMResult::Wrote(r) => {
 			num_read = r;
 			break;
@@ -245,7 +257,7 @@ impl PCMWriter for LinearFilter {
 	    }
 	    debug!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
-		panic!("No progress in linear filter: buf {}/{}", self.samples_in_buf, self.buf.len());
+		panic!("No progress in linear filter: input buf {}/{} vs out {output_written}/{output_requested}", self.samples_in_buf, self.buf.len());
 	    }
         }
     }

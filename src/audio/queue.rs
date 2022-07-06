@@ -44,6 +44,7 @@ pub struct AudioQueue {
 }
 
 impl AudioQueue {
+    #[cfg(test)]
     pub fn nw(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>) -> AudioQueue {
 	return AudioQueue::new(audio_source, sample_source, TrackerSensor::new());
     }
@@ -125,6 +126,7 @@ impl FlexPCMWriter for AudioQueue {
     fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange, msecs_requested : usize) -> FlexPCMResult {
 	if self.flush_requested {
 	    self.flush_requested = false;
+	    info!("[AQ] => Flush");
 	    return FlexPCMResult::Flush;
 	}
 
@@ -132,7 +134,9 @@ impl FlexPCMWriter for AudioQueue {
 	let mut secs_written = 0.0;
 	let secs_requested = msecs_requested as f64 * INV_1000;
 	let outbuf_len = outbuf.len();
-	while secs_written < secs_requested && outbuf_pos < outbuf_len {
+	debug!("[AQ] Asked for {secs_requested}s or {outbuf_len} samples");
+	while /*outbuf_pos == 0 ||*/
+	    (secs_written < secs_requested && outbuf_pos < outbuf_len) {
 	    // At the current frequency, how many msecs can we fit into the buffer?
 	    let max_outbuf_write = outbuf_len - outbuf_pos;
 	    let max_outbuf_write_sec = max_outbuf_write as f64 / self.freq as f64;
@@ -147,7 +151,7 @@ impl FlexPCMWriter for AudioQueue {
 		// We should write the current sample information
 		if self.current_sample.done() {
 		    if !self.sample_stopped() {
-			info!("[AQ] Sample finishes");
+			debug!("[AQ] Sample finishes");
 			self.stop_sample();
 		    }
 		    // if self.next_freq != self.freq {
@@ -217,10 +221,10 @@ impl FlexPCMWriter for AudioQueue {
 		if self.queue.len() == 0 {
 		    // Iterator has given up on us?
 		    if outbuf_pos == 0 {
-			trace!("[AQ] ** reporting silence");
+			trace!("[AQ] => Silence");
 			return FlexPCMResult::Silence;
 		    } else {
-			info!("[AQ] ** early abort!");
+			trace!("[AQ] ** early abort: => Wrote({outbuf_pos})!");
 			return FlexPCMResult::Wrote(outbuf_pos);
 		    }
 		}
@@ -230,6 +234,7 @@ impl FlexPCMWriter for AudioQueue {
 		}
 	    }
 	};
+	trace!("[AQ] => Wrote({outbuf_pos})");
 	return FlexPCMResult::Wrote(outbuf_pos);
     }
 

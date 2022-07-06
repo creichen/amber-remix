@@ -22,6 +22,7 @@ mod dsp;
 mod queue;
 mod iterator;
 mod samplesource;
+pub mod amber;
 
 const AUDIO_BUF_DEFAULT_POLL_SIZE : usize = 8192; // # of bytes polled by the audio subsystem
 const AUDIO_BUF_MAX_SIZE : usize = 16384;
@@ -393,7 +394,7 @@ fn run_mixer_thread(freq : Freq,
 }
 
 const MIXER_THREAD_FREQUENCY_MILLIS : u64 = 20;
-const MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS : u64 = 500; // once per this many milliseconds
+const MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS : u64 = 2000; // once per this many milliseconds
 const MIXER_OVERPROVISION_FACTOR : f32 = 0.0; // increase prebuffering
 
 impl MixerThread {

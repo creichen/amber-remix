@@ -9,6 +9,8 @@ use audio::{Mixer, AQOp, SampleRange};
 use datafiles::music::{self, BasicSample};
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::Canvas};
 
+use crate::audio::amber;
+
 mod datafiles;
 mod audio;
 
@@ -36,16 +38,35 @@ fn print_strings(data : &datafiles::AmberStarFiles) {
 
 }
 
+enum ISelect {
+    Sample,
+    Instrument,
+}
+
 struct InstrSelect<'a> {
     data : &'a datafiles::AmberStarFiles,
     mixer : &'a mut Mixer,
     song_nr   : usize,
     sample_nr : usize,
+    instrument_nr : usize,
+    mode : ISelect,
 }
 
 impl<'a> InstrSelect<'a> {
-    fn move_sample(&mut self, dir : isize) {
+    fn _move_sample(&mut self, dir : isize) {
 	self.sample_nr = (((self.sample_nr + self.num_samples()) as isize + dir) as usize) % self.num_samples();
+    }
+    fn move_sample(&mut self, dir : isize) {
+	self._move_sample(dir);
+	self.mode = ISelect::Sample;
+	self.print_config();
+    }
+    fn _move_instrument(&mut self, dir : isize) {
+	self.instrument_nr = (((self.instrument_nr + self.num_instruments()) as isize + dir) as usize) % self.num_instruments();
+    }
+    fn move_instrument(&mut self, dir : isize) {
+	self._move_instrument(dir);
+	self.mode = ISelect::Instrument;
 	self.print_config();
     }
     fn basicsample(&self) -> BasicSample {
@@ -53,23 +74,44 @@ impl<'a> InstrSelect<'a> {
     }
     fn move_song(&mut self, dir : isize) {
 	self.song_nr = (((self.song_nr + self.num_songs()) as isize + dir) as usize) % self.num_songs();
-	if self.sample_nr >= self.num_samples() {
-	    self.sample_nr = self.num_samples() - 1;
-	}
+	self._move_sample(0);
+	self._move_instrument(0);
 	self.print_config();
     }
+
+    fn num_instruments(&self) -> usize { self.data.songs[self.song_nr].instruments.len() }
     fn num_samples(&self) -> usize { self.data.songs[self.song_nr].basic_samples.len() }
     fn num_songs(&self)   -> usize { self.data.songs.len() }
-    fn play(&mut self, note : usize) {
+
+    fn play_sample(&mut self, note : usize) {
 	let sampleinfo = self.basicsample();
 	let sample = AQOp::from(sampleinfo);
-	let period = music::PERIODS[note];
-	let freq = music::period_to_freq(period);
+	let period = amber::PERIODS[note];
+	let freq = amber::period_to_freq(period);
 	println!(" .. playing {sampleinfo} at freq {freq}");
 	self.mixer.set_iterator(audio::make_note(freq, sample, 10000));
     }
+
+    fn play_instrument(&mut self, note : usize) {
+	let ins = &self.data.songs[self.song_nr].instruments[self.instrument_nr];
+	println!(" .. playing instrument: {}", ins);
+	self.mixer.set_iterator(amber::play_instrument(ins, note, 64));
+    }
+
+    fn play(&mut self, note : usize) {
+	match self.mode {
+	    ISelect::Sample => self.play_sample(note),
+	    ISelect::Instrument => self.play_instrument(note),
+	}
+    }
+
     fn print_config(&self) {
-	println!("Switched to: Song {}/{}, instrument {}/{}", self.song_nr, self.num_songs(), self.sample_nr, self.num_samples());
+	match self.mode {
+	    ISelect::Sample =>
+		println!("Switched to: Song {}/{}, sample {}/{}", self.song_nr, self.num_songs(), self.sample_nr, self.num_samples()),
+	    ISelect::Instrument =>
+		println!("Switched to: Song {}/{}, instrument {}/{}", self.song_nr, self.num_songs(), self.instrument_nr, self.num_instruments()),
+	}
     }
 }
 
@@ -106,7 +148,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 
     let mut audiocore = audio::init(&sdl_context);
     let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
-    let mut instr = InstrSelect { data, mixer:&mut mixer, song_nr : 0, sample_nr : 0 };
+    let mut instr = InstrSelect { data, mixer:&mut mixer, song_nr : 0, sample_nr : 0, instrument_nr : 0, mode : ISelect::Instrument };
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -151,6 +193,8 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 			Keycode::RightBracket => instr.move_song(1),
 			Keycode::Minus        => instr.move_sample(-1),
 			Keycode::Equals       => instr.move_sample(1),
+			Keycode::Quote     => instr.move_instrument(-1),
+			Keycode::Backslash    => instr.move_instrument(1),
 
 			Keycode::Z            => instr.play(12),
 			Keycode::S            => instr.play(13),
