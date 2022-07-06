@@ -145,18 +145,45 @@ fn show_images(data : &datafiles::AmberStarFiles) {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
 		    break 'running
                 },
-                Event::KeyDown { keycode : Some(kc), .. } => {
+                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
 		    match kc {
-			Keycode::Num1 => instr.move_song(-1),
-			Keycode::Num2 => instr.move_song(1),
-			Keycode::Num3 => instr.move_sample(-1),
-			Keycode::Num4 => instr.move_sample(1),
-			Keycode::A => instr.play(12),
-			Keycode::W => instr.play(13),
-			Keycode::S => instr.play(14),
-			Keycode::E => instr.play(15),
-			Keycode::D => instr.play(16),
-			    _ => { println!("<ESC>: quit; 1/2 : fwd/backwd song, 3/4: fwd/backwd instrument, asd... -> play note")},
+			Keycode::LeftBracket  => instr.move_song(-1),
+			Keycode::RightBracket => instr.move_song(1),
+			Keycode::Minus        => instr.move_sample(-1),
+			Keycode::Equals       => instr.move_sample(1),
+
+			Keycode::Z            => instr.play(12),
+			Keycode::S            => instr.play(13),
+			Keycode::X            => instr.play(14),
+			Keycode::D            => instr.play(15),
+			Keycode::C            => instr.play(16),
+			Keycode::V            => instr.play(17),
+			Keycode::G            => instr.play(18),
+			Keycode::B            => instr.play(19),
+			Keycode::H            => instr.play(20),
+			Keycode::N            => instr.play(21),
+			Keycode::J            => instr.play(21),
+			Keycode::M            => instr.play(23),
+
+			Keycode::Q            => instr.play(24),
+			Keycode::Num2         => instr.play(25),
+			Keycode::W            => instr.play(26),
+			Keycode::Num3         => instr.play(27),
+			Keycode::E            => instr.play(28),
+			Keycode::R            => instr.play(29),
+			Keycode::Num5         => instr.play(30),
+			Keycode::T            => instr.play(31),
+			Keycode::Num6         => instr.play(32),
+			Keycode::Y            => instr.play(33),
+			Keycode::Num7         => instr.play(34),
+			Keycode::U            => instr.play(35),
+
+			Keycode::I            => instr.play(36),
+			Keycode::Num9         => instr.play(37),
+			Keycode::O            => instr.play(38),
+			Keycode::Num0         => instr.play(39),
+			Keycode::P            => instr.play(40),
+			    _ => { println!("<ESC>: quit; [/] : fwd/backwd song, -/=: fwd/backwd sample, zsxdc.../q2w3e... -> play note")},
 		    }
                 },
                 _ => {}
