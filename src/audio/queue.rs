@@ -97,7 +97,8 @@ impl AudioQueue {
 		Some(AQOp::WaitMillis(0))      => { },
 		Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
 						    break; },
-		Some(AQOp::SetSamples(svec))   => { self.current_sample_vec = VecDeque::from(svec); }
+		Some(AQOp::SetSamples(svec))   => { self.current_sample_vec = VecDeque::from(svec);
+						    self.stop_sample(); }
 		//self.current_sample = SampleWriter::empty()
 		// Some(AQOp::SetFreq(freq))      => { self.next_freq = freq; }
 		Some(AQOp::SetFreq(freq))      => { self.freq = freq;
@@ -107,6 +108,14 @@ impl AudioQueue {
 	    }
 	}
 	return retval;
+    }
+
+    fn stop_sample(&mut self) {
+	self.current_sample = SampleWriter::empty();
+    }
+
+    fn sample_stopped(&self) -> bool {
+	return self.current_sample.len() == 0;
     }
 }
 
@@ -137,9 +146,9 @@ impl FlexPCMWriter for AudioQueue {
 	    if self.remaining_secs > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
-		    if self.current_sample.len() > 0 {
+		    if self.sample_stopped() {
 			info!("[AQ] Sample finishes");
-			self.current_sample = SampleWriter::empty(); // purely to suppress repeat info! messages
+			self.stop_sample();
 		    }
 		    // if self.next_freq != self.freq {
 		    // 	trace!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
@@ -341,7 +350,7 @@ fn test_sample_switch() {
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 8);
     assert_eq!(FlexPCMResult::Wrote(8), r);
-    assert_eq!([1.0, 2.0, 3.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+    assert_eq!([1.0, 2.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
 	       freqrange.get(0));
@@ -426,11 +435,12 @@ fn test_freq_switch_sample_boundary() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 7);
-    assert_eq!(FlexPCMResult::Wrote(8), r);
-    assert_eq!([1.0, 2.0, 11.0, 12.0, 13.0, 14.0, 21.0, 22.0, -1.0, -1.0],
+    // expect hard switches
+    assert_eq!([1.0, 2.0, 11.0, 12.0, 13.0, 21.0, 22.0, -1.0, -1.0, -1.0],
 	       &outbuf[..]);
+    assert_eq!(FlexPCMResult::Wrote(7), r);
     assert_eq!((1000, Some(2)),  freqrange.get(0));
-    assert_eq!((2000, Some(4)),  freqrange.get(2));
+    assert_eq!((2000, Some(2)),  freqrange.get(2));
     assert_eq!((500, None),      freqrange.get(6));
 }
 
@@ -500,27 +510,30 @@ fn test_replace_iterator() {
 					AQOp::WaitMillis(1000)]]);
     aq.set_source(ait2);
     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2), 10);
-    assert_eq!(FlexPCMResult::Wrote(6), r);
+    assert_eq!(FlexPCMResult::Flush, r);
+    let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2), 10);
 
-    assert_eq!([11.0, 12.0, 13.0, 14.0, 1.0, 2.0, 3.0, 4.0],
+    assert_eq!([11.0, 12.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
 	       &outbuf[..]);
-    assert_eq!((2000, Some(4)),
+    assert_eq!((2000, Some(2)),
 	       freqrange.get(0));
     assert_eq!((1000, None),
-	       freqrange.get(4));
+	       freqrange.get(2));
+    assert_eq!(FlexPCMResult::Wrote(6), r);
 }
 
 #[cfg(test)]
 #[test]
-fn test_sample_loop_uninterrupted() {
+fn test_sample_loop_interrupted() {
 
     let mut outbuf = [-1.0; 12];
 
     let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
-				       AQOp::WaitMillis(4),
+				       AQOp::WaitMillis(2),
 				       AQOp::SetVolume(100.0),
-				       AQOp::SetFreq(2000),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetFreq(1999), // 2000 seems to introduce fp imprecision?
 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
 				       AQOp::WaitMillis(4),
     ]]);
@@ -528,11 +541,11 @@ fn test_sample_loop_uninterrupted() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange, 7);
-    assert_eq!(FlexPCMResult::Wrote(8), r);
-    assert_eq!([1.0, 2.0, 3.0, 1.0, 200.0, 300.0, 1100.0, 1200.0, -1.0, -1.0, -1.0, -1.0],
+    assert_eq!([1.0, 2.0, 300.0, 100.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0, 1300.0, -1.0, -1.0],
 	       &outbuf[..]);
-    assert_eq!((1000, Some(6)),
+    assert_eq!((1000, Some(4)),
 	       freqrange.get(0));
-    assert_eq!((2000, None),
-	       freqrange.get(6));
+    assert_eq!((1999, None),
+	       freqrange.get(4));
+    assert_eq!(FlexPCMResult::Wrote(10), r);
 }
