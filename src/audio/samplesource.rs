@@ -85,17 +85,18 @@ pub struct SimpleSampleSource {
 }
 
 impl SimpleSampleSource {
-    pub fn new(data : Vec<i8>) -> SimpleSampleSource {
-	return SimpleSampleSource {
-	    data : Rc::new(data.iter().map(|x| { *x as f32 * ONE_128TH }).collect()),
-	};
-    }
+    // pub fn new(data : Vec<i8>) -> SimpleSampleSource {
+    // 	return SimpleSampleSource {
+    // 	    data : Rc::new(data.iter().map(|x| { *x as f32 * ONE_128TH }).collect()),
+    // 	};
+    // }
     pub fn from_iter<'a>(data : std::slice::Iter<'a, i8>) -> SimpleSampleSource {
 	return SimpleSampleSource {
 	    data : Rc::new(data.map(|x| { *x as f32 * ONE_128TH }).collect()),
 	};
     }
-    pub fn new_float(data : Vec<f32>) -> SimpleSampleSource {
+    #[cfg(test)]
+    pub fn from_vec_f32(data : Vec<f32>) -> SimpleSampleSource {
 	return SimpleSampleSource {
 	    data : Rc::new(data),
 	};

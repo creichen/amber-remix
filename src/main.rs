@@ -3,11 +3,11 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 //#[macro_use(lazy_static)]
 //extern crate lazy_static;
-use std::{io, time::Duration, env, sync::{Arc, Mutex}, collections::VecDeque};
+use std::{time::Duration, io, env};
 
 use audio::{Mixer, AQOp, SampleRange};
 use datafiles::music::{self, BasicSample};
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, audio::AudioSpecDesired, render::Canvas};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::Canvas};
 
 mod datafiles;
 mod audio;

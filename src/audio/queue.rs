@@ -262,7 +262,7 @@ fn setup_samplesource() -> Rc<dyn SampleSource> {
     for i in 1..1000 {
 	v.push(i as f32);
     }
-    return Rc::new(SimpleSampleSource::new_float(v));
+    return Rc::new(SimpleSampleSource::from_vec_f32(v));
 }
 
 #[cfg(test)]

@@ -72,10 +72,12 @@ impl MockAudioIterator {
 	}
     }
 
+    #[allow(unused)]
     fn len(&self) -> usize {
 	return self.ops.len();
     }
 
+    #[allow(unused)]
     fn num_elements(&self) -> usize {
 	let mut n = 0;
 	for v in &self.ops {
@@ -84,6 +86,7 @@ impl MockAudioIterator {
 	return n;
     }
 
+    #[allow(unused)]
     fn get<'a>(&'a self, i : usize) -> &'a[AQOp] {
 	let v = &self.ops[i];
 	return &v[..];

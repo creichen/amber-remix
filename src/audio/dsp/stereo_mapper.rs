@@ -39,8 +39,6 @@ impl<'a> StereoMapper {
 	let right_v = self.right;
 	let mut buf = self.buf;
 
-	// let mut logvec = vec![];
-
 	let mut debug_total : f32 = 0.0;
 	let mut debug_count = 0;
 	while mono_samples_processed < mono_samples_requested {
@@ -59,10 +57,6 @@ impl<'a> StereoMapper {
 		debug_total += f32::abs(sample);
 		self.tracker.add(sample);
 
-		// if log_enabled!(Level::Debug) {
-		//     debug_total += (f32::abs(sample) * 10.0) as u64;
-		// }
-
 		out[out_pos] += left_v * sample;
 		out[out_pos + 1] += right_v * sample;
 		out_pos += 2;
@@ -70,23 +64,7 @@ impl<'a> StereoMapper {
 	    }
 	    mono_samples_processed += len_next_chunk;
 
-	    // if log_enabled!(Level::Debug) {
-	    // 	logvec.push(debug_total);
-	    // }
 	}
 	self.tracker.add_many(debug_total, debug_count);
-	// if log_enabled!(Level::Debug) {
-	//     print!("[StereoMapper] output [");
-	//     for v in logvec {
-	// 	let c = if v < 1 { " " }
-	// 	else if v < 10 { "." }
-	// 	else if v < 30 { "_" }
-	// 	else if v < 60 { "=" }
-	// 	else if v < 100 { "*" }
-	// 	else { "#" };
-	// 	print!("{c}");
-	//     }
-	//     println!("]");
-	// }
     }
 }

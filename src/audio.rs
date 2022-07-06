@@ -31,21 +31,24 @@ const AUDIO_BUF_MAX_SIZE : usize = 16384;
 
 struct LinearFilteringPipeline {
     it_proc : Rc<RefCell<dyn AudioIteratorProcessor>>,
-    aqueue : Rc<RefCell<dyn FlexPCMWriter>>,
-    linear_filter : Rc<RefCell<LinearFilter>>,
+    // aqueue : Rc<RefCell<dyn FlexPCMWriter>>,
+    // linear_filter : Rc<RefCell<LinearFilter>>,
     stereo_mapper : Rc<RefCell<StereoMapper>>,
 }
 
 impl LinearFilteringPipeline {
-    fn new(it : ArcIt, sample_source : Rc<dyn SampleSource>, output_freq : Freq,
+    fn new(it : ArcIt, vol_left : f32, vol_right : f32,
+	   sample_source : Rc<dyn SampleSource>, output_freq : Freq,
 	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> LinearFilteringPipeline {
 	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue)));
 	let linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, output_freq, aqueue.clone(), sen_linear)));
-	let stereo_mapper = Rc::new(RefCell::new(StereoMapper::new(1.0, 1.0, linear_filter.clone(), sen_stereo)));
+	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, linear_filter.clone(), sen_stereo);
+						  s.set_volume(vol_left, vol_right);
+						  s}));
 	return LinearFilteringPipeline {
 	    it_proc : aqueue.clone(),
-	    aqueue,
-	    linear_filter,
+	    // aqueue,
+	    // linear_filter,
 	    stereo_mapper,
 	}
     }
@@ -176,7 +179,6 @@ impl OutputBuffer {
 // Callback
 
 struct Callback {
-    spec : AudioSpec,
     shared_buf : Arc<Mutex<OutputBuffer>>,
     tracker : TrackerSensor,
 }
@@ -227,9 +229,9 @@ impl AudioCallback for Callback {
 }
 
 impl Callback {
-    fn new(spec : AudioSpec, shared_buf : Arc<Mutex<OutputBuffer>>, tracker : TrackerSensor) -> Callback {
+    fn new(shared_buf : Arc<Mutex<OutputBuffer>>, tracker : TrackerSensor) -> Callback {
 	return Callback {
-	    spec, shared_buf, tracker,
+	    shared_buf, tracker,
 	}
     }
 }
@@ -247,7 +249,7 @@ pub struct AudioCore {
 impl AudioCore {
     fn init(&mut self, spec : AudioSpec) -> Callback {
 	self.spec = spec;
-	return Callback::new(self.spec, self.shared_buf.clone(), self.callback_tracker_sensor.clone());
+	return Callback::new(self.shared_buf.clone(), self.callback_tracker_sensor.clone());
     }
 
     pub fn start_mixer<'a>(&mut self, sample_data : &'a [i8]) -> Mixer {
@@ -370,7 +372,9 @@ fn run_mixer_thread(freq : Freq,
     let tracker_linear = Tracker::new("LinearFilter".to_string());
     let mut tracker_callback = Tracker::new("Callback".to_string());
     tracker_callback.replace_tracker(callback_vtsensor);
-    let pipeline = LinearFilteringPipeline::new(iterator::silent(), sample_source, freq,
+    let pipeline = LinearFilteringPipeline::new(iterator::silent(),
+						1.0, 1.0,
+						sample_source, freq,
 						tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
 
     // let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
@@ -516,7 +520,7 @@ impl MixerThread {
 // Test / demo functionality
 
 pub fn make_note(f : Freq, aqop : AQOp, millis : usize) -> ArcIt{
-    let mut ops = vec![AQOp::SetFreq(f), aqop, AQOp::WaitMillis(millis)];
+    let ops = vec![AQOp::SetFreq(f), aqop, AQOp::WaitMillis(millis)];
 
     return iterator::simple(ops);
 }
