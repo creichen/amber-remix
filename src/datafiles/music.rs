@@ -1,8 +1,12 @@
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+
 use core::fmt;
-
-use log::info;
-
+use std::collections::HashMap;
 use crate::{datafiles::decode, audio::{SampleRange, Freq}};
+
+// ================================================================================
+// Frequencies
 
 // CoSo period values
 pub const PERIODS : [u16; 7 * 12] = [
@@ -18,6 +22,9 @@ pub fn period_to_freq(period : u16) -> Freq {
     return (3546894.6 / period as f32) as Freq;
 }
 
+// ================================================================================
+// Samples
+
 #[derive(Copy, Clone)]
 pub struct BasicSample {
     pub attack : SampleRange,            // First sample to play
@@ -27,15 +34,93 @@ pub struct BasicSample {
 impl fmt::Display for BasicSample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	match self.looping {
-	    Some(l) => write!(f, " BasicSample[{}  looping at: {}]", self.attack, l),
-	    None    => write!(f, " BasicSample[{}]", self.attack),
+	    Some(l) => write!(f, "BasicSample[{} +loop:{}]", self.attack, l),
+	    None    => write!(f, "BasicSample[{}]", self.attack),
 	}
     }
 }
 
+/// Multiple samples that we "slide through" while playing
+#[derive(Copy, Clone)]
+pub struct SlidingSample {
+    pub bounds : SampleRange, // Will stop once it moves into those bounds
+    pub subsample_start : SampleRange,
+    pub delta : isize,
+    pub delay_ticks : usize,
+}
+
+// ================================================================================
+// Instruments
+
+impl fmt::Display for SlidingSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SlidingSample[{}{}{} / {} ticks; within {}]", self.subsample_start,
+	       if self.delta < 0 { "" } else { "+" }, self.delta, self.delay_ticks, self.bounds)
+    }
+}
+
+#[derive(Clone)]
+pub enum InstrumentOp {
+    WaitTicks(usize),        // delay before next step
+    Loop(Vec<InstrumentOp>),
+    StopSample,              // Force-stop sample
+    Sample(BasicSample),     // Change sample; no-op if same sample is still playing
+    Slide(SlidingSample),
+    ResetVolume,             // Reset timbre volume envelope
+    Pitch(i8),               // Relative pitch tweak
+    FixedNote(u8),           // Instrument will only play this note
+    Unsupported(String),
+}
+
+impl fmt::Display for InstrumentOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	match self {
+	    InstrumentOp::WaitTicks(ticks) => write!(f, "Wait({ticks})"),
+	    InstrumentOp::Loop(vec)        => write!(f, "loop[{}]", InstrumentOp::fmt_slice(&vec)),
+	    InstrumentOp::StopSample       => write!(f, "stopsample"),
+	    InstrumentOp::Sample(s)        => write!(f, "{s}"),
+	    InstrumentOp::Slide(slider   ) => write!(f, "{slider}"),
+	    InstrumentOp::ResetVolume      => write!(f, "reset-vol"),
+	    InstrumentOp::Pitch(pitch)     => write!(f, "pitch({pitch})"),
+	    InstrumentOp::FixedNote(pitch) => write!(f, "abs-pitch({pitch})"),
+	    InstrumentOp::Unsupported(err) => write!(f, "!!UNSUPPORTED({err})!!"),
+	}
+    }
+}
+
+pub struct Instrument {
+    ops : Vec<InstrumentOp>,
+}
+
+impl fmt::Display for Instrument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	let mut s = "".to_string();
+	write!(f, "{}", InstrumentOp::fmt_slice(&self.ops[..]))
+    }
+}
+
+impl InstrumentOp {
+    fn fmt_slice(v : &[InstrumentOp]) -> String {
+	let mut s = "".to_string();
+	for o in v {
+	    if s.len() > 0 {
+		s.push_str("   ");
+	    }
+	    let str = format!("{}", o);
+	    s.push_str(&str);
+	}
+	return s;
+    }
+}
+
+// ================================================================================
+// Song
+
+
 pub struct Song {
     pub basic_samples : Vec<BasicSample>,
-//   pub slide_samples : Vec<Vec<SampleRange>>, // Samples used by Slide instrument effects
+    //   pub slide_samples : Vec<Vec<SampleRange>>, // Samples used by Slide instrument effects
+    pub instruments : Vec<Instrument>,
 }
 
 struct TableIndexedData<'a> {
@@ -45,92 +130,11 @@ struct TableIndexedData<'a> {
     end : usize,
 }
 
-/// A chunk of data prefixed by a 16 bit index table
-impl<'a> TableIndexedData<'a> {
-    fn new(data : &'a [u8], start : usize, end : usize, count : usize) -> TableIndexedData<'a> {
-	let result = TableIndexedData {
-	    data,
-	    count,
-	    start,
-	    end,
-	};
-	return result;
-    }
+// ================================================================================
+// Decoding
 
-    fn offset_of(&self, index : usize) -> usize {
-	return decode::u16(self.data, self.start + 2 * index) as usize;
-    }
-}
-
-impl<'a> std::iter::IntoIterator for TableIndexedData<'a> {
-    type Item = TableIndexedElement<'a>;
-
-    type IntoIter = TableIndexedIterator<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-	let ret = TableIndexedIterator {
-	    tdata : self,
-	    index : 0,
-	};
-	return ret;
-    }
-}
-
-struct TableIndexedIterator<'a> {
-    tdata : TableIndexedData<'a>,
-    index : usize,
-}
-
-struct TableIndexedElement<'a> {
-    data : &'a [u8],
-    index : usize,
-    offset : usize,
-    end_offset : usize, // first illegal positive offset delta on top of
-}
-
-impl<'a> std::iter::Iterator for TableIndexedIterator<'a> {
-    type Item = TableIndexedElement<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-	if self.index >= self.tdata.count {
-	    return Option::None;
-	}
-	let pos = self.tdata.offset_of(self.index);
-	let end_pos = if self.index + 1 >= self.tdata.count { self.tdata.end } else { self.tdata.offset_of(self.index + 1) };
-	let result = TableIndexedElement {
-	    data : self.tdata.data,
-	    index : self.index,
-	    offset : pos,
-	    end_offset : end_pos - pos,
-	};
-	self.index += 1;
-	return Some(result);
-    }
-}
-
-impl<'a> TableIndexedElement<'a> {
-    fn u8(&self, pos : usize) -> u8 {
-	return self.data[self.offset + pos];
-    }
-
-    fn u16(&self, pos : usize) -> u16 {
-	return decode::u16(self.data, self.offset + pos);
-    }
-}
-
-
-pub struct SongSeeker<'a> {
-    data : &'a [u8],
-    pos : usize,
-}
-
-pub fn seeker<'a>(data : &'a [u8], start : usize) -> SongSeeker<'a> {
-    let seeker = SongSeeker {
-	data,
-	pos : start,
-    };
-    return seeker;
-}
+// --------------------------------------------------------------------------------
+// Raw song access
 
 #[derive(Clone, Copy)]
 pub struct RawSection {
@@ -171,7 +175,7 @@ impl<'a> RawSong<'a> {
 	let divisions    = RawSection::new(decode::u32(data, 16), decode::u16(data, 42) + 1, songs.pos);
 	let monopatterns = RawSection::new(decode::u32(data, 12), decode::u16(data, 40) + 1, divisions.pos);
 	let timbres      = RawSection::new(decode::u32(data,  8), decode::u16(data, 38) + 1, monopatterns.pos);
-	let instruments  = RawSection::new(decode::u32(data,  4), decode::u16(data, 36), timbres.pos);
+	let instruments  = RawSection::new(decode::u32(data,  4), decode::u16(data, 36) + 1, timbres.pos);
 	info!("--  Song at {:x}:", data_pos);
 	for (n, d) in [("instruments", instruments),
 		       ("timbres", timbres),
@@ -189,6 +193,10 @@ impl<'a> RawSong<'a> {
     fn subslice(&self, sec : RawSection, size : usize, i : usize) -> &'a [u8] {
 	let p = sec.pos + size * i;
 	return &self.data[p..p + size];
+    }
+
+    fn table_index(&self, sec : RawSection) -> TableIndexedData<'a> {
+	return TableIndexedData::new(self.data, sec.pos, sec.end, sec.num);
     }
 
     fn basic_samples(&self) -> Vec<BasicSample> {
@@ -214,6 +222,322 @@ impl<'a> RawSong<'a> {
 	}
 	return result;
     }
+
+    fn instruments(&self, basic_samples : &Vec<BasicSample>) -> Vec<Instrument> {
+	let mut result : Vec<Instrument> = vec![];
+	let instrument_table = self.table_index(self.instruments);
+	for mut raw_ins in instrument_table {
+	    let mut ops = vec![];
+	    let mut pos_map = HashMap::new();
+	    let mut goto_label = None;
+
+	    if raw_ins.at_end() {
+		info!("Empty instrument definition after {} instruments, stopping",
+		      result.len());
+		break;
+	    }
+
+	    loop {
+		pos_map.insert(raw_ins.relative_offset(), ops.len());
+
+		if raw_ins.at_end() {
+		    warn!("Prematurely reached end of block");
+		    break;
+		}
+
+		match raw_ins.u8() {
+		    0xe0 => {
+			let newpos = raw_ins.u8() as usize;
+			goto_label = Some(newpos);
+			break;     // done: loop
+		    },
+		    0xe1 => break, // done: no loop
+		    0xe2 => {
+			ops.push(InstrumentOp::StopSample);
+			ops.push(InstrumentOp::Sample(basic_samples[raw_ins.u8() as usize]));
+		    },
+		    0xe5 => {
+			let sample_index = raw_ins.u8() as usize;
+			let sample = basic_samples[sample_index].attack;
+			let loop_pos_raw = raw_ins.u16();
+			let len = (raw_ins.u16() as usize) << 1;
+			let loop_start =
+			    if loop_pos_raw == 0xffff {
+				sample.start + sample.len - len
+			    } else {
+				(loop_pos_raw as usize) << 1
+			    };
+			let pos_delta = (raw_ins.u16() as i16 as isize) << 1;
+			let ticks_delay = raw_ins.u8() as usize;
+			ops.push(InstrumentOp::Slide(SlidingSample {
+			    bounds : sample,
+			    subsample_start : SampleRange::new(loop_start, len),
+			    delta: pos_delta,
+			    delay_ticks : ticks_delay
+			}));
+			ops.push(InstrumentOp::ResetVolume);
+		    }
+
+		    0xe7 => {
+			ops.push(InstrumentOp::Sample(basic_samples[raw_ins.u8() as usize]));
+			ops.push(InstrumentOp::ResetVolume);
+		    },
+
+		    // --------------------
+		    // Unsupported
+		    0xe3 => {
+			let vibspeed = raw_ins.u8();
+			let vibdepth = raw_ins.u8();
+			ops.push(InstrumentOp::Unsupported(format!("E3({vibspeed}, {vibdepth})")));
+		    },
+
+		    0xe4 => {
+			let sample = raw_ins.u8();
+			ops.push(InstrumentOp::Unsupported(format!("E4({sample})")));
+		    },
+
+		    0xe6 => {
+			let len = (raw_ins.u16()) << 1;
+			let delta = (raw_ins.u16() as i16) << 1;
+			let speed = raw_ins.u8();
+			ops.push(InstrumentOp::Unsupported(format!("E6({len}, {delta}, {speed})")));
+		    },
+
+		    0xe8 => {
+			let delay = raw_ins.u8();
+			ops.push(InstrumentOp::Unsupported(format!("E8({delay})")));
+		    },
+
+		    0xe9 => {
+			let sample = raw_ins.u8();
+			let index = raw_ins.u8();
+			ops.push(InstrumentOp::Unsupported(format!("E9({sample}, {index})")));
+		    },
+
+		    // --------------------
+		    // Default
+		    transpose => {
+			if transpose & 0x80 == 0x80 {
+			    ops.push(InstrumentOp::FixedNote(transpose & !0x80));
+			} else {
+			    ops.push(InstrumentOp::Pitch(transpose as i8));
+			}
+			ops.push(InstrumentOp::WaitTicks(1));
+		    },
+		}
+	    }
+	    // Done decoding the instrument ops.  Now check if it ends in a loop:
+	    match goto_label {
+		None        => {},
+		Some(label) => match pos_map.get(&label) {
+		    None => {
+			error!("Instrument definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
+			       raw_ins.start, label, label)},
+		    Some(ops_index) => {
+			let lhs = &ops[..*ops_index];
+			let rhs = &ops[*ops_index..];
+			if rhs.len() > 0 {
+			    let mut newops = lhs.to_vec();
+			    newops.push(InstrumentOp::Loop(rhs.to_vec()));
+			    ops = newops;
+			}
+		    }
+		}
+	    }
+	    while let Some(InstrumentOp::WaitTicks(_)) = ops.last() {
+		ops.pop();
+	    }
+	    let instrument = Instrument { ops };
+	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len(), raw_ins.start);
+	    result.push(instrument);
+	} // looping over instrument table
+	return result;
+    }
+
+	// // // -- ----------------------------------------
+	// // // frqseqs -> Instruments
+	// let frqseqs = TableIndexedData::new(data, pos_frqseqs, pos_volumes, num_freqs);
+	// for f in frqseqs {
+	//     print!("frqseq[{:x}] @ {:03x}:{:x} =  ",
+	// 	   f.index, f.offset, npos + f.offset);
+	//     let mut pos = 0;
+	//     while pos < f.end_offset {
+	// 	let insn = f.u8(pos);
+	// 	pos += 1;
+	// 	match insn {
+	// 	    0xe0 => {
+	// 		let newpos = f.u8(pos);
+	// 		pos += 1;
+	// 		print!("  GOTO({newpos}) ")
+	// 	    },
+	// 	    0xe1 => print!(" -STOP- "),
+	// 	    0xe2 | 0xe4 | 0xe7 => {
+	// 		let sample = f.u8(pos);
+	// 		pos += 1;
+	// 		print!("  {insn:x}_SET-SAMPLE({sample:x})");
+	// 	    }
+	// 	    0xe5 => {
+	// 		let sample = f.u8(pos);
+	// 		let sample_slide_loop = f.u16(pos + 1);
+	// 		let sample_slide_len = f.u16(pos + 3);
+	// 		let sample_slide_delta = f.u16(pos + 5) as i16;
+	// 		let sample_slide_speed = f.u8(pos + 6);
+	// 		pos += 1+7;
+	// 		print!("  {insn:x}_SET-SAMPLE-SLIDE({sample:x}, speed={sample_slide_speed:x}, loop_pos/2={sample_slide_loop:x}, len/2={sample_slide_len:x}, delta={sample_slide_delta:x})");
+	// 	    }
+	// 	    // 0xe5 => {
+	// 	    // 	let sample = f.u8(pos);
+	// 	    // 	let sample_subindex = f.u8(pos + 1);
+	// 	    // 	pos += 2;
+	// 	    // 	print!("  {insn:x}_SET-SAMPLE-SUB({sample:x}, {sample_subindex:x})");
+	// 	    // }
+	// 	    0xe3 => {
+	// 		let vibspeed = f.u8(pos);
+	// 		let vibdepth = f.u8(pos + 1);
+	// 		pos += 2;
+	// 		print!("  VIBRATO({vibspeed} at {vibdepth}) ")
+	// 	    },
+	// 	    // 0xe6 also?
+	// 	    //0xe5 => print!("  {insn:x}_UNSUPPORTED"),
+	// 	    0xe6 => print!("  {insn:x}_UNSUPPORTED"),
+	// 	    0xe8 => {
+	// 		let delay = f.u8(pos);
+	// 		pos += 1;
+	// 		print!("  DELAY({delay}) ")
+	// 	    },
+	// 	    0xe9 => print!("  {insn:x}_UNSUPPORTED"),
+	// 	    transpose => print!("  NOTE+({transpose}) "),
+	// 	}
+	//     }
+	//     println!("");
+	// }
+
+
+}
+
+// --------------------------------------------------------------------------------
+// Table-based indexing
+
+/// A chunk of data prefixed by a 16 bit index table
+impl<'a> TableIndexedData<'a> {
+    fn new(data : &'a [u8], start : usize, end : usize, count : usize) -> TableIndexedData<'a> {
+	let result = TableIndexedData {
+	    data,
+	    count,
+	    start,
+	    end,
+	};
+	return result;
+    }
+
+    fn offset_of(&self, index : usize) -> usize {
+	return decode::u16(self.data, self.start + 2 * index) as usize;
+    }
+}
+
+impl<'a> std::iter::IntoIterator for TableIndexedData<'a> {
+    type Item = TableIndexedElement<'a>;
+
+    type IntoIter = TableIndexedIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+	let ret = TableIndexedIterator {
+	    tdata : self,
+	    index : 0,
+	};
+	return ret;
+    }
+}
+
+struct TableIndexedIterator<'a> {
+    tdata : TableIndexedData<'a>,
+    index : usize,
+}
+
+struct TableIndexedElement<'a> {
+    data : &'a [u8],
+    current_pos : usize,
+    index : usize,
+    start : usize,
+    end_offset : usize, // first illegal positive offset delta on top of
+}
+
+impl<'a> std::iter::Iterator for TableIndexedIterator<'a> {
+    type Item = TableIndexedElement<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+	if self.index >= self.tdata.count {
+	    return Option::None;
+	}
+	let pos = self.tdata.offset_of(self.index);
+	let end_pos = if self.index + 1 >= self.tdata.count { self.tdata.end } else { self.tdata.offset_of(self.index + 1) };
+	let result = TableIndexedElement {
+	    data : self.tdata.data,
+	    index : self.index,
+	    start : pos,
+	    current_pos : pos,
+	    end_offset : end_pos - pos,
+	};
+	self.index += 1;
+	return Some(result);
+    }
+}
+
+impl<'a> TableIndexedElement<'a> {
+    fn abs_u8(&self, pos : usize) -> u8 {
+	return self.data[self.start + pos];
+    }
+
+    fn abs_u16(&self, pos : usize) -> u16 {
+	return decode::u16(self.data, self.start + pos);
+    }
+
+    fn at_end(&self) -> bool {
+	return self.current_pos >= self.start + self.end_offset;
+    }
+
+    fn end(&self) -> usize {
+	return self.start + self.end_offset;
+    }
+
+    fn step(&mut self, size : usize) {
+	self.current_pos += size;
+	if self.current_pos > self.end() {
+	    error!("Stepped outside of TableIndexedElement: {:} / {:} ", self.current_pos, self.end());
+	}
+    }
+
+    fn relative_offset(&self) -> usize {
+	return self.current_pos - self.start;
+    }
+
+    fn u8(&mut self) -> u8 {
+	let v = self.data[self.current_pos];
+	self.step(1);
+	return v;
+    }
+
+    fn u16(&mut self) -> u16 {
+	let v = decode::u16(self.data, self.current_pos);
+	self.step(2);
+	return v;
+    }
+}
+
+// --------------------------------------------------------------------------------
+// Finding song data
+
+pub struct SongSeeker<'a> {
+    data : &'a [u8],
+    pos : usize,
+}
+
+pub fn seeker<'a>(data : &'a [u8], start : usize) -> SongSeeker<'a> {
+    let seeker = SongSeeker {
+	data,
+	pos : start,
+    };
+    return seeker;
 }
 
 impl<'a> SongSeeker<'a> {
@@ -239,6 +563,8 @@ impl<'a> SongSeeker<'a> {
 	let rawsong = RawSong::new(npos, data);
 
 	let basic_samples = rawsong.basic_samples();
+
+	let instruments = rawsong.instruments(&basic_samples);
 
 	// // -- ----------------------------------------
 	// // Songs
@@ -396,67 +722,10 @@ impl<'a> SongSeeker<'a> {
 	//     }
 	// }
 
-	// // // -- ----------------------------------------
-	// // // frqseqs -> Instruments
-	// let frqseqs = TableIndexedData::new(data, pos_frqseqs, pos_volumes, num_freqs);
-	// for f in frqseqs {
-	//     print!("frqseq[{:x}] @ {:03x}:{:x} =  ",
-	// 	   f.index, f.offset, npos + f.offset);
-	//     let mut pos = 0;
-	//     while pos < f.end_offset {
-	// 	let insn = f.u8(pos);
-	// 	pos += 1;
-	// 	match insn {
-	// 	    0xe0 => {
-	// 		let newpos = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  GOTO({newpos}) ")
-	// 	    },
-	// 	    0xe1 => print!(" -STOP- "),
-	// 	    0xe2 | 0xe4 | 0xe7 => {
-	// 		let sample = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  {insn:x}_SET-SAMPLE({sample:x})");
-	// 	    }
-	// 	    0xe5 => {
-	// 		let sample = f.u8(pos);
-	// 		let sample_slide_loop = f.u16(pos + 1);
-	// 		let sample_slide_len = f.u16(pos + 3);
-	// 		let sample_slide_delta = f.u16(pos + 5) as i16;
-	// 		let sample_slide_speed = f.u8(pos + 6);
-	// 		pos += 1+7;
-	// 		print!("  {insn:x}_SET-SAMPLE-SLIDE({sample:x}, speed={sample_slide_speed:x}, loop_pos/2={sample_slide_loop:x}, len/2={sample_slide_len:x}, delta={sample_slide_delta:x})");
-	// 	    }
-	// 	    // 0xe5 => {
-	// 	    // 	let sample = f.u8(pos);
-	// 	    // 	let sample_subindex = f.u8(pos + 1);
-	// 	    // 	pos += 2;
-	// 	    // 	print!("  {insn:x}_SET-SAMPLE-SUB({sample:x}, {sample_subindex:x})");
-	// 	    // }
-	// 	    0xe3 => {
-	// 		let vibspeed = f.u8(pos);
-	// 		let vibdepth = f.u8(pos + 1);
-	// 		pos += 2;
-	// 		print!("  VIBRATO({vibspeed} at {vibdepth}) ")
-	// 	    },
-	// 	    // 0xe6 also?
-	// 	    //0xe5 => print!("  {insn:x}_UNSUPPORTED"),
-	// 	    0xe6 => print!("  {insn:x}_UNSUPPORTED"),
-	// 	    0xe8 => {
-	// 		let delay = f.u8(pos);
-	// 		pos += 1;
-	// 		print!("  DELAY({delay}) ")
-	// 	    },
-	// 	    0xe9 => print!("  {insn:x}_UNSUPPORTED"),
-	// 	    transpose => print!("  NOTE+({transpose}) "),
-	// 	}
-	//     }
-	//     println!("");
-	// }
-
 	// Found a song header!
 	return Some(Song{
-	    basic_samples
+	    basic_samples,
+	    instruments,
 	});
     }
 }

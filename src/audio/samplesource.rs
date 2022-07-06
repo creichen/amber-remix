@@ -13,8 +13,7 @@ pub struct SampleRange {
 
 impl fmt::Display for SampleRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, " samplerange[0x{:x}..0x{:x} ({}..{}) (len=0x{:x} ({}))]",
-	       self.start, self.start+self.len,
+        write!(f, "[0x{:x}..0x{:x} (len=0x{:x} ({}))]",
 	       self.start, self.start+self.len,
 	       self.len, self.len)
     }

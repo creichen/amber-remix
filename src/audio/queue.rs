@@ -146,7 +146,7 @@ impl FlexPCMWriter for AudioQueue {
 	    if self.remaining_secs > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
-		    if self.sample_stopped() {
+		    if !self.sample_stopped() {
 			info!("[AQ] Sample finishes");
 			self.stop_sample();
 		    }
