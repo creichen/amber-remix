@@ -160,39 +160,52 @@ impl fmt::Display for Timbre {
 // ================================================================================
 // Monopatterns
 
-#[derive(Clone)]
-enum MPOp {
-    Note(u8),
-    Timbre(u8, Option<u8>), // optional instrument
-    Portando(isize),
+#[derive(Clone, Copy)]
+pub struct MPTimbre {
+    timbre : u8,
+    instrument : Option<u8>,
+}
+
+#[derive(Clone, Copy)]
+pub struct MPNote {
+    note : i8,
+    timbre : Option<MPTimbre>,
+    portando : Option<i8>
+}
+
+#[derive(Clone, Copy)]
+pub struct MPOp {
+    note : Option<MPNote>,       // Hold, if None
+    pticks : usize,
 }
 
 impl fmt::Display for MPOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-	    MPOp::Note(note)         => write!(f, "Note({note})"),
-	    MPOp::Timbre(t, None)    => write!(f, "Timbre({t})"),
-	    MPOp::Timbre(t, Some(i)) => write!(f, "Timbre({t} with {i})"),
-	    MPOp::Portando(n)        => write!(f, "Portando({n})"),
+	if let Some(MPNote { note, timbre, portando } ) = self.note {
+	    let timbre = if let Some(MPTimbre { timbre : t, instrument  }) = timbre {
+		if let Some(i) = instrument {
+		    format!("_timb.{t}+ins.{i}")
+		} else {
+		    format!("_timb.{t}")
+		}
+	    } else {
+		"".to_string()
+	    };
+	    let portando = if let Some(p) = portando {
+		format!("~port(p)")
+	    } else {
+		"".to_string()
+	    };
+            write!(f, "N{note}{timbre}{portando},{}t", self.pticks)
+	} else {
+	    write!(f, "Hold,{}t", self.pticks)
 	}
     }
 }
 
 #[derive(Clone)]
-struct MPStep {
-    op : MPOp,
-    pticks : usize, // pattern ticks: subject by channel speed factor
-}
-
-impl fmt::Display for MPStep {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	write!(f, "{},{}t", self.op, self.pticks)
-    }
-}
-
-#[derive(Clone)]
-struct Monopattern {
-    ops : Vec<MPStep>,
+pub struct Monopattern {
+    ops : Vec<MPOp>,
 }
 
 impl fmt::Display for Monopattern {
@@ -262,6 +275,7 @@ pub struct Song {
     //   pub slide_samples : Vec<Vec<SampleRange>>, // Samples used by Slide instrument effects
     pub instruments : Vec<Instrument>,
     pub timbres : Vec<Timbre>,
+    pub monopatterns : Vec<Monopattern>,
 }
 
 struct TableIndexedData<'a> {
@@ -500,7 +514,7 @@ impl<'a> RawSong<'a> {
 		ops.pop();
 	    }
 	    let instrument = Instrument { ops };
-	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len(), raw_ins.start);
+	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len() - 1, raw_ins.start);
 	    result.push(instrument);
 	} // looping over instrument table
 	return result;
@@ -586,7 +600,7 @@ impl<'a> RawSong<'a> {
 		    sustain : loop_ops,
 		}
 	    });
-	    info!("Timbre #{} (0x{:x}) : {}", result.len(), raw_tmb.start, result.last().unwrap());
+	    info!("Timbre #{} (0x{:x}) : {}", result.len() - 1, raw_tmb.start, result.last().unwrap());
 
 	}
 	return result;
@@ -595,11 +609,10 @@ impl<'a> RawSong<'a> {
 
     fn monopatterns(&self) -> Vec<Monopattern> {
 	let mut result : Vec<Monopattern> = vec![];
-	let timbre_table = self.table_index(self.monopatterns);
-	for mut raw_mp in timbre_table {
-
+	let monopattern_table = self.table_index(self.monopatterns);
+	for mut raw_mp in monopattern_table {
 	    if raw_mp.at_end() {
-		info!("Empty monopattern definition after {} timbres, stopping",
+		info!("Empty monopattern definition after {} monopatterns, stopping",
 		      result.len());
 		break;
 	    }
@@ -612,60 +625,53 @@ impl<'a> RawSong<'a> {
 
 		const OP_END             : u8 = 0xff;
 		const OP_SET_SPEED       : u8 = 0xfe;
-		const OP_SET_SPEED_WAIT  : u8 = 0xfe;
+		const OP_SET_SPEED_WAIT  : u8 = 0xfd;
 
 		match op {
 		    OP_END => {
-			duration = raw_mp.u8() as usize;
+			break;
 		    },
 		    OP_SET_SPEED => {
-			duration = raw_mp.u8() as usize;
+			duration = 1 + (raw_mp.u8() as usize);
 		    },
 		    OP_SET_SPEED_WAIT => {
-			duration = raw_mp.u8() as usize;
+			duration = 1 + (raw_mp.u8() as usize);
+			ops.push(MPOp { note : None, pticks : duration });
 		    },
-		    // End of envelope
-		    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
-			break;
-		    },
-		    OP_LOOP => {
-			goto_label = Some((raw_mp.u8() as isize) - 5);
-			break;
-		    },
-		    volume  => ops.push(VolumeSpec{ volume, duration }),
-		}
-	    }
+		    note => {
+			let note = note as i8;
+			let raw_timbre = raw_mp.u8();
 
-	    let mut loop_ops = vec![];
+			let mut timbre = None;
+			let mut portando = None;
 
-	    match goto_label {
-		None        => {},
-		Some(label) => match pos_map.get(&(label as usize)) {
-		    None => {
-			error!("Timbre definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
-			       raw_mp.start, label, label)},
-		    Some(ops_index) => {
-			let lhs = &ops[..*ops_index];
-			let rhs = &ops[*ops_index..];
-			if rhs.len() > 0 {
-			    loop_ops = rhs.to_vec();
-			    ops = lhs.to_vec();
+			if note > 0 {
+			    let timbre_index = raw_timbre & 0x1f;
+			    timbre = Some (MPTimbre { timbre : timbre_index,
+						      instrument : None });
+
+			    if raw_timbre & 0xe0 != 0 {
+				let effect = raw_mp.u8() as i8;
+
+				if raw_timbre & 0x40 == 0x40 {
+				    timbre = Some (MPTimbre { timbre : timbre_index,
+							      instrument : Some(effect as u8) });
+				}
+				if raw_timbre & 0x20 == 0x20 {
+				    portando = Some(effect);
+				}
+			    }
 			}
+			ops.push(MPOp{ note   : Some(MPNote { note, timbre, portando}),
+				       pticks : duration });
 		    }
 		}
 	    }
 
-	    result.push(Timbre {
-		envelope_speed : vol_envelope_default_duration,
-		instrument,
-		vibrato,
-		vibrato_delay,
-		vol : VolumeEnvelope {
-		    attack  : ops,
-		    sustain : loop_ops,
-		}
+	    result.push(Monopattern {
+		ops,
 	    });
-	    info!("Timbre #{} (0x{:x}) : {}", result.len(), raw_mp.start, result.last().unwrap());
+	    info!("Monopattern #{} (0x{:x}) : {}", result.len() - 1, raw_mp.start, result.last().unwrap());
 
 	}
 	return result;
@@ -876,6 +882,7 @@ impl<'a> SongSeeker<'a> {
 	let basic_samples = rawsong.basic_samples();
 	let instruments = rawsong.instruments(&basic_samples);
 	let timbres = rawsong.timbres();
+	let monopatterns = rawsong.monopatterns();
 
 	// // -- ----------------------------------------
 	// // Songs
@@ -951,6 +958,7 @@ impl<'a> SongSeeker<'a> {
 	    basic_samples,
 	    instruments,
 	    timbres,
+	    monopatterns,
 	});
     }
 }
