@@ -7,7 +7,7 @@ use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, ce
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
-use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::vtracker::{TrackerSensor, Tracker}};
+use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::vtracker::{TrackerSensor, Tracker}, iterator::ArcPoly};
 #[allow(unused)]
 use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::FlexPCMWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
 pub use self::iterator::AudioIterator;
@@ -136,7 +136,7 @@ impl OutputBuffer {
 	}
 	// We might be done now
 	if to_write == requested || to_write == initially_available {
-	    return requested;
+	    return to_write;
 	}
 	// Otherwise, we must have hit the end of the buffer
 	// Call ourselves one final time to finish up
@@ -204,28 +204,6 @@ impl AudioCallback for Callback {
 	    debug_total += f32::abs(*x);
 	}
 	self.tracker.add_many(debug_total, output.len());
-	// if log_enabled!(Level::Debug) {
-	//     let mut debug_total : u64 = 0;
-	//     print!("[AuadioCallback--Final] output [");
-	//     let mut pos = 0;
-	//     for x in output[0..num_written].iter() {
-	// 	debug_total += f32::abs(x * 5.0) as u64;
-	// 	pos += 1;
-	// 	if (pos & 0x1f) == 0 || pos == num_written {
-	// 	    let v = debug_total;
-	// 	    let c = if v < 1 { " " }
-	// 	    else if v < 10 { "." }
-	// 	    else if v < 30 { "_" }
-	// 	    else if v < 60 { "=" }
-	// 	    else if v < 100 { "*" }
-	// 	    else { "#" };
-	// 	    print!("{c}");
-	// 	    debug_total = 0;
-	// 	}
-	//     }
-	//     println!("]");
-	// }
-
     }
 }
 
@@ -323,6 +301,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 enum MixerOp {
     ShutDown,
     SetIterator(ArcIt),
+    SetPoly(ArcPoly),
 }
 
 pub struct Mixer {
@@ -341,8 +320,13 @@ impl Mixer {
 	    control_channel : tx,
 	}
     }
+
     pub fn set_iterator(&mut self, it : ArcIt) {
 	self.control_channel.send(MixerOp::SetIterator(it)).unwrap();
+    }
+
+    pub fn set_polyiterator(&mut self, it : ArcPoly) {
+	self.control_channel.send(MixerOp::SetPoly(it)).unwrap();
     }
 
     pub fn shutdown(&mut self) {
@@ -354,11 +338,34 @@ impl Mixer {
 // MixerThread
 
 struct MixerThread {
-    pipeline : LinearFilteringPipeline,
+    amiga_pipelines : [LinearFilteringPipeline; 4],
+    aux_pipeline : LinearFilteringPipeline,
     control_channel : Receiver<MixerOp>,
     buf : Arc<Mutex<OutputBuffer>>,
     tmp_buf : OutputBuffer,
     trackers : Vec<RefCell<Tracker>>,
+}
+
+fn make_pipeline(name : &str,
+		 left : f32, right : f32,
+		 sample_source : Rc<dyn SampleSource>,
+		 freq : Freq,
+		 trackers : &mut Vec<RefCell<Tracker>>
+                 ) -> LinearFilteringPipeline {
+    let tracker_aqueue = Tracker::new(format!("{name}:AQueue"));
+    let tracker_linear = Tracker::new(format!("{name}:LFiltr"));
+    let tracker_stereo = Tracker::new(format!("{name}:Stereo"));
+
+
+    let pipeline = LinearFilteringPipeline::new(iterator::silent(),
+						left, right,
+						sample_source, freq,
+						tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
+
+    trackers.push(RefCell::new(tracker_aqueue));
+    trackers.push(RefCell::new(tracker_linear));
+    trackers.push(RefCell::new(tracker_stereo));
+    return pipeline;
 }
 
 fn run_mixer_thread(freq : Freq,
@@ -368,27 +375,35 @@ fn run_mixer_thread(freq : Freq,
 		    callback_vtsensor : TrackerSensor)
 {
     let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
+
     let tracker_stereo = Tracker::new("Stereo".to_string());
     let tracker_aqueue = Tracker::new("AudioQueue".to_string());
     let tracker_linear = Tracker::new("LinearFilter".to_string());
-    let mut tracker_callback = Tracker::new("Callback".to_string());
-    tracker_callback.replace_tracker(callback_vtsensor);
+
     let pipeline = LinearFilteringPipeline::new(iterator::silent(),
 						1.0, 1.0,
-						sample_source, freq,
+						sample_source.clone(), freq,
 						tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
 
-    // let sample_source = Rc::new(SimpleSampleSource::new(vec![-80, 80]));
-    // let pipeline = LinearFilteringPipeline::new(iterator::simple(vec![AQOp::SetFreq(1000),
-    // 								      AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0, 2))]),
-    // 								      AQOp::WaitMillis(10000)]), sample_source, freq);
+    let mut trackers = vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo)];
+    let amiga_pipelines = [
+	make_pipeline("A0L", 0.5, 0.0, sample_source.clone(), freq, &mut trackers),
+	make_pipeline("A1R", 0.0, 0.5, sample_source.clone(), freq, &mut trackers),
+	make_pipeline("A2R", 0.0, 0.5, sample_source.clone(), freq, &mut trackers),
+	make_pipeline("A3L", 0.5, 0.0, sample_source.clone(), freq, &mut trackers),
+    ];
+
+    let mut tracker_callback = Tracker::new("Callback".to_string());
+    tracker_callback.replace_tracker(callback_vtsensor);
+    trackers.push(RefCell::new(tracker_callback));
 
     let mut mt = MixerThread {
-	pipeline,
+	amiga_pipelines,
+	aux_pipeline: pipeline,
 	control_channel,
 	buf,
 	tmp_buf : OutputBuffer::new(),
-	trackers : vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo), RefCell::new(tracker_callback)],
+	trackers,
     };
     mt.run();
 }
@@ -447,7 +462,20 @@ impl MixerThread {
 	for op in self.control_channel.try_iter() {
 	    match op {
 		MixerOp::ShutDown        => { return true },
-		MixerOp::SetIterator(it) => { self.pipeline.set_iterator(it) },
+		MixerOp::SetIterator(it) => { self.aux_pipeline.set_iterator(it) },
+		MixerOp::SetPoly(polyit) => {
+		    let its : Vec<ArcIt>;
+		    {
+			let mut guard = polyit.lock().unwrap();
+			let p = guard.deref_mut();
+			its = p.get();
+		    }
+		    let mut i = 0;
+		    for p in &mut self.amiga_pipelines {
+			p.set_iterator(its[i].clone());
+			i += 1;
+		    }
+		}
 	    }
 	};
 	return false;
@@ -489,7 +517,12 @@ impl MixerThread {
 	    if samples_transferred > 0 {
 		inner_buf.fill(0.0);
 	    }
-	    self.pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
+	    // Run auxiliary pipeline
+	    self.aux_pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
+	    // Run the four Amiga pipelines
+	    for pipeline in &self.amiga_pipelines {
+		pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
+	    }
 	    samples_transferred += FILL_BUFFER_SIZE;
 	    self.tmp_buf.read_from(&inner_buf);
 	}

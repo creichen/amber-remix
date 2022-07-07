@@ -114,7 +114,7 @@ impl LinearFilter {
 	    }
 	    // How much sample information should we write now?
 	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
-	    let num_samples_out_per_in = in_freq as f32 / self.out_freq as f32;
+	    let num_samples_in_per_out = in_freq as f32 / self.out_freq as f32;
 	    let max_in_from_sample = match max_in_samples {
 		None    => in_remaining, // infinite length -> beyond the size of the output buffer
 		Some(l) => l,
@@ -141,7 +141,7 @@ impl LinearFilter {
 		break;
 	    }
 
-	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_out_per_in;
+	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_in_per_out;
 	    let out_from_sample = (out_from_sample_f32 - sample_state.get_pos()) as usize;
 
 	    trace!("-- in@{in_pos} out@{out_pos}");
@@ -155,8 +155,10 @@ impl LinearFilter {
 
 	    if out_from_sample == 0 {
 		if let Some(remaining_in_this_sample) = max_in_samples {
-		    trace!(" ! not enough progress; with {remaining_in_this_sample} remaining and conversion {num_samples_out_per_in}");
-		    if (remaining_in_this_sample as f32) * num_samples_out_per_in < 1.0 {
+		    let max_out_from_sample = sample_state.max_out_possible(remaining_in_this_sample);
+		    trace!(" ! not enough progress; expecting to get at most {max_out_from_sample} out of the active input sample");
+		    trace!(" | max_in_from_sample = {max_in_from_sample}");
+		    if max_out_from_sample < 1 {// (remaining_in_this_sample as f32) <  num_samples_out_per_in {
 			trace!("  => end of sample, and not enough data left-- shift out!");
 			// Skip the rest of this sample, it's not enough
 			in_pos += remaining_in_this_sample;
@@ -171,7 +173,7 @@ impl LinearFilter {
 	    let old_out_pos = out_pos;
 	    if out_remaining > out_from_sample {
 		// Sample will finish before / as we fill the output buffer
-		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_out_per_in}",
+		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 
@@ -182,7 +184,7 @@ impl LinearFilter {
 
 	    } else {
 		// We will fill the output buffer before the sample is done
-		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_out_per_in}",
+		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 		sample_state.resample(&mut output[out_pos..out_len],
@@ -283,6 +285,11 @@ impl SampleState {
 	    sample_pos_int : 0,
 	    sample_pos_fract : 0.0,
 	}
+    }
+
+    /// Output samples we expect to generate for the given number of input samples
+    fn max_out_possible(&self, in_samples : usize) -> usize {
+	return (self.sample_pos_fract + (in_samples * self.in_freq) as f32) as usize / self.out_freq;
     }
 
     fn get_pos(&self) -> f32 {

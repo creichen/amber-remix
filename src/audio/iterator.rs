@@ -4,6 +4,8 @@ use crate::datafiles::music::BasicSample;
 
 use super::{dsp::frequency_range::Freq, SampleRange};
 
+// ================================================================================
+// AudioIterator
 
 /**
  * Audio queue operations allow AudioIterators to control output to their channel.
@@ -61,7 +63,7 @@ pub fn simple(v : Vec<AQOp>) -> ArcIt {
 }
 
 pub fn silent() -> ArcIt {
-    return simple(vec![AQOp::SetFreq(1000), AQOp::WaitMillis(1000)]);
+    return simple(vec![AQOp::SetVolume(0.0), AQOp::SetFreq(1000), AQOp::WaitMillis(1000)]);
 }
 
 /// MockAudioIterator For testing
@@ -104,4 +106,15 @@ impl AudioIterator for MockAudioIterator {
 	    Some(vv) => { queue.append(&mut VecDeque::from(vv)); },
 	}
     }
+}
+
+// ================================================================================
+// PolyIterator
+
+pub type ArcPoly = Arc<Mutex<dyn PolyIterator>>;
+
+pub trait PolyIterator : Send + Sync {
+    /// Retrieves audio iterators for all channels
+    /// Currently assumes four channels with Amiga stereo bindings (LRRL)
+    fn get(&mut self) -> Vec<ArcIt>;
 }

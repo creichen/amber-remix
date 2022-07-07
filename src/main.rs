@@ -138,6 +138,10 @@ impl<'a> InstrSelect<'a> {
 	self.mixer.set_iterator(amber::play_monopattern(self.song(), monopattern, note));
     }
 
+    fn play_song(&mut self) {
+	self.mixer.set_polyiterator(amber::play_song(self.song()));
+    }
+
     fn play(&mut self, note : usize) {
 	match self.mode {
 	    ISelect::Sample => self.play_sample(note),
@@ -253,6 +257,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 			Keycode::Kp7          => instr.move_monopattern(-1),
 			Keycode::Kp9          => instr.move_monopattern(1),
 
+			Keycode::Return       => instr.play_song(),
 			Keycode::Space        => instr.play(0),
 			Keycode::Z            => instr.play(12),
 			Keycode::S            => instr.play(13),
@@ -299,16 +304,44 @@ fn show_images(data : &datafiles::AmberStarFiles) {
     mixer.shutdown();
 }
 
+
+fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
+    let sdl_context = sdl2::init().unwrap();
+
+    let mut audiocore = audio::init(&sdl_context);
+    let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
+    let mut instr = InstrSelect {
+	data, mixer:&mut mixer,
+	song_nr : 0,
+	sample_nr : 0,
+	instrument_nr : 0,
+	timbre_nr : 0,
+	monopattern_nr : 0,
+	mode : ISelect::Instrument };
+
+    instr.song_nr = song_nr;
+    instr.play_song();
+
+    info!("Playing song {song_nr}");
+
+     loop {
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    }
+    //mixer.shutdown();
+}
+
 // ================================================================================
 fn main() -> io::Result<()> {
     env_logger::init();
     let data = datafiles::AmberStarFiles::load("data");
-
     let args : Vec<String> = env::args().collect();
 
-    if args.len() == 2 {
+    if args.len() >= 2 {
 	if args[1] == "strings" {
 	    print_strings(&data);
+	} else if args[1] == "song" {
+	    let source = &args[2];
+	    play_song(&data, str::parse::<usize>(source).unwrap());
 	} else if args[1] == "extract" {
 	    let source = &args[2];
 	    let mut df = datafiles::DataFile::load(Path::new(source));
