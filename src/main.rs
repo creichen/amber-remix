@@ -43,6 +43,7 @@ enum ISelect {
     Sample,
     Instrument,
     Timbre,
+    Monopattern,
 }
 
 struct InstrSelect<'a> {
@@ -51,6 +52,7 @@ struct InstrSelect<'a> {
     song_nr   : usize,
     sample_nr : usize,
     instrument_nr : usize,
+    monopattern_nr : usize,
     timbre_nr : usize,
     mode : ISelect,
 }
@@ -80,6 +82,16 @@ impl<'a> InstrSelect<'a> {
 	self.mode = ISelect::Timbre;
 	self.print_config();
     }
+    fn _move_monopattern(&mut self, dir : isize) {
+	self.monopattern_nr = (((self.monopattern_nr + self.num_monopatterns()) as isize + dir) as usize) % self.num_monopatterns();
+    }
+    fn move_monopattern(&mut self, dir : isize) {
+	self._move_monopattern(dir);
+	self.mode = ISelect::Monopattern;
+	self.print_config();
+    }
+
+
     fn basicsample(&self) -> BasicSample {
 	return self.song().basic_samples[self.sample_nr];
     }
@@ -92,6 +104,7 @@ impl<'a> InstrSelect<'a> {
     }
 
     fn song(&self) -> &'a Song { &self.data.songs[self.song_nr] }
+    fn num_monopatterns(&self) -> usize { self.song().monopatterns.len() }
     fn num_timbres(&self) -> usize { self.song().timbres.len() }
     fn num_instruments(&self) -> usize { self.song().instruments.len() }
     fn num_samples(&self) -> usize { self.song().basic_samples.len() }
@@ -109,7 +122,7 @@ impl<'a> InstrSelect<'a> {
     fn play_instrument(&mut self, note : usize) {
 	let ins = &self.song().instruments[self.instrument_nr];
 	println!(" .. playing instrument: {}", ins);
-	self.mixer.set_iterator(amber::play_instrument(ins, note, 64));
+	self.mixer.set_iterator(amber::play_instrument(ins, note));
     }
 
     fn play_timbre(&mut self, note : usize) {
@@ -119,11 +132,18 @@ impl<'a> InstrSelect<'a> {
 	self.mixer.set_iterator(amber::play_timbre(self.song(), ins, timbre, note));
     }
 
+    fn play_monopattern(&mut self, note : usize) {
+	let monopattern = &self.song().monopatterns[self.monopattern_nr];
+	println!(" .. playing ====> monopattern(basenote={note}): {}\n", monopattern);
+	self.mixer.set_iterator(amber::play_monopattern(self.song(), monopattern, note));
+    }
+
     fn play(&mut self, note : usize) {
 	match self.mode {
 	    ISelect::Sample => self.play_sample(note),
 	    ISelect::Instrument => self.play_instrument(note),
 	    ISelect::Timbre => self.play_timbre(note),
+	    ISelect::Monopattern => self.play_monopattern(note),
 	}
     }
 
@@ -135,6 +155,8 @@ impl<'a> InstrSelect<'a> {
 		println!("Switched to: Song {}/{}, instrument {}/{}", self.song_nr, self.num_songs(), self.instrument_nr, self.num_instruments()),
 	    ISelect::Timbre =>
 		println!("Switched to: Song {}/{}, Timbre {}/{}", self.song_nr, self.num_songs(), self.timbre_nr, self.num_timbres()),
+	    ISelect::Monopattern =>
+		println!("Switched to: Song {}/{}, Monoapttern {}/{}", self.song_nr, self.num_songs(), self.monopattern_nr, self.num_monopatterns()),
 	}
     }
 }
@@ -172,7 +194,14 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 
     let mut audiocore = audio::init(&sdl_context);
     let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
-    let mut instr = InstrSelect { data, mixer:&mut mixer, song_nr : 0, sample_nr : 0, instrument_nr : 0, timbre_nr : 0, mode : ISelect::Instrument };
+    let mut instr = InstrSelect {
+	data, mixer:&mut mixer,
+	song_nr : 0,
+	sample_nr : 0,
+	instrument_nr : 0,
+	timbre_nr : 0,
+	monopattern_nr : 0,
+	mode : ISelect::Instrument };
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -221,7 +250,10 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 			Keycode::Backslash    => instr.move_instrument(1),
 			Keycode::Period       => instr.move_timbre(-1),
 			Keycode::Slash        => instr.move_timbre(1),
+			Keycode::Kp7          => instr.move_monopattern(-1),
+			Keycode::Kp9          => instr.move_monopattern(1),
 
+			Keycode::Space        => instr.play(0),
 			Keycode::Z            => instr.play(12),
 			Keycode::S            => instr.play(13),
 			Keycode::X            => instr.play(14),
@@ -253,7 +285,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 			Keycode::O            => instr.play(38),
 			Keycode::Num0         => instr.play(39),
 			Keycode::P            => instr.play(40),
-			    _ => { println!("<ESC>: quit; [/] : song, -|=: sample, '|\\: instrument, .|/: timbre, zsxdc.../q2w3e... -> play note")},
+			    _ => { println!("<ESC>: quit\n [/] : song\n -|=: sample\n '|\\: instrument\n .|/: timbre\n  Num7/Num9: Monopattern\nzsxdc.../q2w3e... -> play note; Space: play zero note (monopatterns)")},
 		    }
                 },
                 _ => {}

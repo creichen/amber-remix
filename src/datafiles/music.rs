@@ -162,15 +162,15 @@ impl fmt::Display for Timbre {
 
 #[derive(Clone, Copy)]
 pub struct MPTimbre {
-    pub timbre : u8,
-    pub instrument : Option<u8>,
+    pub timbre : usize,
+    pub instrument : Option<usize>,
 }
 
 #[derive(Clone, Copy)]
 pub struct MPNote {
-    pub note : i8,
+    pub note : isize,
     pub timbre : Option<MPTimbre>,
-    pub portando : Option<i8>
+    pub portando : Option<isize>
 }
 
 #[derive(Clone, Copy)]
@@ -192,7 +192,7 @@ impl fmt::Display for MPOp {
 		"".to_string()
 	    };
 	    let portando = if let Some(p) = portando {
-		format!("~port(p)")
+		format!("~port~{p}")
 	    } else {
 		"".to_string()
 	    };
@@ -205,7 +205,7 @@ impl fmt::Display for MPOp {
 
 #[derive(Clone)]
 pub struct Monopattern {
-    ops : Vec<MPOp>,
+    pub ops : Vec<MPOp>,
 }
 
 impl fmt::Display for Monopattern {
@@ -217,53 +217,79 @@ impl fmt::Display for Monopattern {
 // ================================================================================
 // Divisions
 
-
 #[derive(Clone, Copy)]
-enum DivisionEffect {
-    TimbreAdjust(u8),
+pub enum DivisionEffect {
+    TimbreAdjust(usize),
     FullStop,
-    ChannelSpeed(u8),
-    ChannelVolume(u8),
+    ChannelSpeed(usize),
+    ChannelVolume(usize), // from 1 to 64, inclusive
 }
 
 impl fmt::Display for DivisionEffect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	match self {
-	    DivisionEffect::TimbreAdjust(t)  => write!(f, "Timbre+{t}"),
-	    DivisionEffect::FullStop         => write!(f, "FULL-STOP"),
-	    DivisionEffect::ChannelSpeed(s)  => write!(f, "CSpeed({s})"),
-	    DivisionEffect::ChannelVolume(v) => write!(f, "Vol({v})"),
+	    DivisionEffect::TimbreAdjust(t)  => write!(f, "tmb+{t:02x}"),
+	    DivisionEffect::FullStop         => write!(f, "-STOP-"),
+	    DivisionEffect::ChannelSpeed(s)  => write!(f, "spd={s:02x}"),
+	    DivisionEffect::ChannelVolume(v) => write!(f, "vol:{v:02x}"),
 	}
     }
 }
 
 #[derive(Clone, Copy)]
-struct DivisionChannel {
-    monopat   : u8,
-    transpose : i8,
-    effect    : DivisionEffect,
+pub struct DivisionChannel {
+    pub monopat   : usize,
+    pub transpose : isize,
+    pub effect    : DivisionEffect,
 }
 
 impl fmt::Display for DivisionChannel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	let sign = if self.transpose < 0 { "".to_string() } else { format!("{}", self.transpose) };
-	write!(f, "P#{:02x}{}{}_{}",
-	       self.monopat, sign, self.transpose, self.effect)
+	let sign = if self.transpose < 0 { "-".to_string() } else { "+".to_string() };
+	write!(f, "P#{:02x}{}{:02x}_{}",
+	       self.monopat, sign, isize::abs(self.transpose), self.effect)
+    }
+}
+
+impl DivisionChannel {
+    pub fn empty() -> DivisionChannel {
+	DivisionChannel {
+	    monopat : 0, transpose : 0, effect : DivisionEffect::FullStop
+	}
     }
 }
 
 #[derive(Clone, Copy)]
-struct Division {
-    channels : [DivisionChannel; 4],
+pub struct Division {
+    pub channels : [DivisionChannel; 4],
 }
 
 impl fmt::Display for Division {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	write!(f, "0:{:20} 1:{:20} 2:{:20} 3:{:20}",
-	       self.channels[0],
-	       self.channels[1],
-	       self.channels[2],
-	       self.channels[3])
+	write!(f,"{:>17} {:>17} {:>17} {:>17}",
+	       format!("{}", self.channels[0]),
+	       format!("{}", self.channels[1]),
+	       format!("{}", self.channels[2]),
+	       format!("{}", self.channels[3]))
+    }
+}
+
+// ================================================================================
+// Divisions
+
+#[derive(Clone, Copy)]
+pub struct SongInfo {
+    pub first_division : usize,
+    pub last_division : usize,
+    pub speed : usize,
+}
+
+impl fmt::Display for SongInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f,"[Div #{:02x}--#{:02x}, speed={}]",
+	       self.first_division,
+	       self.last_division,
+	       self.speed)
     }
 }
 
@@ -276,6 +302,8 @@ pub struct Song {
     pub instruments : Vec<Instrument>,
     pub timbres : Vec<Timbre>,
     pub monopatterns : Vec<Monopattern>,
+    pub divisions : Vec<Division>,
+    pub songinfo : SongInfo,
 }
 
 struct TableIndexedData<'a> {
@@ -313,7 +341,6 @@ impl fmt::Display for RawSection {
 
 pub struct RawSong<'a> {
     data : &'a [u8],
-    data_pos : usize,
     instruments  : RawSection,
     timbres      : RawSection,
     monopatterns : RawSection,
@@ -341,7 +368,7 @@ impl<'a> RawSong<'a> {
 	    info!("  {n:12} {d}");
 	}
 	return RawSong {
-	    data, data_pos, samples, subsongs, divisions, monopatterns, timbres, instruments,
+	    data, samples, subsongs, divisions, monopatterns, timbres, instruments,
 	}
     }
 
@@ -514,7 +541,7 @@ impl<'a> RawSong<'a> {
 		ops.pop();
 	    }
 	    let instrument = Instrument { ops };
-	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len() - 1, raw_ins.start);
+	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len(), raw_ins.start);
 	    result.push(instrument);
 	} // looping over instrument table
 	return result;
@@ -647,22 +674,22 @@ impl<'a> RawSong<'a> {
 
 			if note > 0 {
 			    let timbre_index = raw_timbre & 0x1f;
-			    timbre = Some (MPTimbre { timbre : timbre_index,
+			    timbre = Some (MPTimbre { timbre : timbre_index as usize,
 						      instrument : None });
 
 			    if raw_timbre & 0xe0 != 0 {
 				let effect = raw_mp.u8() as i8;
 
 				if raw_timbre & 0x40 == 0x40 {
-				    timbre = Some (MPTimbre { timbre : timbre_index,
-							      instrument : Some(effect as u8) });
+				    timbre = Some (MPTimbre { timbre : timbre_index as usize,
+							      instrument : Some(effect as usize) });
 				}
 				if raw_timbre & 0x20 == 0x20 {
-				    portando = Some(effect);
+				    portando = Some(-(effect as isize));
 				}
 			    }
 			}
-			ops.push(MPOp{ note   : Some(MPNote { note, timbre, portando}),
+			ops.push(MPOp{ note   : Some(MPNote { note : note as isize, timbre, portando }),
 				       pticks : duration });
 		    }
 		}
@@ -671,12 +698,74 @@ impl<'a> RawSong<'a> {
 	    result.push(Monopattern {
 		ops,
 	    });
-	    info!("Monopattern #{} (0x{:x}) : {}", result.len() - 1, raw_mp.start, result.last().unwrap());
+	    info!("Monopattern #0x{:02x} (0x{:x}) : {}", result.len() - 1, raw_mp.start, result.last().unwrap());
 
 	}
 	return result;
     }
 
+    fn divisions(&self) -> Vec<Division> {
+	let mut result : Vec<Division> = vec![];
+	for div_id in 0..self.divisions.num {
+	    let ddata_pos = self.divisions.pos + 12 * div_id;
+	    let ddata = &self.data[ddata_pos..ddata_pos + 12];
+	    let mut chan_data : [DivisionChannel; 4] = [DivisionChannel::empty(); 4];
+
+	    for chan_id in 0..4 {
+		let cdata = &ddata[chan_id * 3..];
+		let monopat = cdata[0] as usize;
+		let transpose = (cdata[1] as i8) as isize;
+		let raw_effect = cdata[2];
+		let effect;
+
+		if raw_effect & 0x80 == 0x80 {
+		    let effect_type = (raw_effect & 0x70) >> 4;
+		    let effect_value = raw_effect & 0xf;
+
+		    const OP_FULLSTOP : u8 = 0x0;
+		    const OP_SPEED    : u8 = 0x6;
+		    const OP_VOLUME   : u8 = 0x7;
+
+		    match effect_type {
+			OP_FULLSTOP => effect = DivisionEffect::FullStop,
+			OP_SPEED    => effect = DivisionEffect::ChannelSpeed((effect_value as usize) + 1),
+			OP_VOLUME   => effect = DivisionEffect::ChannelVolume(64 - (effect_value as usize)),
+			_           => {
+			    effect = DivisionEffect::TimbreAdjust(0);
+			    error!("Unknown division effect type {effect_type}");
+			}
+		    }
+		} else {
+		    effect = DivisionEffect::TimbreAdjust(raw_effect as usize);
+		}
+
+		chan_data[chan_id] = DivisionChannel{
+		    monopat, transpose, effect,
+		};
+	    }
+
+	    result.push(Division { channels : chan_data });
+	    info!("Division #0x{:02x} (0x{:x}) : {}", result.len() - 1, ddata_pos, result.last().unwrap());
+
+	}
+	return result;
+    }
+
+    fn songs(&self) -> Vec<SongInfo> {
+	let mut result : Vec<SongInfo> = vec![];
+	for song_id in 0..self.subsongs.num {
+	    let sdata_pos = self.subsongs.pos + 6 * song_id;
+	    let sdata = &self.data[sdata_pos..sdata_pos + 12];
+	    let first_division = decode::u16(sdata, 0) as usize;
+	    let last_division = decode::u16(sdata, 2) as usize;
+	    let speed = decode::u16(sdata, 4) as usize;
+
+	    result.push(SongInfo { first_division, last_division, speed });
+	    info!("SongInfo #0x{:02x} (0x{:x}) : {}", result.len() - 1, sdata_pos, result.last().unwrap());
+
+	}
+	return result;
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -721,7 +810,6 @@ struct TableIndexedIterator<'a> {
 struct TableIndexedElement<'a> {
     data : &'a [u8],
     current_pos : usize,
-    index : usize,
     start : usize,
     end_offset : usize, // first illegal positive offset delta on top of
 }
@@ -737,7 +825,6 @@ impl<'a> std::iter::Iterator for TableIndexedIterator<'a> {
 	let end_pos = if self.index + 1 >= self.tdata.count { self.tdata.end } else { self.tdata.offset_of(self.index + 1) };
 	let result = TableIndexedElement {
 	    data : self.tdata.data,
-	    index : self.index,
 	    start : pos,
 	    current_pos : pos,
 	    end_offset : end_pos - pos,
@@ -748,14 +835,6 @@ impl<'a> std::iter::Iterator for TableIndexedIterator<'a> {
 }
 
 impl<'a> TableIndexedElement<'a> {
-    fn abs_u8(&self, pos : usize) -> u8 {
-	return self.data[self.start + pos];
-    }
-
-    fn abs_u16(&self, pos : usize) -> u16 {
-	return decode::u16(self.data, self.start + pos);
-    }
-
     fn at_end(&self) -> bool {
 	return self.available(0);
     }
@@ -792,18 +871,22 @@ impl<'a> TableIndexedElement<'a> {
     }
 }
 
+
+
 // --------------------------------------------------------------------------------
 // Finding song data
 
 pub struct SongSeeker<'a> {
     data : &'a [u8],
     pos : usize,
+    count : usize,
 }
 
 pub fn seeker<'a>(data : &'a [u8], start : usize) -> SongSeeker<'a> {
     let seeker = SongSeeker {
 	data,
 	pos : start,
+	count : 0,
     };
     return seeker;
 }
@@ -824,7 +907,8 @@ impl<'a> SongSeeker<'a> {
 	    return None;
 	}
 
-	info!("-------------------- Found song at {:x}", npos);
+	info!("-------------------- Found song #{} at {:x}", self.count, npos);
+	self.count += 1;
 
 	let data = &self.data[npos..];
 
@@ -834,75 +918,14 @@ impl<'a> SongSeeker<'a> {
 	let instruments = rawsong.instruments(&basic_samples);
 	let timbres = rawsong.timbres();
 	let monopatterns = rawsong.monopatterns();
-
-	// // -- ----------------------------------------
-	// // Songs
-
-	// let songs_data = &data[pos_song_data..pos_sample_data];
-	// for i in 0..num_songs {
-	//     let i6 = i * 6 as usize;
-	//     let song_spec = &songs_data[i6..i6 + 6];
-	//     let pos_song_start = decode::u16(song_spec, 0) as usize + pos_tracks;
-	//     let pos_song_end = decode::u16(song_spec, 2) as usize + pos_tracks;
-	//     let speed = decode::u16(song_spec, 4);
-	//     println!("Song #{i} = {{ start {pos_song_start:x}, end = {pos_song_end:x}, speed {speed} }}");
-
-	//     if speed > 0 {
-	// 	let mut voices : Vec<Voice> = vec![];
-
-	// 	for i in 0..4 {
-	// 	    let voice = Voice {
-	// 		track_ptr : (pos_song_start + i * 3) as usize,
-	// 		track_pos : 0,
-	// 		pattern_pos : 0,
-	// 		transpose : 0,
-	// 		coso_speed_factor : 1,
-	// 	    };
-	// 	    voices.push(voice);
-	// 	}
-	//     }
-	// }
-
-	// // -- ----------------------------------------
-	// // tracks -> Divisions
-
-	// let tracks = &data[pos_tracks..pos_song_data];
-	// print!("      ");
-	// for v in 0..4 {
-	//     print!(" {v} PP  TRNS  EFFECT   ");
-	// }
-	// println!("");
-	// for t in 0..num_tracks {
-	//     print!("    ");
-	//     for v in 0..4 {
-	// 	let voffs = (v * 3) + (t * 12);
-	// 	let vpat = &tracks[voffs..voffs+3];
-	// 	//println!("{:x}: {:x} {:x} {:x}", voffs + npos, vpat[0], vpat[1], vpat[2]);
-	// 	let new_pattern_pos = vpat[0];
-	// 	let note_transpose = vpat[1] as i8;
-	// 	let effect = vpat[2];
-	// 	let effect_str : String;
-
-	// 	/* magic-1: */
-	// 	if effect & 0x80 == 0x80 {
-	// 	    let effect_type = (effect >> 4) & 0x7;
-	// 	    let effect_val = effect & 0xf;
-	// 	    match effect_type {
-	// 		0 => effect_str = " -STOP-".to_string(),
-	// 		6 => effect_str = format!("SPEED={:01x}", effect_val),
-	// 		7 => effect_str = {
-	// 		    let fade_speed = if effect_val == 0 { 100 }  else { (16 - effect_val) * 6 };
-	// 		    format!("FADE:{:2x}", fade_speed)
-	// 		},
-	// 		_ => effect_str = format!("???[{:02x}]", effect),
-	// 	    }
-	// 	} else {
-	// 	    effect_str = format!("VOL+={:02x}", effect);
-	// 	}
-	// 	print!("     {new_pattern_pos:02x}  {note_transpose:4}  {effect_str}");
-	//     }
-	//     println!("");
-	// }
+	let divisions = rawsong.divisions();
+	let songs = rawsong.songs();
+	if songs.len() != 1 {
+	    error!("Unexpected number of songs: {}", songs.len());
+	    if songs.len() == 0 {
+		return None;
+	    }
+	}
 
 	// Found a song header!
 	return Some(Song{
@@ -910,6 +933,8 @@ impl<'a> SongSeeker<'a> {
 	    instruments,
 	    timbres,
 	    monopatterns,
+	    divisions,
+	    songinfo : songs[0],
 	});
     }
 }

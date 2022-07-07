@@ -16,6 +16,7 @@ use crate::datafiles::music::InstrumentOp;
 use crate::datafiles::music::MPOp;
 use crate::datafiles::music::MPNote;
 use crate::datafiles::music::MPTimbre;
+use crate::datafiles::music::Monopattern;
 use crate::datafiles::music::SlidingSample;
 use crate::datafiles::music::Song;
 use crate::datafiles::music::Timbre;
@@ -60,10 +61,6 @@ pub fn note_to_period(note : Note) -> APeriod {
     return PERIODS[note % PERIODS.len()];
 }
 
-pub fn note_to_freq(note : Note) -> Freq {
-    return period_to_freq(note_to_period(note));
-}
-
 // ================================================================================
 // Volume
 
@@ -81,11 +78,7 @@ pub fn volume(avol : AVolume) -> f32 {
 // Instrument iterator
 
 struct InstrumentIterator {
-    init : bool, // Initial set of specs written
-
-    pitch : isize,
-    base_note : Note,
-    base_avolume : AVolume,
+    base_note : InstrumentNote,
 
     remaining_ticks : Option<usize>, // in case we can't wait all at once
     sample : IISample, // Active sample
@@ -199,14 +192,11 @@ impl InstrumentNote {
 }
 
 impl InstrumentIterator {
-    pub fn new(ops : &Vec<InstrumentOp>) -> InstrumentIterator {
+    pub fn new(ops : &Vec<InstrumentOp>, base_note : Note) -> InstrumentIterator {
 	let ops2 = (&ops[..]).to_vec();
 	let queue = VecDeque::from(ops2);
 	InstrumentIterator {
-	    init : false,
-	    pitch : 0,
-	    base_note : 0,
-	    base_avolume : 0,
+	    base_note : InstrumentNote::Relative(base_note),
 
 	    remaining_ticks : Some(0),
 	    sample : IISample::None,
@@ -215,29 +205,22 @@ impl InstrumentIterator {
 	}
     }
 
-    pub fn make(ops : &Vec<InstrumentOp>, base_note : Note, base_avolume : AVolume) -> InstrumentIterator {
-	let ops2 = (&ops[..]).to_vec();
-	let queue = VecDeque::from(ops2);
-	InstrumentIterator {
-	    init : false,
-	    pitch : 0,
-	    base_note,
-	    base_avolume,
+    pub fn simple(ops : &Vec<InstrumentOp>) -> InstrumentIterator {
+	InstrumentIterator::new(ops, 0)
+    }
 
-	    remaining_ticks : Some(0),
-	    sample : IISample::None,
-
-	    queue,
-	}
+    pub fn default() -> InstrumentIterator {
+	let v = vec![];
+	InstrumentIterator::simple(&v)
     }
 
     /// May push sample changes
-    fn process_queue(&mut self, waittime: &mut Option<usize>,
+    fn process_queue(&mut self,
 		     reset_volume: &mut bool,
-		     out_queue: &mut VecDeque<AQOp>, note: &mut InstrumentNote) {
+		     out_queue: &mut VecDeque<AQOp>) {
         match self.queue.pop_front() {
 	    Some(InstrumentOp::WaitTicks(t)) => {
-		*waittime = Some(t);
+		self.remaining_ticks = Some(t);
 	    },
 	    Some(InstrumentOp::Loop(v)) => {
 		let v2 = (&v[..]).to_vec();
@@ -262,29 +245,23 @@ impl InstrumentIterator {
 		*reset_volume = true;
 	    },
 	    Some(InstrumentOp::Pitch(p)) => {
-		let pitch = p as usize;
-		//self.pitch = pitch;
-		*note = InstrumentNote::Relative(pitch);
-		//out_queue.push_back(AQOp::SetFreq(note_to_freq(((pitch + self.base_note as isize) & 0x7f) as Note)));
+		self.base_note = InstrumentNote::Relative(p as usize);
 	    },
 	    Some(InstrumentOp::FixedNote(nnote)) => {
-		*note = InstrumentNote::Relative(nnote as usize);
-		//*wrote_freq = true;
-		//out_queue.push_back(AQOp::SetFreq(note_to_freq(note as Note)));
+		self.base_note = InstrumentNote::Absolute(nnote as usize);
 	    },
 	    Some(op) => { warn!("Ignoring {op}") },
 	    None     => {
 		info!("Finished playing instrument");
-		*waittime = None;
+		self.remaining_ticks = None;
 	    },
 	}
     }
 
     /// May push sample changes
-    /// May set the note
     /// May reset the timbre envelope
     pub fn tick(&mut self,
-		channel_state : &mut ChannelState,
+		_channel_state : &mut ChannelState,
 		timbre_iterator : &mut TimbreIterator,
 		out_queue : &mut std::collections::VecDeque<AQOp>) {
 
@@ -296,16 +273,11 @@ impl InstrumentIterator {
 	}
 
 	let mut reset_volume = false;
-	let mut ticks = self.remaining_ticks;
 
-	while Some(0) == ticks {
-	    self.process_queue(&mut ticks,
-			       &mut reset_volume,
-			       out_queue,
-			       &mut channel_state.note);
+	while Some(0) == self.remaining_ticks {
+	    self.process_queue(&mut reset_volume,
+			       out_queue)
 	}
-
-	self.remaining_ticks = ticks;
 
 	if reset_volume {
 	    timbre_iterator.reset_volume();
@@ -323,14 +295,15 @@ impl InstrumentIterator {
 	    _ => {},
 	}
     }
-}
 
-pub fn play_instrument(instr : &Instrument, note : Note, avol : AVolume) -> ArcIt {
-    return Arc::new(Mutex::new(ChannelIterator::new(note,
-						    vec![],
-						    vec![],
-						    InstrumentIterator::make(&instr.ops, note, avol),
-						    TimbreIterator::default())));
+    /// May set the note
+    pub fn tick_note(&mut self,
+		     channel_state : &mut ChannelState) {
+	match self.base_note {
+	    InstrumentNote::Relative(n) => channel_state.note.modify(n as isize),
+	    InstrumentNote::Absolute(_) => channel_state.note = self.base_note,
+	}
+    }
 }
 
 // ================================================================================
@@ -471,7 +444,7 @@ lazy_static! {
 enum MPStep {
     OK,
     Stop, // Done playing the pattern
-    SetTimbre(TimbreIterator, Option(InstrumentIterator)),
+    SetTimbre(TimbreIterator, Option<InstrumentIterator>),
 }
 
 struct PortandoState {
@@ -484,6 +457,12 @@ impl PortandoState {
 	PortandoState { delta : 0,
 			current : 0,
 	}
+    }
+    pub fn tick(&mut self) {
+	self.current += self.delta;
+    }
+    pub fn portando(&self, period : APeriod) -> APeriod {
+	return ((period as isize * (1024 + self.current)) as usize) >> 10;
     }
 }
 
@@ -507,39 +486,54 @@ impl MonopatternIterator {
 	}
     }
 
+    pub fn default() -> MonopatternIterator {
+	let v = vec![MPOp { note : None, pticks : 100000000 } ];
+	return MonopatternIterator::new(&v);
+    }
+
     pub fn tick(&mut self,
 		state : &mut ChannelState,
-		instrument_bank &Vec<Instrument>,
+		instrument_bank : &Vec<Instrument>,
 		timbre_bank : &Vec<Timbre>) -> MPStep {
-	state.note.modify(self.channel_note);
 	match self.delay {
 	    None    => return MPStep::Stop, // indefinite hiatus
 	    Some(0) => {},
 	    Some(n) => { self.delay = Some(n-1);
 			 return MPStep::OK; }
 	}
+	if let Some(n) = self.ops.front() {
+	    info!("  Monopattern: play {n}");
+	}
 
 	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
-	    self.delay = Some(pticks - 1);
+	    self.delay = Some((pticks * state.channel_speed) - 1);
 	    match note {
 		None => return MPStep::OK,
 		Some(MPNote { note, timbre, portando }) => {
-		    match note {
-			None    => {},//self.channel_note = 0};
-			Some(n) => { self.channel_note = n; },
-		    }
+		    self.channel_note = note;
 		    match portando {
-			None        => { self.portando = PortandoState::empty(); },
-			Some(delta) => { self.portando = PortandoState { current : 0, delta }; },
+			None        => {
+			    if self.portando.current != 0 {
+				debug!{"  MP: portando completed"};
+			    }
+			    self.portando = PortandoState::empty();
+			},
+			Some(delta) => {
+			    debug!{"  MP: portando~{delta}"};
+			    self.portando = PortandoState { current : 0, delta };
+			},
 		    }
 		    match timbre {
-			None => return MPStep::OK;
-			Some (MPTimbre { timbre, instrument : None } => {
-			    return MPStep::SetTimbre(TimbreIterator::new(timbre_bank[timbre]), None);
-			},
-			      SomeSome (MPTimbre { timbre, instrument : Some (instrument) } => {
-				  return MPStep::SetTimbre(TimbreIterator::new(timbre_bank[timbre as usize]),
-							   Some InstrumentIterator::new(instrument_bank[instrument as usize].ops));
+			None => { return MPStep::OK; },
+			Some (MPTimbre { timbre, instrument }) => {
+			    let timbre = &timbre_bank[timbre];
+			    let instrument = if let Some(instrument_index) = instrument {
+				Some(&instrument_bank[instrument_index].ops)
+			    } else {
+				timbre.instrument.map(|index| &instrument_bank[index as usize].ops)
+			    };
+			    return MPStep::SetTimbre(TimbreIterator::new(timbre),
+						     instrument.map(|instrop| InstrumentIterator::simple(instrop)));
 			},
 		    }
 		}
@@ -548,8 +542,21 @@ impl MonopatternIterator {
 	    self.delay = None;
 	    return MPStep::Stop;
 	}
+    }
 
-	return MPStep::OK;
+    /// May update state.note
+    pub fn tick_note(&mut self, state : &mut ChannelState) {
+	let old = state.note.clone();
+	state.note.modify(self.channel_note);
+	trace!("    MP: note update: {:?} -> {:?}", old, state.note);
+    }
+
+    /// May update state.period
+    pub fn tick_portando(&mut self, state : &mut ChannelState) {
+	self.portando.tick();
+	let p2 = self.portando.portando(state.period);
+	trace!("    MP: portando: {}, hence {} -> {p2}", self.portando.current, state.period);
+	state.period = p2;
     }
 }
 
@@ -562,9 +569,10 @@ impl MonopatternIterator {
 struct ChannelState {
     // Persistent state (carried across iterations)
     base_note : Note, // Note requested for manual play
-    note : InstrumentNote,
+    channel_speed : usize,
 
     // Transient state (reset every iteration)
+    note : InstrumentNote,
     avolume : AVolume,
     period : APeriod,
     num_ticks : Ticks, // Aggregate ticks
@@ -578,6 +586,7 @@ struct ChannelIterator {
 
     instrument : InstrumentIterator,
     timbre : TimbreIterator,
+    monopattern : MonopatternIterator,
 }
 
 impl ChannelIterator {
@@ -585,11 +594,13 @@ impl ChannelIterator {
 	   instrument_bank : Vec<Instrument>,
 	   timbre_bank : Vec<Timbre>,
 	   instrument : InstrumentIterator,
-	   timbre : TimbreIterator) -> ChannelIterator {
+	   timbre : TimbreIterator,
+	   monopattern : MonopatternIterator) -> ChannelIterator {
 	ChannelIterator {
 	    state : ChannelState {
-		base_note : base_note,
+		base_note,
 		note : InstrumentNote::Relative(0),
+		channel_speed : 5,
 
 		avolume : 64,
 		period : 0,
@@ -599,6 +610,7 @@ impl ChannelIterator {
 	    timbre_bank,
 	    instrument,
 	    timbre,
+	    monopattern,
 	}
     }
 }
@@ -607,17 +619,35 @@ impl AudioIterator for ChannelIterator {
     fn next(&mut self, out_queue : &mut VecDeque<AQOp>) {
 	// One full song iterator iteration
 	info!("===== Tick #{}", self.state.num_ticks);
+	self.state.note = InstrumentNote::Relative(self.state.base_note);
+	trace!("  : initial note {:?}", self.state.note);
 	let last_period = self.state.period;
 
+	match self.monopattern.tick(&mut self.state, &self.instrument_bank, &self.timbre_bank) {
+	    MPStep::OK              => {},
+	    MPStep::Stop            => (
+		info!("  : Finished Monopattern")
+	    ),
+	    MPStep::SetTimbre(ti, instr_opt) => {
+		info!("  : Timbre/Instrument switch");
+		self.timbre = ti;
+		if let Some(instr) = instr_opt {
+		    self.instrument = instr;
+		}
+	    }
+	}
 	self.instrument.tick(&mut self.state, &mut self.timbre, out_queue);
 	self.timbre.tick(&mut self.state, out_queue);
 
-	let mut note = self.state.note;
-	note.modify(self.state.base_note as isize); // for manual play
+	self.instrument.tick_note(&mut self.state);
+	self.monopattern.tick_note(&mut self.state);
+
+	let note = self.state.note;
 
 	// Compute the Amiga "period", which then translates to the frequency
 	self.state.period = note.to_period();
 	self.timbre.tick_vibrato(&mut self.state);
+	self.monopattern.tick_portando(&mut self.state);
 
 	// Done with updating, send updates downstream
 	// Send updates downstream
@@ -641,6 +671,25 @@ pub fn play_timbre(song : &Song, instr : &Instrument, timbre : &Timbre, note : N
     return Arc::new(Mutex::new(ChannelIterator::new(note,
 						    (&song.instruments[..]).to_vec(),
 						    (&song.timbres[..]).to_vec(),
-						    InstrumentIterator::make(&instrument.ops, note, 64),
-						    TimbreIterator::new(&timbre))));
+						    InstrumentIterator::new(&instrument.ops, note),
+						    TimbreIterator::new(&timbre),
+						    MonopatternIterator::default())));
+}
+
+pub fn play_instrument(instr : &Instrument, note : Note) -> ArcIt {
+    return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    vec![],
+						    vec![],
+						    InstrumentIterator::new(&instr.ops, note),
+						    TimbreIterator::default(),
+						    MonopatternIterator::default())));
+}
+
+pub fn play_monopattern(song : &Song, pat : &Monopattern, note : Note) -> ArcIt {
+    return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    (&song.instruments[..]).to_vec(),
+						    (&song.timbres[..]).to_vec(),
+						    InstrumentIterator::default(),
+						    TimbreIterator::default(),
+						    MonopatternIterator::new(&pat.ops))));
 }
