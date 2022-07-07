@@ -5,6 +5,18 @@ use core::fmt;
 use std::collections::HashMap;
 use crate::{datafiles::decode, audio::SampleRange};
 
+fn fmt_slice<T>(v : &[T]) -> String where T : fmt::Display  {
+    let mut s = "".to_string();
+    for o in v {
+	if s.len() > 0 {
+	    s.push_str("   ");
+	}
+	let str = format!("{}", o);
+	s.push_str(&str);
+    }
+    return s;
+}
+
 // ================================================================================
 // Samples
 
@@ -59,7 +71,7 @@ impl fmt::Display for InstrumentOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	match self {
 	    InstrumentOp::WaitTicks(ticks) => write!(f, "Wait({ticks})"),
-	    InstrumentOp::Loop(vec)        => write!(f, "loop[{}]", InstrumentOp::fmt_slice(&vec)),
+	    InstrumentOp::Loop(vec)        => write!(f, "loop[{}]", fmt_slice(&vec)),
 	    InstrumentOp::StopSample       => write!(f, "stopsample"),
 	    InstrumentOp::Sample(s)        => write!(f, "{s}"),
 	    InstrumentOp::Slide(slider   ) => write!(f, "{slider}"),
@@ -71,33 +83,19 @@ impl fmt::Display for InstrumentOp {
     }
 }
 
+#[derive(Clone)]
 pub struct Instrument {
     pub ops : Vec<InstrumentOp>,
 }
 
 impl fmt::Display for Instrument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	write!(f, "{}", InstrumentOp::fmt_slice(&self.ops[..]))
-    }
-}
-
-impl InstrumentOp {
-    fn fmt_slice(v : &[InstrumentOp]) -> String {
-	let mut s = "".to_string();
-	for o in v {
-	    if s.len() > 0 {
-		s.push_str("   ");
-	    }
-	    let str = format!("{}", o);
-	    s.push_str(&str);
-	}
-	return s;
+	write!(f, "{}", fmt_slice(&self.ops[..]))
     }
 }
 
 // ================================================================================
 // Timbres
-
 
 #[derive(Clone, Copy)]
 pub struct Vibrato {
@@ -123,20 +121,6 @@ impl fmt::Display for VolumeSpec {
     }
 }
 
-impl VolumeSpec {
-    pub fn fmt_slice(vec : &[VolumeSpec]) -> String {
-	let mut s : String = "".to_string();
-	for x in vec {
-	    if s.len() > 0 {
-		s.push_str("  ");
-	    }
-	    let str = format!("{}", x);
-	    s.push_str(&str);
-	}
-	return s;
-    }
-}
-
 #[derive(Clone)]
 pub struct VolumeEnvelope {
     pub attack   : Vec<VolumeSpec>,
@@ -146,9 +130,9 @@ pub struct VolumeEnvelope {
 impl fmt::Display for VolumeEnvelope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	if self.sustain.len() > 0 {
-	    write!(f, "VolEnv [{} | loop: {}]", VolumeSpec::fmt_slice(&self.attack), VolumeSpec::fmt_slice(&self.sustain))
+	    write!(f, "VolEnv [{} | loop: {}]", fmt_slice(&self.attack), fmt_slice(&self.sustain))
 	} else {
-	    write!(f, "VolEnv [{}]", VolumeSpec::fmt_slice(&self.attack))
+	    write!(f, "VolEnv [{}]", fmt_slice(&self.attack))
 	}
     }
 }
@@ -170,6 +154,103 @@ impl fmt::Display for Timbre {
 	};
 	write!(f, "insn#{insn} {} after {} {}",
 	       self.vibrato, self.vibrato_delay, self.vol)
+    }
+}
+
+// ================================================================================
+// Monopatterns
+
+#[derive(Clone)]
+enum MPOp {
+    Note(u8),
+    Timbre(u8, Option<u8>), // optional instrument
+    Portando(isize),
+}
+
+impl fmt::Display for MPOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+	    MPOp::Note(note)         => write!(f, "Note({note})"),
+	    MPOp::Timbre(t, None)    => write!(f, "Timbre({t})"),
+	    MPOp::Timbre(t, Some(i)) => write!(f, "Timbre({t} with {i})"),
+	    MPOp::Portando(n)        => write!(f, "Portando({n})"),
+	}
+    }
+}
+
+#[derive(Clone)]
+struct MPStep {
+    op : MPOp,
+    pticks : usize, // pattern ticks: subject by channel speed factor
+}
+
+impl fmt::Display for MPStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "{},{}t", self.op, self.pticks)
+    }
+}
+
+#[derive(Clone)]
+struct Monopattern {
+    ops : Vec<MPStep>,
+}
+
+impl fmt::Display for Monopattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "{}", fmt_slice(&self.ops[..]))
+    }
+}
+
+// ================================================================================
+// Divisions
+
+
+#[derive(Clone, Copy)]
+enum DivisionEffect {
+    TimbreAdjust(u8),
+    FullStop,
+    ChannelSpeed(u8),
+    ChannelVolume(u8),
+}
+
+impl fmt::Display for DivisionEffect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	match self {
+	    DivisionEffect::TimbreAdjust(t)  => write!(f, "Timbre+{t}"),
+	    DivisionEffect::FullStop         => write!(f, "FULL-STOP"),
+	    DivisionEffect::ChannelSpeed(s)  => write!(f, "CSpeed({s})"),
+	    DivisionEffect::ChannelVolume(v) => write!(f, "Vol({v})"),
+	}
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DivisionChannel {
+    monopat   : u8,
+    transpose : i8,
+    effect    : DivisionEffect,
+}
+
+impl fmt::Display for DivisionChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	let sign = if self.transpose < 0 { "".to_string() } else { format!("{}", self.transpose) };
+	write!(f, "P#{:02x}{}{}_{}",
+	       self.monopat, sign, self.transpose, self.effect)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Division {
+    channels : [DivisionChannel; 4],
+}
+
+impl fmt::Display for Division {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "0:{:20} 1:{:20} 2:{:20} 3:{:20}",
+	       self.channels[0],
+	       self.channels[1],
+	       self.channels[2],
+	       self.channels[3])
     }
 }
 
@@ -223,7 +304,7 @@ pub struct RawSong<'a> {
     timbres      : RawSection,
     monopatterns : RawSection,
     divisions    : RawSection,
-    songs        : RawSection,
+    subsongs     : RawSection,
     samples      : RawSection,
 }
 
@@ -231,8 +312,8 @@ impl<'a> RawSong<'a> {
     fn new(data_pos : usize, data : &'a [u8]) -> RawSong<'a> {
 	let pos_end = decode::u32(data, 28) as usize;
 	let samples      = RawSection::new(decode::u32(data, 24), decode::u16(data, 50), pos_end);
-	let songs        = RawSection::new(decode::u32(data, 20), decode::u16(data, 48), samples.pos);
-	let divisions    = RawSection::new(decode::u32(data, 16), decode::u16(data, 42) + 1, songs.pos);
+	let subsongs     = RawSection::new(decode::u32(data, 20), decode::u16(data, 48), samples.pos);
+	let divisions    = RawSection::new(decode::u32(data, 16), decode::u16(data, 42) + 1, subsongs.pos);
 	let monopatterns = RawSection::new(decode::u32(data, 12), decode::u16(data, 40) + 1, divisions.pos);
 	let timbres      = RawSection::new(decode::u32(data,  8), decode::u16(data, 38) + 1, monopatterns.pos);
 	let instruments  = RawSection::new(decode::u32(data,  4), decode::u16(data, 36) + 1, timbres.pos);
@@ -241,12 +322,12 @@ impl<'a> RawSong<'a> {
 		       ("timbres", timbres),
 		       ("monopatterns", monopatterns),
 		       ("divisions", divisions),
-		       ("songs", songs),
+		       ("subsongs", subsongs),
 		       ("samples", samples)] {
 	    info!("  {n:12} {d}");
 	}
 	return RawSong {
-	    data, data_pos, samples, songs, divisions, monopatterns, timbres, instruments,
+	    data, data_pos, samples, subsongs, divisions, monopatterns, timbres, instruments,
 	}
     }
 
@@ -507,49 +588,138 @@ impl<'a> RawSong<'a> {
 	    });
 	    info!("Timbre #{} (0x{:x}) : {}", result.len(), raw_tmb.start, result.last().unwrap());
 
+	}
+	return result;
+    }
+
+
+    fn monopatterns(&self) -> Vec<Monopattern> {
+	let mut result : Vec<Monopattern> = vec![];
+	let timbre_table = self.table_index(self.monopatterns);
+	for mut raw_mp in timbre_table {
+
+	    if raw_mp.at_end() {
+		info!("Empty monopattern definition after {} timbres, stopping",
+		      result.len());
+		break;
+	    }
+
+	    let mut ops = vec![];
+	    let mut duration : usize = 1; // Default # ticks
+
+	    while !raw_mp.at_end() {
+		let op = raw_mp.u8();
+
+		const OP_END             : u8 = 0xff;
+		const OP_SET_SPEED       : u8 = 0xfe;
+		const OP_SET_SPEED_WAIT  : u8 = 0xfe;
+
+		match op {
+		    OP_END => {
+			duration = raw_mp.u8() as usize;
+		    },
+		    OP_SET_SPEED => {
+			duration = raw_mp.u8() as usize;
+		    },
+		    OP_SET_SPEED_WAIT => {
+			duration = raw_mp.u8() as usize;
+		    },
+		    // End of envelope
+		    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
+			break;
+		    },
+		    OP_LOOP => {
+			goto_label = Some((raw_mp.u8() as isize) - 5);
+			break;
+		    },
+		    volume  => ops.push(VolumeSpec{ volume, duration }),
+		}
+	    }
+
+	    let mut loop_ops = vec![];
+
+	    match goto_label {
+		None        => {},
+		Some(label) => match pos_map.get(&(label as usize)) {
+		    None => {
+			error!("Timbre definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
+			       raw_mp.start, label, label)},
+		    Some(ops_index) => {
+			let lhs = &ops[..*ops_index];
+			let rhs = &ops[*ops_index..];
+			if rhs.len() > 0 {
+			    loop_ops = rhs.to_vec();
+			    ops = lhs.to_vec();
+			}
+		    }
+		}
+	    }
+
+	    result.push(Timbre {
+		envelope_speed : vol_envelope_default_duration,
+		instrument,
+		vibrato,
+		vibrato_delay,
+		vol : VolumeEnvelope {
+		    attack  : ops,
+		    sustain : loop_ops,
+		}
+	    });
+	    info!("Timbre #{} (0x{:x}) : {}", result.len(), raw_mp.start, result.last().unwrap());
+
+	}
+	return result;
+    }
+
 	// // -- ----------------------------------------
-	// // volumes -> Timbres and Volume Envelopes
-	// let volumes = TableIndexedData::new(data, pos_volumes, pos_patterns, num_volumes);
-	// for v in volumes {
-	//     let vol_speed = v.u8(0);
-	//     let frq_index = v.u8(1) as i8;
-	//     let vibrato_speed = v.u8(2) as i8;
-	//     let vibrato_depth = v.u8(3) as i8;
-	//     let vibrato_delay = v.u8(4);
-
-	//     println!("vol[{:03x}] @ {:03x}:{:x}  = {vol_speed:5o}  frq:{}  vibrato=[{vibrato_speed} at {vibrato_depth} after {vibrato_delay}]",
-	// 	     v.index, v.offset,
-	// 	     npos + v.offset, if frq_index == -128 { "#".to_string() } else { format!("{frq_index}") });
-
-	//     let mut vol_pos = 5;
-	//     let vol_end = v.end_offset;
-	//     while vol_pos < vol_end {
-	// 	let vol_insn = v.u8(vol_pos);
-	// 	vol_pos += 1;
-	// 	print!("\t{:02x}: ", vol_pos);
-	// 	match vol_insn {
-	// 	    0xe8 => {
-	// 		let sustain = v.u8(vol_pos);
-	// 		vol_pos += 1;
-	// 		println!("\tsustain {sustain}")
-	// 	    },
-	// 	    0xe1 | 0xe2 | 0xe3 | 0xe4 | 0xe5 | 0xe6 | 0xe7 => {
-	// 		println!("\t(maintain indefinitely)");
+	// // patterns -> Monopatterns
+	// let patterns = TableIndexedData::new(data, pos_patterns, pos_tracks, num_patterns);
+	// for p in patterns {
+	//     let pattern_offset = p.offset;
+	//     println!("--- pattern {:x} at offset {pattern_offset:x}={:x}", p.index, npos as u32 + pattern_offset as u32);
+	//     let mut pos = 0;
+	//     let mut insn = 0;
+	//     while insn != 0xff {
+	// 	insn = p.u8(pos);
+	// 	pos += 1;
+	// 	print!("\t");
+	// 	match insn {
+	// 	    0xff => println!("--end--"),
+	// 	    0xfe | 0xfd => {
+	// 		let channel_speed_factor = 1 + p.u8(pos) as u16;
+	// 		pos += 1;
+	// 		println!("c-speed = {channel_speed_factor}{}",
+	// 			 if insn == 0xfe { " ...(cont)..." } else { "" });
 	// 	    }
-	// 	    0xe0 => {
-	// 		let pos = v.u8(vol_pos) as i8 - 5;
-	// 		vol_pos += 1;
-	// 		println!("\tgoto {pos:x}")
+	// 	    _    => {
+	// 		let note_info = insn as i8;
+	// 		let note = note_info & 0x7f;
+	// 		let basevolume_info = p.u8(pos);
+	// 		let basevolume = basevolume_info & 0x1f;
+	// 		pos += 1;
+	// 		if note_info < 0 {
+	// 		    print!("defer-");
+	// 		}
+	// 		print!("play {note:3} @ {basevolume}");
+	// 		if basevolume_info & !0x1f != 0 {
+	// 		    let effect_val = p.u8(pos);
+	// 		    let mut extra = "".to_string();
+	// 		    if basevolume_info & 0x40 != 0 {
+	// 			extra = format!(" override-freq={effect_val:x}");
+	// 		    }
+	// 		    if basevolume_info & 0x20 != 0 {
+	// 			extra = format!("{} portando~{effect_val}", extra);
+	// 		    }
+	// 		    pos += 1;
+	// 		    print!("{extra}");
+	// 		}
+	// 		println!("");
 	// 	    },
-	// 	    _ => println!("\tvol = {vol_insn}"),
 	// 	}
 	//     }
 	// }
 
 
-	}
-	return result;
-    }
 }
 
 // --------------------------------------------------------------------------------
@@ -774,54 +944,6 @@ impl<'a> SongSeeker<'a> {
 	// 	print!("     {new_pattern_pos:02x}  {note_transpose:4}  {effect_str}");
 	//     }
 	//     println!("");
-	// }
-
-	// // -- ----------------------------------------
-	// // patterns -> Monopatterns
-	// let patterns = TableIndexedData::new(data, pos_patterns, pos_tracks, num_patterns);
-	// for p in patterns {
-	//     let pattern_offset = p.offset;
-	//     println!("--- pattern {:x} at offset {pattern_offset:x}={:x}", p.index, npos as u32 + pattern_offset as u32);
-	//     let mut pos = 0;
-	//     let mut insn = 0;
-	//     while insn != 0xff {
-	// 	insn = p.u8(pos);
-	// 	pos += 1;
-	// 	print!("\t");
-	// 	match insn {
-	// 	    0xff => println!("--end--"),
-	// 	    0xfe | 0xfd => {
-	// 		let channel_speed_factor = 1 + p.u8(pos) as u16;
-	// 		pos += 1;
-	// 		println!("c-speed = {channel_speed_factor}{}",
-	// 			 if insn == 0xfe { " ...(cont)..." } else { "" });
-	// 	    }
-	// 	    _    => {
-	// 		let note_info = insn as i8;
-	// 		let note = note_info & 0x7f;
-	// 		let basevolume_info = p.u8(pos);
-	// 		let basevolume = basevolume_info & 0x1f;
-	// 		pos += 1;
-	// 		if note_info < 0 {
-	// 		    print!("defer-");
-	// 		}
-	// 		print!("play {note:3} @ {basevolume}");
-	// 		if basevolume_info & !0x1f != 0 {
-	// 		    let effect_val = p.u8(pos);
-	// 		    let mut extra = "".to_string();
-	// 		    if basevolume_info & 0x40 != 0 {
-	// 			extra = format!(" override-freq={effect_val:x}");
-	// 		    }
-	// 		    if basevolume_info & 0x20 != 0 {
-	// 			extra = format!("{} portando~{effect_val}", extra);
-	// 		    }
-	// 		    pos += 1;
-	// 		    print!("{extra}");
-	// 		}
-	// 		println!("");
-	// 	    },
-	// 	}
-	//     }
 	// }
 
 	// Found a song header!

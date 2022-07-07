@@ -376,6 +376,8 @@ impl InstrumentIterator {
 
 pub fn play_instrument(instr : &Instrument, note : Note, avol : AVolume) -> ArcIt {
     return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    vec![],
+						    vec![],
 						    InstrumentIterator::make(&instr.ops, note, avol),
 						    TimbreIterator::default())));
 }
@@ -533,12 +535,18 @@ struct ChannelState {
 
 struct ChannelIterator {
     state : ChannelState,
+
+    instrument_bank : Vec<Instrument>,
+    timbre_bank : Vec<Timbre>,
+
     instrument : InstrumentIterator,
     timbre : TimbreIterator,
 }
 
 impl ChannelIterator {
     fn new(base_note : Note,
+	   instrument_bank : Vec<Instrument>,
+	   timbre_bank : Vec<Timbre>,
 	   instrument : InstrumentIterator,
 	   timbre : TimbreIterator) -> ChannelIterator {
 	ChannelIterator {
@@ -550,6 +558,8 @@ impl ChannelIterator {
 		period : 0,
 		num_ticks : 0,
 	    },
+	    instrument_bank,
+	    timbre_bank,
 	    instrument,
 	    timbre,
 	}
@@ -592,6 +602,8 @@ pub fn play_timbre(song : &Song, instr : &Instrument, timbre : &Timbre, note : N
 	Some(n) => &song.instruments[n as usize],
     };
     return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    (&song.instruments[..]).to_vec(),
+						    (&song.timbres[..]).to_vec(),
 						    InstrumentIterator::make(&instrument.ops, note, 64),
 						    TimbreIterator::new(&timbre))));
 }
