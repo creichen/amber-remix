@@ -13,6 +13,9 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 use crate::datafiles::music::BasicSample;
 use crate::datafiles::music::Instrument;
 use crate::datafiles::music::InstrumentOp;
+use crate::datafiles::music::MPOp;
+use crate::datafiles::music::MPNote;
+use crate::datafiles::music::MPTimbre;
 use crate::datafiles::music::SlidingSample;
 use crate::datafiles::music::Song;
 use crate::datafiles::music::Timbre;
@@ -322,58 +325,6 @@ impl InstrumentIterator {
     }
 }
 
-// impl AudioIterator for InstrumentIterator {
-//     fn next(&mut self, out_queue : &mut std::collections::VecDeque<AQOp>) {
-// 	// Wrote a Wait into the queue?
-// 	let mut waittime = self.remaining_ticks;
-// 	let mut wrote_freq = false;
-// 	let mut effect = false;
-
-// 	while waittime == 0 {
-// 	    if self.queue.len() > 0 {
-// 		info!("-- PLAY {}", self.queue[0]);
-// 	    }
-// 	    self.process_queue(&mut waittime, out_queue, &mut wrote_freq);
-// 	}
-
-// 	if !self.init {
-// 	    self.init = true;
-// 	    if !wrote_freq {
-// 		out_queue.push_back(AQOp::SetFreq(note_to_freq(self.base_note)));
-// 	    }
-// 	    out_queue.push_back(AQOp::SetVolume(volume(self.base_avolume)));
-// 	}
-
-// 	match &self.sample {
-// 	    IISample::Slider(slider) => {
-// 		let mut newslider = slider.clone();
-// 		if let Some(update) = &newslider.tick() {
-// 		    out_queue.push_back(update.clone());
-// 		}
-// 		self.sample = IISample::Slider(newslider.clone());
-// 		if newslider.can_move() {
-// 		    effect = true;
-// 		}
-// 	    },
-// 	    _ => {},
-// 	}
-
-// 	// If an effect is in progress, we do one tick at a time
-// 	if effect && waittime > 0 {
-// 	    self.remaining_ticks = waittime - 1;
-// 	    waittime = 1;
-// 	} else {
-// 	    self.remaining_ticks = 0;
-// 	}
-
-// 	out_queue.push_back(AQOp::WaitMillis(waittime * TICK_DURATION_MILLIS));
-//     }
-// }
-
-// pub fn play_instrument_old(instr : &Instrument, note : Note, avol : AVolume) -> ArcIt {
-//     return Arc::new(Mutex::new(InstrumentIterator::make(&instr.ops, note, avol)));
-// }
-
 pub fn play_instrument(instr : &Instrument, note : Note, avol : AVolume) -> ArcIt {
     return Arc::new(Mutex::new(ChannelIterator::new(note,
 						    vec![],
@@ -427,8 +378,6 @@ struct TimbreIterator {
 
     vibrato : VibratoState,
 }
-
-
 
 impl TimbreIterator {
     pub fn new(timbre : &Timbre) -> TimbreIterator {
@@ -514,6 +463,94 @@ lazy_static! {
 	vibrato_delay : 0,
 	vol : VolumeEnvelope { attack : vec![VolumeSpec { volume : 64, duration : 1 }], sustain : vec![] }
     };
+}
+
+// ================================================================================
+// Monopattern Iterator
+
+enum MPStep {
+    OK,
+    Stop, // Done playing the pattern
+    SetTimbre(TimbreIterator, Option(InstrumentIterator)),
+}
+
+struct PortandoState {
+    delta : isize,
+    current : isize,
+}
+
+impl PortandoState {
+    pub fn empty() -> PortandoState {
+	PortandoState { delta : 0,
+			current : 0,
+	}
+    }
+}
+
+struct MonopatternIterator {
+    portando : PortandoState,
+    ops : VecDeque<MPOp>,
+
+    channel_note : isize,
+
+    delay : Option<Ticks>,
+}
+
+impl MonopatternIterator {
+    pub fn new(ops : &[MPOp]) -> MonopatternIterator {
+	let ops = ops.to_vec();
+	MonopatternIterator {
+	    portando : PortandoState::empty(),
+	    ops : VecDeque::from(ops),
+	    channel_note : 0,
+	    delay : Some(0),
+	}
+    }
+
+    pub fn tick(&mut self,
+		state : &mut ChannelState,
+		instrument_bank &Vec<Instrument>,
+		timbre_bank : &Vec<Timbre>) -> MPStep {
+	state.note.modify(self.channel_note);
+	match self.delay {
+	    None    => return MPStep::Stop, // indefinite hiatus
+	    Some(0) => {},
+	    Some(n) => { self.delay = Some(n-1);
+			 return MPStep::OK; }
+	}
+
+	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
+	    self.delay = Some(pticks - 1);
+	    match note {
+		None => return MPStep::OK,
+		Some(MPNote { note, timbre, portando }) => {
+		    match note {
+			None    => {},//self.channel_note = 0};
+			Some(n) => { self.channel_note = n; },
+		    }
+		    match portando {
+			None        => { self.portando = PortandoState::empty(); },
+			Some(delta) => { self.portando = PortandoState { current : 0, delta }; },
+		    }
+		    match timbre {
+			None => return MPStep::OK;
+			Some (MPTimbre { timbre, instrument : None } => {
+			    return MPStep::SetTimbre(TimbreIterator::new(timbre_bank[timbre]), None);
+			},
+			      SomeSome (MPTimbre { timbre, instrument : Some (instrument) } => {
+				  return MPStep::SetTimbre(TimbreIterator::new(timbre_bank[timbre as usize]),
+							   Some InstrumentIterator::new(instrument_bank[instrument as usize].ops));
+			},
+		    }
+		}
+	    }
+	} else {
+	    self.delay = None;
+	    return MPStep::Stop;
+	}
+
+	return MPStep::OK;
+    }
 }
 
 // ================================================================================

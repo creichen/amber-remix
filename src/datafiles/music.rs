@@ -162,21 +162,21 @@ impl fmt::Display for Timbre {
 
 #[derive(Clone, Copy)]
 pub struct MPTimbre {
-    timbre : u8,
-    instrument : Option<u8>,
+    pub timbre : u8,
+    pub instrument : Option<u8>,
 }
 
 #[derive(Clone, Copy)]
 pub struct MPNote {
-    note : i8,
-    timbre : Option<MPTimbre>,
-    portando : Option<i8>
+    pub note : i8,
+    pub timbre : Option<MPTimbre>,
+    pub portando : Option<i8>
 }
 
 #[derive(Clone, Copy)]
 pub struct MPOp {
-    note : Option<MPNote>,       // Hold, if None
-    pticks : usize,
+    pub note : Option<MPNote>,       // Hold, if None
+    pub pticks : usize,
 }
 
 impl fmt::Display for MPOp {
@@ -676,55 +676,6 @@ impl<'a> RawSong<'a> {
 	}
 	return result;
     }
-
-	// // -- ----------------------------------------
-	// // patterns -> Monopatterns
-	// let patterns = TableIndexedData::new(data, pos_patterns, pos_tracks, num_patterns);
-	// for p in patterns {
-	//     let pattern_offset = p.offset;
-	//     println!("--- pattern {:x} at offset {pattern_offset:x}={:x}", p.index, npos as u32 + pattern_offset as u32);
-	//     let mut pos = 0;
-	//     let mut insn = 0;
-	//     while insn != 0xff {
-	// 	insn = p.u8(pos);
-	// 	pos += 1;
-	// 	print!("\t");
-	// 	match insn {
-	// 	    0xff => println!("--end--"),
-	// 	    0xfe | 0xfd => {
-	// 		let channel_speed_factor = 1 + p.u8(pos) as u16;
-	// 		pos += 1;
-	// 		println!("c-speed = {channel_speed_factor}{}",
-	// 			 if insn == 0xfe { " ...(cont)..." } else { "" });
-	// 	    }
-	// 	    _    => {
-	// 		let note_info = insn as i8;
-	// 		let note = note_info & 0x7f;
-	// 		let basevolume_info = p.u8(pos);
-	// 		let basevolume = basevolume_info & 0x1f;
-	// 		pos += 1;
-	// 		if note_info < 0 {
-	// 		    print!("defer-");
-	// 		}
-	// 		print!("play {note:3} @ {basevolume}");
-	// 		if basevolume_info & !0x1f != 0 {
-	// 		    let effect_val = p.u8(pos);
-	// 		    let mut extra = "".to_string();
-	// 		    if basevolume_info & 0x40 != 0 {
-	// 			extra = format!(" override-freq={effect_val:x}");
-	// 		    }
-	// 		    if basevolume_info & 0x20 != 0 {
-	// 			extra = format!("{} portando~{effect_val}", extra);
-	// 		    }
-	// 		    pos += 1;
-	// 		    print!("{extra}");
-	// 		}
-	// 		println!("");
-	// 	    },
-	// 	}
-	//     }
-	// }
-
 
 }
 
