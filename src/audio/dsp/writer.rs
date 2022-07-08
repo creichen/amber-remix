@@ -59,8 +59,6 @@ pub enum FlexPCMResult {
     Wrote(usize, Option<Timeslice>),
     /// Source reset: flush buffers, set current time slice to 0, try to write again
     Flush,
-    /// Nothing to write right now
-    Silence,
 }
 
 /// Writes variable-frequency PCM data

@@ -137,7 +137,7 @@ impl AudioQueue {
 	return self.current_sample.len() == 0;
     }
 
-    fn waiting_for_next_timeslice(&mut self) -> bool {
+    fn waiting_for_next_timeslice(&self) -> bool {
 	return self.timeslice != None;
     }
 
@@ -146,6 +146,10 @@ impl AudioQueue {
 	    self.have_reported_timeslice_update = true;
 	}
 	return FlexPCMResult::Wrote(written, self.timeslice);
+    }
+
+    fn newly_at_timeslice_boundary(&self) -> bool {
+	return self.waiting_for_next_timeslice() && !self.have_reported_timeslice_update;
     }
 }
 
@@ -251,13 +255,12 @@ impl PCMFlexWriter for AudioQueue {
 		}
 		if self.queue.len() == 0 {
 		    // Iterator has given up on us?
-		    if outbuf_pos == 0 {
-			"trace";println!("[AQ] => Silence");
-			return FlexPCMResult::Silence;
-		    } else {
-			"trace";println!("[AQ] ** early abort: => Wrote({outbuf_pos})!");
-			return self.success(outbuf_pos);
+		    "trace";println!("[AQ] => Silence");
+		    if self.newly_at_timeslice_boundary() {
+			self.success(outbuf_pos);
 		    }
+		    outbuf[outbuf_pos..].fill(0.0); // Fill with the sound of silence
+		    return self.success(outbuf_len);
 		}
 		match self.update_state_from_next_queue_items() {
 		    Some(new_freq) => freqrange.append(outbuf_pos, new_freq),
@@ -500,10 +503,9 @@ fn test_run_out() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(5, None), r);
+    assert_eq!(FlexPCMResult::Wrote(8, None), r);
     let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange);
-    assert_eq!(FlexPCMResult::Silence, r);
-    assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, -1.0, -1.0, -1.0],
+    assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),  freqrange.get(0));
 }
