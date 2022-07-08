@@ -145,11 +145,16 @@ impl AudioQueue {
 	if let Some(_) = self.timeslice {
 	    self.have_reported_timeslice_update = true;
 	}
+	"trace";println!("-------> Wrote(({written}, {:?}))", self.timeslice);
 	return FlexPCMResult::Wrote(written, self.timeslice);
     }
 
     fn newly_at_timeslice_boundary(&self) -> bool {
 	return self.waiting_for_next_timeslice() && !self.have_reported_timeslice_update;
+    }
+
+    fn have_bounded_time(&self) -> bool {
+	return !self.have_reported_timeslice_update;
     }
 }
 
@@ -183,13 +188,13 @@ impl PCMFlexWriter for AudioQueue {
 	    // How much sample timing info do we have remaining?
 	    let secs_to_write = // If we have reported the timeslice and yet still get called, the client
 		                // gives us leave to write as much as we can
-		if self.have_reported_timeslice_update { f64::INFINITY } else { self.remaining_secs };
+		if self.have_bounded_time() { self.remaining_secs } else { f64::INFINITY };
 
 	    "trace";println!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
 		     self.freq, self.volume, self.remaining_secs, self.current_sample.remaining());
 	    "trace";println!("[AQ] available in out buffer: time:{secs_to_write} space:{max_outbuf_write}");
 
-	    if self.remaining_secs > 0.0 {
+	    if secs_to_write > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
 		    if !self.sample_stopped() {
@@ -220,7 +225,6 @@ impl PCMFlexWriter for AudioQueue {
 		let mut secs_written_this_round = secs_to_write;
 		let num_samples_to_write_by_secs =
 		    if !self.waiting_for_next_timeslice() { f64::ceil(secs_to_write * self.freq as f64) as usize } else { max_outbuf_write };
-		println!("-> {num_samples_to_write_by_secs}");
 		if self.current_sample.done() {
 		} else {
 		    // Waiting and have current sample information
@@ -246,7 +250,9 @@ impl PCMFlexWriter for AudioQueue {
 		    }
 		    outbuf_pos += num_samples_to_write;
 		}
-		self.remaining_secs -= secs_written_this_round;
+		if self.have_bounded_time() {
+		    self.remaining_secs -= secs_written_this_round;
+		}
 		"trace";println!{"[AQ] written: {outbuf_pos}/{outbuf_len}; remaining secs - {secs_written_this_round} = {}", self.remaining_secs}
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
@@ -278,6 +284,7 @@ impl PCMFlexWriter for AudioQueue {
     fn advance_sync(&mut self, timeslice : super::dsp::writer::Timeslice) {
 	assert_eq!(self.timeslice, Some(timeslice));
 	self.have_reported_timeslice_update = false;
+	self.remaining_secs = 0.0;
 	self.timeslice = None;
     }
 
@@ -596,12 +603,12 @@ fn test_wait_on_timeslice() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
 
-    let r = aq.write_flex_pcm(&mut outbuf[0..2], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(2, None), r);
-    let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange);
+    let r = aq.write_flex_pcm(&mut outbuf[0..1], &mut freqrange);
+    assert_eq!(FlexPCMResult::Wrote(1, None), r);
+    let r = aq.write_flex_pcm(&mut outbuf[1..5], &mut freqrange);
     assert_eq!(FlexPCMResult::Wrote(1, Some(1)), r);
-    let r = aq.write_flex_pcm(&mut outbuf[3..5], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(2, Some(1)), r);
+    let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange);
+    assert_eq!(FlexPCMResult::Wrote(3, Some(1)), r);
 
     assert_eq!([1.0, 2.0, 300.0, 100.0,
 		// ts-1 available
