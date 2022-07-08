@@ -7,9 +7,37 @@ use crate::audio::Freq;
 
 use super::{writer::{Timeslice, ArcSyncWriter, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, ArcWriter}, ringbuf::RingBuf};
 
-// Implementations of audio stream synchronisation tools
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use super::writer::PCMSyncWriter;
+
+// ----------------------------------------
+// Basic Sync barrier implementation
+// Assumes that we never have more than MAX_BUFFER_SIZE output samples to produce per timeslices
 
 const MAX_BUFFER_SIZE : usize = 4096;
+
+pub struct PCMBasicSyncBarrier {
+    sync : Rc<RefCell<BasicWriterSyncImpl>>,
+}
+
+impl PCMBasicSyncBarrier {
+    pub fn new() -> PCMBasicSyncBarrier {
+	return PCMBasicSyncBarrier {
+	    sync : Rc::new(RefCell::new(BasicWriterSyncImpl::new())),
+	}
+    }
+}
+
+impl PCMSyncBarrier for PCMBasicSyncBarrier {
+    fn sync(&mut self, writer : ArcSyncWriter) -> ArcWriter {
+        return Arc::new(Mutex::new(BasicWriterSyncImpl::synchronizer_for(self.sync.clone(), writer)))
+    }
+}
+
+// ----------------------------------------
+// Implementation
 
 struct BasicWriterState {
     next_timeslice : Option<Timeslice>,
@@ -33,10 +61,14 @@ impl BasicWriterState {
 	    let mut guard = self.source.lock().unwrap();
 	    let wr = guard.deref_mut();
 	    let wrbuf = self.buf.wrbuf(count);
-	    todo!("fixme: this might fail and need two writes");
 	    samples_offered_by_our_buffer = wrbuf.len();
-	    wr.write_sync_pcm(wrbuf)
-	};
+	    let result = wr.write_sync_pcm(wrbuf);
+	    if let SyncPCMResult::Wrote(actual_count, None) = result {
+		if samples_offered_by_our_buffer < count {
+		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
+		    wr.write_sync_pcm(wrbuf2)
+		} else { result }
+	    } else { result} };
 	match result {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
@@ -45,8 +77,8 @@ impl BasicWriterState {
 	    },
 	    SyncPCMResult::Wrote(written, None)            => {
 		self.written += written;
-		if self.written != samples_offered_by_our_buffer {
-		    panic!("Unexpectedly received fewer bytes than requested");
+		if written != samples_offered_by_our_buffer {
+		    panic!("Unexpectedly received fewer bytes than requested {}/{}", written, samples_offered_by_our_buffer);
 		}
 		return true;
 	    },
@@ -72,7 +104,7 @@ impl BasicWriterState {
 
     fn fill_until(&mut self, expected : usize) -> bool {
 	if expected > self.written {
-	    return self.read_pcm(expected - self.buf.len());
+	    return self.read_pcm(expected - self.written);
 	}
 	return true;
     }
@@ -84,15 +116,9 @@ impl BasicWriterState {
 	return true;
     }
 
-    fn max_read(&self) -> usize {
-	return self.buf.remaining_capacity();
-    }
-
     /// Write as much as possible; return # of bytes written
     fn write_pcm(&mut self, outbuf : &mut [f32]) -> usize {
-	let to_write = usize::min(self.max_read(), outbuf.len());
-	self.buf.write_to(outbuf);
-	return to_write;
+	return self.buf.write_to(outbuf);
     }
 }
 
@@ -101,6 +127,12 @@ struct BasicWriterSyncImpl {
 }
 
 impl BasicWriterSyncImpl {
+    fn new() -> BasicWriterSyncImpl {
+	return BasicWriterSyncImpl {
+	    sources : Vec::new(),
+	}
+    }
+
     fn synchronizer_for(rself : Rc<RefCell<Self>>, writer: ArcSyncWriter) -> WriterSyncFwd {
 	let freq = {
 	    let guard = writer.lock().unwrap();
@@ -121,7 +153,6 @@ impl BasicWriterSyncImpl {
 	};
 	return WriterSyncFwd {
 	    wsync : rself.clone(),
-	    writer : writer.clone(),
 	    writer_nr,
 	    freq,
 	};
@@ -137,10 +168,11 @@ impl BasicWriterSyncImpl {
 		oks += 1;
 	    }
 	}
+	println!("[BWSI]   prefill check -> {oks}");
 	if oks == 0 {
-	    debug!("All sources flushed");
+	    println!("All sources flushed");
 	} else if oks == num_sources {
-	    debug!("All sources reported success");
+	    println!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
 	    let mut sum_offset = 0;
 
@@ -152,7 +184,7 @@ impl BasicWriterSyncImpl {
 	    }
 
 	    let avg_offset = sum_offset / num_sources;
-	    debug!("  Setting slice length to {avg_offset}");
+	    println!("  Setting slice length to {avg_offset}");
 
 	    for state in self.sources.iter_mut() {
 		if !state.fill_until(avg_offset) {
@@ -162,7 +194,7 @@ impl BasicWriterSyncImpl {
 		    state.advance(avg_offset, timeslice);
 		}
 	    }
-	    debug!("  Completed timeslice {timeslice:?}");
+	    println!("  Completed timeslice {timeslice:?}");
 
 	} else {
 	    panic!("Inconsistent flush: {}/{} sources flushed", num_sources - oks, num_sources);
@@ -171,36 +203,30 @@ impl BasicWriterSyncImpl {
 
     /// Handle a write request for the specified writer
     fn write_for(&mut self, writer_nr : usize, output : &mut [f32]) {
-	let source = &mut self.sources[writer_nr];
-	let write_pos = 0;
-	let num_written = source.write_pcm(&mut output[write_pos..]);
+	let mut write_pos = 0;
+	let mut last_write_pos = output.len() + 1; // something different to avoid triggering the sanity check
+	println!("[BWSI] writer {writer_nr} wants {} samples", output.len());
+	while write_pos < output.len() {
+	    let source = &mut self.sources[writer_nr];
+	    let num_written = source.write_pcm(&mut output[write_pos..]);
+	    println!("[BWSI]  wrote {num_written}");
 
-	if num_written < output.len() {
-	    // Ran out of buffer?
-	    source.reset_buf_readwrite_pos();
-	    self.prefill_buffers();
+	    if num_written == 0 && last_write_pos == write_pos {
+		panic!("No progress: {}/{}/{}; buf={}/{}.  is the source really producing ticks?  Is our buffer big enough?",
+		       last_write_pos, write_pos, output.len(), source.buf.len(), source.buf.capacity());
+	    }
+
+	    last_write_pos = write_pos;
+	    write_pos += num_written;
+
+	    if write_pos < output.len() {
+		// Ran out of buffer?
+		//source.reset_buf_readwrite_pos();
+		println!("[BWSI]   ran out of buffer, must prefill");
+		self.prefill_buffers();
+	    }
 	}
     }
-
-    // fn add_written(&mut self, writer_nr: usize, size : usize) {
-    // 	self.sources[writer_nr].written += size;
-    // }
-
-    // fn flush(&mut self, writer_nr: usize) {
-    // 	self.sources[writer_nr].next_timeslice = None;
-    // 	self.sources[writer_nr].written = 0;
-    // }
-
-    // fn report_timeslice(&mut self, writer_nr: usize, timeslice : Timeslice) {
-    // 	let boundary_pos = self.sources[writer_nr].written;
-    // 	self.sources[writer_nr].next_timeslice = Some(timeslice);
-    // 	self.sources[writer_nr].buf_pos_at_which_timeslice_could_start = boundary_pos;
-    // }
-
-    // fn requesting(&mut self, samples : usize) -> usize {
-    // 	// check all writers for their state
-    // 	// 
-    // }
 }
 
 
@@ -208,7 +234,6 @@ impl BasicWriterSyncImpl {
 
 struct WriterSyncFwd {
     wsync : Rc<RefCell<BasicWriterSyncImpl>>,
-    writer : ArcSyncWriter,
     writer_nr : usize,
     freq : Freq,
 }
@@ -224,44 +249,164 @@ impl FrequencyTrait for WriterSyncFwd {
 
 impl PCMWriter for WriterSyncFwd {
     fn write_pcm(&mut self, output : &mut [f32]) {
+	println!("[WSF:{}] Forwarding write request of size {}", self.writer_nr, output.len());
 	self.wsync.borrow_mut().write_for(self.writer_nr, output);
     }
-    // fn write_pcm(&mut self, output : &mut [f32]) {
-    // 	let mut write_pos = 0;
-    // 	loop {
-    // 	    let result = {
-    // 		let mut guard = self.writer.lock().unwrap();
-    // 		let wr = guard.deref_mut();
-    // 		wr.write_sync_pcm(&mut output[write_pos..])
-    // 	    };
-    // 	    let mut wsync = self.wsync.borrow_mut();
-    // 	    match result {
-    // 		SyncPCMResult::Flush                        => {
-    // 		    wsync.deref_mut().flush(self.writer_nr);
-    // 		    continue
-    // 		},
-    // 		SyncPCMResult::Wrote(size, None)            => {
-    // 		    wsync.add_written(self.writer_nr, size);
-    // 		    return;
-    // 		},
-    // 		SyncPCMResult::Wrote(size, Some(timeslice)) => {
-    // 		    write_pos += size;
-    // 		    wsync.add_written(self.writer_nr, size);
-    // 		    wsync.report_timeslice(self.writer_nr, timeslice);
-    // 		},
-    // 	    }
-    // 	}
-    // }
+}
+
+// ========================================
+// Testing
+
+// ----------------------------------------
+// Helpers
+
+#[cfg(test)]
+enum T {
+    S(Vec<f32>),
+    TS(f32, Timeslice), // repeat the first f32 until the timeslice is advanced to
+}
+
+#[cfg(test)]
+struct MockASW {
+    name : String,
+    ops : VecDeque<T>,
+    repeat_me_if_stuck : f32,
+    stuck : Option<Timeslice>,
+}
+
+#[cfg(test)]
+impl FrequencyTrait for MockASW {
+    fn frequency(&self) -> Freq {
+	return 42;
+    }
+}
+
+#[cfg(test)]
+impl PCMSyncWriter for MockASW {
+    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
+	let mut write_pos = 0;
+	let write_end = output.len();
+	while write_pos < write_end {
+	    if let Some(_) = self.stuck {
+		println!("MockASW:{}] Stuck, writing {} x {}", self.name, self.repeat_me_if_stuck, write_end-write_pos);
+		// Waiting for time slice
+		output[write_pos..].fill(self.repeat_me_if_stuck);
+		write_pos = write_end;
+	    } else {
+		match self.ops.pop_front() {
+		    None => {
+			let dummydata = vec![1000.01, 1001.01, 1002.01, 1003.01];
+			self.ops.push_front(T::S(dummydata));
+		    }
+		    Some(T::S(opvec))        => {
+			let len = usize::min(write_end - write_pos,
+					     opvec.len());
+			println!("MockASW:{}] Writing {:?}", self.name, &opvec[..len]);
+			output[write_pos..write_pos+len].copy_from_slice(&opvec[..len]);
+			write_pos += len;
+			if len < opvec.len() {
+			    self.ops.push_front(T::S(Vec::from(&opvec[len..])));
+			}
+		    }
+		    Some(T::TS(fill, slice)) => {
+			println!("MockASW:{}] Hit TS {:?} with {write_pos} written", self.name, slice);
+			self.repeat_me_if_stuck = fill;
+			self.stuck = Some(slice);
+			return SyncPCMResult::Wrote(write_pos, Some(slice));
+		    }
+		}}
+	};
+	return SyncPCMResult::Wrote(write_pos, None);
+    }
+
+    fn advance_sync(&mut self, timeslice : Timeslice) {
+	assert_eq!(Some(timeslice), self.stuck);
+	self.stuck = None;
+    }
 }
 
 // ----------------------------------------
+// Actual tests
 
-struct PCMBasicSyncBarrier {
-    sync : Rc<RefCell<BasicWriterSyncImpl>>,
+#[cfg(test)]
+fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
+    return Arc::new(Mutex::new(MockASW {
+	name,
+	ops : VecDeque::from(ops),
+	repeat_me_if_stuck : -1.11111,
+	stuck : None,
+    }));
 }
 
-impl PCMSyncBarrier for PCMBasicSyncBarrier {
-    fn sync(&mut self, writer : ArcSyncWriter) -> ArcWriter {
-        return Arc::new(Mutex::new(BasicWriterSyncImpl::synchronizer_for(self.sync.clone(), writer)))
-    }
+#[cfg(test)]
+fn cread(writer : ArcWriter, dest : &mut [f32]) {
+    let mut guard = writer.lock().unwrap();
+    let wr = guard.deref_mut();
+    wr.write_pcm(dest);
 }
+
+#[cfg(test)]
+#[test]
+fn test_unary_passthrough_boundary() {
+    let mut data0 = [0.0; 6];
+    let mut sbar = PCMBasicSyncBarrier::new();
+    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+	T::S(vec![1.0, 2.0, 3.0, 4.0, 5.0]),
+	T::TS(-1.0, 1),
+	T::S(vec![6.0, 7.0]),
+	T::TS(-2.0, 2),
+    ]));
+    cread(c0.clone(), &mut data0[0..5]);
+    cread(c0.clone(), &mut data0[5..6]);
+    assert_eq!([1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+	       data0[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unary_passthrough_cross_boundary() {
+    let mut data0 = [0.0; 6];
+    let mut sbar = PCMBasicSyncBarrier::new();
+    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+	T::S(vec![1.0, 2.0, 3.0, 4.0, 5.0]),
+	T::TS(-1.0, 1),
+	T::S(vec![6.0, 7.0]),
+	T::TS(-2.0, 2),
+    ]));
+    cread(c0.clone(), &mut data0[0..2]);
+    cread(c0.clone(), &mut data0[2..6]);
+    assert_eq!([1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+	       data0[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_binary() {
+    let mut data0 = [0.0; 8];
+    let mut data1 = [0.0; 8];
+    let mut sbar = PCMBasicSyncBarrier::new();
+    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+	T::S(vec![10.0, 11.0]),
+	T::TS(-11.0, 1),
+	T::S(vec![12.0, 13.0]),
+	T::TS(-12.0, 2),
+	T::S(vec![14.0, 15.0, 16.0, 17.0]),
+	T::TS(-13.0, 2),
+    ]));
+    let c1 = sbar.sync(mock_asw("1".to_string(), vec![
+	T::S(vec![20.0, 21.0, 22.0, 23.0]),
+	T::TS(-21.0, 1),
+	T::S(vec![24.0, 25.0]),
+	T::TS(-22.0, 2),
+	T::S(vec![26.0, 27.0]),
+	T::TS(-23.0, 2),
+    ]));
+    cread(c0.clone(), &mut data0[0..8]);
+    assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+	       data0[..]);
+
+    cread(c1.clone(), &mut data1[0..8]);
+    assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
+	       data1[..]);
+}
+

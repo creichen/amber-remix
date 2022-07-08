@@ -26,7 +26,7 @@ impl RingBuf {
     }
 
     // Shrink buffer contents to size 0
-    pub fn reset(&self) {
+    pub fn reset(&mut self) {
 	self.write_pos = 0;
 	self.read_pos = 0;
     }
@@ -155,8 +155,6 @@ impl RingBuf {
 	}
 	// Otherwise, we must have hit the end of the buffer
 	// Call ourselves one final time to finish up
-	// println!("{} {}", self.write_pos, self.capacity());
-	// self.write_pos -= self.capacity();
 	return to_write + self.read_from(&src[to_write..]);
     }
 
@@ -170,12 +168,13 @@ impl RingBuf {
 	let avail = self.available_to_write();
 	let start_pos = self.write_pos;
 	let end_pos = self.write_pos + usize::min(size, avail);
-	println!("{start_pos}..{end_pos} {avail} {size} {} {}", self.write_pos, self.read_pos);
 	self._advance_write_pos(end_pos - start_pos);
 	return &mut self.data[start_pos..end_pos];
     }
 }
 
+// ========================================
+// Testing
 
 // ----------------------------------------
 // Helpers
@@ -595,7 +594,6 @@ fn test_reset_empty() {
 #[test]
 fn test_reset_partially_full() {
     let data1 = [1.0, 2.0, 3.0];
-    let mut data2 = [0.0; 3];
     let mut b = RingBuf::new(3);
 
     assert_eq!(1, b.read_from(&data1[0..1]));
@@ -608,7 +606,6 @@ fn test_reset_partially_full() {
 #[test]
 fn test_reset_direct_full() {
     let data1 = [1.0, 2.0, 3.0];
-    let mut data2 = [0.0; 3];
     let mut b = RingBuf::new(3);
 
     assert_eq!(3, b.read_from(&data1[0..3]));
@@ -624,10 +621,141 @@ fn test_reset_overlap_full() {
     let mut data2 = [0.0; 3];
     let mut b = RingBuf::new(3);
 
-    assert_eq!(1, b.read_from(&data1[0..3]));
+    assert_eq!(1, b.read_from(&data1[0..1]));
     assert_eq!(1, b.write_to(&mut data2[0..3]));
     assert_eq!(3, b.read_from(&data1[0..3]));
     assert_full(&mut b);
     b.reset();
     assert_empty(&mut b);
+}
+
+// --------------------
+// unread
+
+#[cfg(test)]
+#[test]
+fn test_unread_empty() {
+    let mut b = RingBuf::new(7);
+    assert_eq!(7, b.capacity());
+    if let Ok(_) = b.unread(1) {
+	panic!("Should not be able to unread");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_partially_full() {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 4];
+    let mut b = RingBuf::new(5);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    assert_partially_filled(&mut b, 4);
+    assert_eq!(Ok(2), b.unread(2));
+    assert_partially_filled(&mut b, 2);
+    assert_eq!(2, b.write_to(&mut data2));
+    assert_empty(&mut b);
+
+    assert_eq!([1.0, 2.0, 0.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_direct_full() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 2];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(3, b.read_from(&data1[0..3]));
+    assert_full(&mut b);
+    assert_eq!(Ok(1), b.unread(1));
+    assert_partially_filled(&mut b, 2);
+    assert_eq!(1, b.write_to(&mut data2[0..1]));
+    assert_partially_filled(&mut b, 1);
+    assert_eq!(Ok(1), b.unread(1));
+    assert_empty(&mut b);
+
+    assert_eq!([1.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+fn test_boundary_unread_2(capacity : usize) {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 3];
+    let mut data3 = [0.0; 3];
+    let mut b = RingBuf::new(capacity);
+
+    assert_eq!(2, b.read_from(&data1[0..2]));
+    assert_eq!(2, b.write_to(&mut data3[0..3]));
+    assert_empty(&mut b);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    if capacity == 4 {
+	assert_full(&mut b);
+    } else {
+	assert_partially_filled(&mut b, 4);
+    }
+    assert_eq!(Ok(2), b.unread(2));
+    assert_partially_filled(&mut b, 2);
+
+    assert_eq!(2, b.write_to(&mut data2));
+    assert_empty(&mut b);
+    assert_eq!(Ok(0), b.unread(0));
+
+    assert_eq!([1.0, 2.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+fn test_boundary_unread_3(capacity : usize) {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 3];
+    let mut data3 = [0.0; 3];
+    let mut b = RingBuf::new(capacity);
+
+    assert_eq!(2, b.read_from(&data1[0..2]));
+    assert_eq!(2, b.write_to(&mut data3[0..3]));
+    assert_empty(&mut b);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    if capacity == 4 {
+	assert_full(&mut b);
+    } else {
+	assert_partially_filled(&mut b, 4);
+    }
+    assert_eq!(Ok(3), b.unread(3));
+    assert_partially_filled(&mut b, 1);
+
+    assert_eq!(1, b.write_to(&mut data2));
+    assert_empty(&mut b);
+    assert_eq!(Ok(0), b.unread(0));
+
+    assert_eq!([1.0, 0.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_partial_overlap_touch_boundaries() {
+    test_boundary_unread_2(5);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_partial_overlap_cross_boundaries() {
+    test_boundary_unread_3(5);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_full_overlap_touch_boundaries() {
+    test_boundary_unread_2(4);
+}
+
+#[cfg(test)]
+#[test]
+fn test_unread_full_overlap_cross_boundaries() {
+    test_boundary_unread_3(4);
 }
