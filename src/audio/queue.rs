@@ -100,7 +100,7 @@ impl AudioQueue {
 	// if we are waiting for that
 	while !self.waiting_for_next_timeslice() {
 	    let action = self.queue.pop_front();
-	    "info";println!("[AQ]  ::update: {action:?}");
+	    info!("[AQ]  ::update: {action:?}");
 	    match action {
 		Some(AQOp::WaitMillis(0))      => { },
 		Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
@@ -145,7 +145,7 @@ impl AudioQueue {
 	if let Some(_) = self.timeslice {
 	    self.have_reported_timeslice_update = true;
 	}
-	"trace";println!("-------> Wrote(({written}, {:?}))", self.timeslice);
+	trace!("-------> Wrote(({written}, {:?}))", self.timeslice);
 	return FlexPCMResult::Wrote(written, self.timeslice);
     }
 
@@ -164,13 +164,13 @@ impl PCMFlexWriter for AudioQueue {
     fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange) -> FlexPCMResult {
 	if self.flush_requested {
 	    self.flush_requested = false;
-	    "info";println!("[AQ] => Flush");
+	    info!("[AQ] => Flush");
 	    return FlexPCMResult::Flush;
 	}
 
 	let mut outbuf_pos = 0;
 	let outbuf_len = outbuf.len();
-	"debug";println!("[AQ] Asked for {outbuf_len} samples");
+	debug!("[AQ] Asked for {outbuf_len} samples");
 
 
 	let mut last_outbuf_pos = 1;
@@ -190,22 +190,17 @@ impl PCMFlexWriter for AudioQueue {
 		                // gives us leave to write as much as we can
 		if self.have_bounded_time() { self.remaining_secs } else { f64::INFINITY };
 
-	    "trace";println!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
+	    trace!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
 		     self.freq, self.volume, self.remaining_secs, self.current_sample.remaining());
-	    "trace";println!("[AQ] available in out buffer: time:{secs_to_write} space:{max_outbuf_write}");
+	    trace!("[AQ] available in out buffer: time:{secs_to_write} space:{max_outbuf_write}");
 
 	    if secs_to_write > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
 		    if !self.sample_stopped() {
-			"debug";println!("[AQ] Sample finishes");
+			debug!("[AQ] Sample finishes");
 			self.stop_sample();
 		    }
-		    // if self.next_freq != self.freq {
-		    // 	"trace";println!("[AQ] Freq change {} -> {} at {outbuf_pos}", self.freq, self.next_freq);
-		    // 	freqrange.append(outbuf_pos, self.next_freq);
-		    // 	self.freq = self.next_freq;
-		    // }
 
 		    let opt_range = match self.current_sample_vec.pop_front() {
 			Some(AQSample::Once(range)) => Some(range),
@@ -236,7 +231,7 @@ impl PCMFlexWriter for AudioQueue {
 		    } else {
 			num_samples_to_write = num_samples_to_write_by_secs;
 		    }
-		    "trace";println!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
+		    trace!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
 		    self.current_sample.write(&mut outbuf[outbuf_pos..outbuf_pos+num_samples_to_write]);
 		    let vol = self.volume;
 		    let mut accumulator = 0.0;
@@ -253,7 +248,7 @@ impl PCMFlexWriter for AudioQueue {
 		if self.have_bounded_time() {
 		    self.remaining_secs -= secs_written_this_round;
 		}
-		"trace";println!{"[AQ] written: {outbuf_pos}/{outbuf_len}; remaining secs - {secs_written_this_round} = {}", self.remaining_secs}
+		trace!{"[AQ] written: {outbuf_pos}/{outbuf_len}; remaining secs - {secs_written_this_round} = {}", self.remaining_secs}
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
 		if self.queue.len() == 0 {
@@ -261,7 +256,7 @@ impl PCMFlexWriter for AudioQueue {
 		}
 		if self.queue.len() == 0 {
 		    // Iterator has given up on us?
-		    "trace";println!("[AQ] => Silence");
+		    trace!("[AQ] => Silence");
 		    if self.newly_at_timeslice_boundary() {
 			self.success(outbuf_pos);
 		    }
@@ -277,7 +272,7 @@ impl PCMFlexWriter for AudioQueue {
 		}
 	    }
 	};
-	"trace";println!("[AQ] => Wrote({outbuf_pos})");
+	trace!("[AQ] => Wrote({outbuf_pos})");
 	return self.success(outbuf_pos);
     }
 
@@ -302,7 +297,7 @@ impl AudioIteratorProcessor for AudioQueue {
 	//self.current_sample = SampleWriter::empty();
 	self.audio_source = source;
 	self.soft_reset();
-	"info";println!("[AQ] ** New iterator installed -> {} s remain ({} / {}))",
+	info!("[AQ] ** New iterator installed -> {} s remain ({} / {}))",
 	      self.remaining_secs,
 	      self.current_sample.remaining(), self.freq);
 	self.flush();
@@ -590,11 +585,14 @@ fn test_wait_on_timeslice() {
 				       AQOp::SetVolume(100.0),
 				       AQOp::Timeslice(1),
 
-				       AQOp::SetVolume(10.0),
-				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(1000.0),
+				       AQOp::WaitMillis(1),
+				       AQOp::SetVolume(1.0),
 				       AQOp::SetFreq(2000),
 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
+				       AQOp::WaitMillis(1),
 				       AQOp::Timeslice(2),
+				       AQOp::SetVolume(0.5),
 
 				       AQOp::WaitMillis(3),
 				       AQOp::Timeslice(3),
@@ -605,74 +603,67 @@ fn test_wait_on_timeslice() {
 
     let r = aq.write_flex_pcm(&mut outbuf[0..1], &mut freqrange);
     assert_eq!(FlexPCMResult::Wrote(1, None), r);
-    let r = aq.write_flex_pcm(&mut outbuf[1..5], &mut freqrange);
+    let r = aq.write_flex_pcm(&mut outbuf[1..5], &mut freqrange.at_offset(1));
     assert_eq!(FlexPCMResult::Wrote(1, Some(1)), r);
-    let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange);
+    let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange.at_offset(2));
     assert_eq!(FlexPCMResult::Wrote(3, Some(1)), r);
 
-    assert_eq!([1.0, 2.0, 300.0, 100.0,
+    assert_eq!([1.0, 2.0,
 		// ts-1 available
-		200.0, 300.0,
+		300.0, 100.0, 200.0,
 		// ts-1 active
-		0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0 ],
-	       &outbuf[..]);
+		-1.0, -1.0, -1.0, -1.0, -1.0],
+	       &outbuf[..10]);
 
     aq.advance_sync(1);
 
-    let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(2, Some(2)), r);
+    let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange.at_offset(5));
+    assert_eq!(FlexPCMResult::Wrote(3, Some(2)), r);
 
-    assert_eq!([1.0, 2.0, 300.0, 100.0,
+    assert_eq!([1.0, 2.0,
 		// ts-1 available
-		200.0, 300.0,
+		300.0, 100.0, 200.0,
 		// ts-1 active
-		10.0, 20.0,
-		0.0,
-		0.0, 0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0 ],
-	       &outbuf[..]);
-
-    let r = aq.write_flex_pcm(&mut outbuf[7..9], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(2, Some(2)), r);
-
-    assert_eq!([1.0, 2.0, 300.0, 100.0,
-		// ts-1 available
-		200.0, 300.0,
-		// ts-1 active
-		10.0, 20.0,
+		3000.0, 11.0, 12.0,
 		// ts-2 available
-		30.0, 10.0,
-		0.0,
-		0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0,
-		0.0, 0.0, 0.0, 0.0 ],
-	       &outbuf[..]);
+		-1.0, -1.0],
+	       &outbuf[..10]);
+
+    let r = aq.write_flex_pcm(&mut outbuf[8..10], &mut freqrange.at_offset(8));
+    assert_eq!(FlexPCMResult::Wrote(2, Some(2)), r);
+
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		3000.0, 11.0, 12.0,
+		// ts-2 available
+		13.0, 11.0],
+	       &outbuf[..10]);
 
     aq.advance_sync(2);
 
-    let r = aq.write_flex_pcm(&mut outbuf[10..], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(6, Some(2)), r);
+    let r = aq.write_flex_pcm(&mut outbuf[10..], &mut freqrange.at_offset(10));
+    assert_eq!(FlexPCMResult::Wrote(6, Some(3)), r);
 
-    assert_eq!([1.0, 2.0, 300.0, 100.0,
+    assert_eq!([1.0, 2.0,
 		// ts-1 available
-		200.0, 300.0,
+		300.0, 100.0, 200.0,
 		// ts-1 active
-		10.0, 20.0,
+		3000.0, 11.0, 12.0,
 		// ts-2 available
-		30.0, 10.0,
+		13.0, 11.0,
 		// ts-2 active
-		100.0, 110.0, 120.0, 100.0, 110.0, 120.0,
+		6.0, 6.5, 5.5, 6.0, 6.5, 5.5,
 		// ts-3 available
-		0.0,
-		0.0, 0.0, 0.0, 0.0 ],
+		-1.0,
+		-1.0,
+		-1.0,
+		-1.0,    ],
 	       &outbuf[..]);
 
-    assert_eq!((1000, Some(10)),
+    assert_eq!((1000, Some(6)),
 	       freqrange.get(0));
     assert_eq!((2000, None),
-	       freqrange.get(10));
+	       freqrange.get(6));
 }
