@@ -9,7 +9,7 @@ use super::ArcIt;
 use super::dsp::frequency_range::Freq;
 use super::dsp::vtracker::TrackerSensor;
 use super::dsp::writer::PCMFlexWriter;
-use super::dsp::writer::FlexPCMResult;
+use super::dsp::writer::SyncPCMResult;
 use super::dsp::frequency_range::FreqRange;
 use super::dsp::writer::Timeslice;
 use super::iterator::AQOp;
@@ -141,12 +141,12 @@ impl AudioQueue {
 	return self.timeslice != None;
     }
 
-    fn success(&mut self, written : usize) -> FlexPCMResult {
+    fn success(&mut self, written : usize) -> SyncPCMResult {
 	if let Some(_) = self.timeslice {
 	    self.have_reported_timeslice_update = true;
 	}
 	trace!("-------> Wrote(({written}, {:?}))", self.timeslice);
-	return FlexPCMResult::Wrote(written, self.timeslice);
+	return SyncPCMResult::Wrote(written, self.timeslice);
     }
 
     fn newly_at_timeslice_boundary(&self) -> bool {
@@ -161,11 +161,11 @@ impl AudioQueue {
 const INV_1000 : f64 = 0.001;
 
 impl PCMFlexWriter for AudioQueue {
-    fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange) -> FlexPCMResult {
+    fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange) -> SyncPCMResult {
 	if self.flush_requested {
 	    self.flush_requested = false;
 	    info!("[AQ] => Flush");
-	    return FlexPCMResult::Flush;
+	    return SyncPCMResult::Flush;
 	}
 
 	let mut outbuf_pos = 0;
@@ -335,7 +335,7 @@ fn test_default_silence() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 	       &outbuf[..]);
     assert_eq!((100, None),
@@ -353,7 +353,7 @@ fn test_sample_bufsize_limited() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
@@ -375,7 +375,7 @@ fn test_sample_switch() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([1.0, 2.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
@@ -394,7 +394,7 @@ fn test_sample_loop() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
@@ -414,7 +414,7 @@ fn test_sample_once_loop() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([11.0, 12.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
@@ -435,7 +435,7 @@ fn test_sample_twice_loop() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([11.0, 12.0, 21.0, 1.0, 2.0, 1.0, 2.0, 1.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),
@@ -464,7 +464,7 @@ fn test_freq_switch_sample_boundary() {
     // expect hard switches
     assert_eq!([1.0, 2.0, 11.0, 12.0, 13.0, 21.0, 22.0, 23.0, 24.0, 25.0],
 	       &outbuf[..]);
-    assert_eq!(FlexPCMResult::Wrote(10, None), r);
+    assert_eq!(SyncPCMResult::Wrote(10, None), r);
     assert_eq!((1000, Some(2)),  freqrange.get(0));
     assert_eq!((2000, Some(2)),  freqrange.get(2));
     assert_eq!((500, None),      freqrange.get(6));
@@ -487,7 +487,7 @@ fn test_volume() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     assert_eq!([10.0, 20.0, 3.0, 4.0, 10.0, 12.0, 14.0, 16.0],
 	       &outbuf[..]);
     assert_eq!((1000, None),  freqrange.get(0));
@@ -505,7 +505,7 @@ fn test_run_out() {
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(8, None), r);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
     let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange);
     assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 	       &outbuf[..]);
@@ -524,7 +524,7 @@ fn test_replace_iterator() {
     let mut freqrange = FreqRange::new();
 
     let r = aq.write_flex_pcm(&mut outbuf[0..2], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(2, None), r);
+    assert_eq!(SyncPCMResult::Wrote(2, None), r);
     assert_eq!((2000, None),
 	       freqrange.get(0));
     assert_eq!([11.0, 12.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
@@ -535,7 +535,7 @@ fn test_replace_iterator() {
 					AQOp::WaitMillis(1000)]]);
     aq.set_source(ait2);
     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2));
-    assert_eq!(FlexPCMResult::Flush, r);
+    assert_eq!(SyncPCMResult::Flush, r);
     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2));
 
     assert_eq!([11.0, 12.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
@@ -544,7 +544,7 @@ fn test_replace_iterator() {
 	       freqrange.get(0));
     assert_eq!((1000, None),
 	       freqrange.get(2));
-    assert_eq!(FlexPCMResult::Wrote(6, None), r);
+    assert_eq!(SyncPCMResult::Wrote(6, None), r);
 }
 
 #[cfg(test)]
@@ -571,7 +571,7 @@ fn test_sample_loop_interrupted() {
 	       freqrange.get(0));
     assert_eq!((2000, None),
 	       freqrange.get(4));
-    assert_eq!(FlexPCMResult::Wrote(12, None), r);
+    assert_eq!(SyncPCMResult::Wrote(12, None), r);
 }
 
 #[cfg(test)]
@@ -602,11 +602,11 @@ fn test_wait_on_timeslice() {
     let mut freqrange = FreqRange::new();
 
     let r = aq.write_flex_pcm(&mut outbuf[0..1], &mut freqrange);
-    assert_eq!(FlexPCMResult::Wrote(1, None), r);
+    assert_eq!(SyncPCMResult::Wrote(1, None), r);
     let r = aq.write_flex_pcm(&mut outbuf[1..5], &mut freqrange.at_offset(1));
-    assert_eq!(FlexPCMResult::Wrote(1, Some(1)), r);
+    assert_eq!(SyncPCMResult::Wrote(1, Some(1)), r);
     let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange.at_offset(2));
-    assert_eq!(FlexPCMResult::Wrote(3, Some(1)), r);
+    assert_eq!(SyncPCMResult::Wrote(3, Some(1)), r);
 
     assert_eq!([1.0, 2.0,
 		// ts-1 available
@@ -618,7 +618,7 @@ fn test_wait_on_timeslice() {
     aq.advance_sync(1);
 
     let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange.at_offset(5));
-    assert_eq!(FlexPCMResult::Wrote(3, Some(2)), r);
+    assert_eq!(SyncPCMResult::Wrote(3, Some(2)), r);
 
     assert_eq!([1.0, 2.0,
 		// ts-1 available
@@ -630,7 +630,7 @@ fn test_wait_on_timeslice() {
 	       &outbuf[..10]);
 
     let r = aq.write_flex_pcm(&mut outbuf[8..10], &mut freqrange.at_offset(8));
-    assert_eq!(FlexPCMResult::Wrote(2, Some(2)), r);
+    assert_eq!(SyncPCMResult::Wrote(2, Some(2)), r);
 
     assert_eq!([1.0, 2.0,
 		// ts-1 available
@@ -644,7 +644,7 @@ fn test_wait_on_timeslice() {
     aq.advance_sync(2);
 
     let r = aq.write_flex_pcm(&mut outbuf[10..], &mut freqrange.at_offset(10));
-    assert_eq!(FlexPCMResult::Wrote(6, Some(3)), r);
+    assert_eq!(SyncPCMResult::Wrote(6, Some(3)), r);
 
     assert_eq!([1.0, 2.0,
 		// ts-1 available

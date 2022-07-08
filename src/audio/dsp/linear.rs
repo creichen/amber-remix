@@ -10,12 +10,14 @@ use std::rc::Rc;
 /// Not expected to produce particularly high-quality output
 
 use crate::audio::dsp::writer::PCMWriter;
+use crate::audio::dsp::writer::PCMSyncWriter;
 use crate::audio::dsp::writer::PCMFlexWriter;
-use crate::audio::dsp::writer::FlexPCMResult;
+use crate::audio::dsp::writer::SyncPCMResult;
 use super::frequency_range::Freq;
 use super::frequency_range::FreqRange;
 use super::vtracker::TrackerSensor;
 use super::writer::FrequencyTrait;
+use super::writer::Timeslice;
 
 const BUFFER_SIZE_MILLIS : usize = 50;
 
@@ -67,7 +69,7 @@ impl LinearFilter {
     }
 
     /// Request data from the source to fill the local buffer
-    fn fill_local_buffer(&mut self, output_len : usize) -> FlexPCMResult {
+    fn fill_local_buffer(&mut self, output_len : usize) -> SyncPCMResult {
         let requested_output_in_seconds = output_len as f32 / self.out_freq as f32;
         let available_in_seconds = self.local_buffer_size_in_seconds();
         let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
@@ -79,13 +81,13 @@ impl LinearFilter {
 
         let write_result = {
 	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
-	    error!("FIXME");
+	    "error";println!("FIXME");
 	    self.source.borrow_mut().write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset)
 	    //usize::max(1, missing_in_millis))
 	};
 
-	error!("FIXME");
-	if let FlexPCMResult::Wrote(num_written, _) = write_result {
+	"error";println!("FIXME");
+	if let SyncPCMResult::Wrote(num_written, _) = write_result {
             if num_written == 0 && max_to_write > 0 && missing_in_millis > 0 {
 		if possible_max_to_write == 0 {
 		    panic!("LinearFilter buffer too small");
@@ -95,9 +97,8 @@ impl LinearFilter {
 	    }
 
             self.samples_in_buf += num_written;
-	    trace!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
+	    "trace";println!("** prep: wrote {num_written}/{max_to_write}, for {missing_in_millis} ms, now have {}", self.samples_in_buf);
 	}
-
 
 	return write_result;
     }
@@ -110,10 +111,10 @@ impl LinearFilter {
 	    let out_remaining = out_len - out_pos;
 	    let in_remaining = self.samples_in_buf - in_pos;
 
-	    trace!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
+	    "trace";println!("... onto the next; in: pos@{in_pos}, left:{}", in_remaining);
 
 	    if self.freqs.is_empty() {
-		error!("Buffer size = [{out_pos}..{out_len}] but freqs = {}", self.freqs);
+		"error";println!("Buffer size = [{out_pos}..{out_len}] but freqs = {}", self.freqs);
 	    }
 	    // How much sample information should we write now?
 	    let (in_freq, max_in_samples) = self.freqs.get(in_pos);
@@ -132,7 +133,7 @@ impl LinearFilter {
 	    let mut sample_state = match sample_state_last {
 		Some(s) => s,
 		None    => {
-		    info!("Updating sample conversion rate: {in_freq} Hz => {} Hz ", self.out_freq);
+		    "info";println!("Updating sample conversion rate: {in_freq} Hz => {} Hz ", self.out_freq);
 		    SampleState::new(in_freq, self.out_freq)},
 	    };
 
@@ -147,36 +148,36 @@ impl LinearFilter {
 	    let out_from_sample_f32 = (in_from_sample) as f32 / num_samples_in_per_out;
 	    let out_from_sample = (out_from_sample_f32 - sample_state.get_pos()) as usize;
 
-	    trace!("-- in@{in_pos} out@{out_pos}");
-	    trace!("   freqs={}", self.freqs);
-	    trace!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
-	    trace!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
-	    trace!("     -> expected max-for-outbuf={out_from_sample}   <- {out_from_sample_f32} - {}", sample_state.get_pos());
-	    trace!("        bufsize = {}", self.buf.len());
-	    trace!("        expected read: [{in_pos}..{}] (from max {})", in_pos + in_from_sample, in_pos + max_in_from_sample);
-	    trace!("        it: {sample_state}");
+	    "trace";println!("-- in@{in_pos} out@{out_pos}");
+	    "trace";println!("   freqs={}", self.freqs);
+	    "trace";println!("   outbuf=[{out_pos}..{out_len}] -> len={out_remaining}");
+	    "trace";println!("   inbuf=[{in_pos}..{in_pos}+{max_in_samples:?}]");
+	    "trace";println!("     -> expected max-for-outbuf={out_from_sample}   <- {out_from_sample_f32} - {}", sample_state.get_pos());
+	    "trace";println!("        bufsize = {}", self.buf.len());
+	    "trace";println!("        expected read: [{in_pos}..{}] (from max {})", in_pos + in_from_sample, in_pos + max_in_from_sample);
+	    "trace";println!("        it: {sample_state}");
 
 	    if out_from_sample == 0 {
 		if let Some(remaining_in_this_sample) = max_in_samples {
 		    let max_out_from_sample = sample_state.max_out_possible(remaining_in_this_sample);
-		    trace!(" ! not enough progress; expecting to get at most {max_out_from_sample} out of the active input sample");
-		    trace!(" | max_in_from_sample = {max_in_from_sample}");
+		    "trace";println!(" ! not enough progress; expecting to get at most {max_out_from_sample} out of the active input sample");
+		    "trace";println!(" | max_in_from_sample = {max_in_from_sample}");
 		    if max_out_from_sample < 1 {// (remaining_in_this_sample as f32) <  num_samples_out_per_in {
-			trace!("  => end of sample, and not enough data left-- shift out!");
+			"trace";println!("  => end of sample, and not enough data left-- shift out!");
 			// Skip the rest of this sample, it's not enough
 			in_pos += remaining_in_this_sample;
 			self.freqs.shift(remaining_in_this_sample);
 			continue;
 		    }
 		}
-		trace!("  => we must requisition additional samples!");
+		"trace";println!("  => we must requisition additional samples!");
 		break; // Need to get more samples first
 	    }
 
 	    let old_out_pos = out_pos;
 	    if out_remaining > out_from_sample {
 		// Sample will finish before / as we fill the output buffer
-		trace!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		"trace";println!("  -> (cont)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 
@@ -187,13 +188,13 @@ impl LinearFilter {
 
 	    } else {
 		// We will fill the output buffer before the sample is done
-		trace!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
+		"trace";println!("  -> (finl)  [{}..{}] <== [{}..{}]   in->out rate = {num_samples_in_per_out}",
 		       out_pos, out_pos+out_from_sample,
 		       in_pos, in_pos+in_from_sample);
 		sample_state.resample(&mut output[out_pos..out_len],
 				      // +1 so that we can interpolate to the next sample:
 				      &self.buf[in_pos..in_pos+in_from_sample + 1]);
-		trace!("        -> it': {sample_state}");
+		"trace";println!("        -> it': {sample_state}");
 
 		out_pos = out_len;
 	    }
@@ -212,7 +213,7 @@ impl LinearFilter {
 
 	    self.state = Some(sample_state);
 	}
-	trace!("  cleanup: in_pos = {in_pos}");
+	"trace";println!("  cleanup: in_pos = {in_pos}");
         self.freqs.shift(in_pos);
         let left_over_samples = in_pos..self.samples_in_buf;
         self.samples_in_buf = left_over_samples.len();
@@ -228,22 +229,20 @@ impl FrequencyTrait for LinearFilter {
     }
 }
 
-impl PCMWriter for LinearFilter {
-
-    fn write_pcm(&mut self, output : &mut [f32]) {
+impl PCMSyncWriter for LinearFilter {
+    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
 	let output_requested = output.len();
 	let mut output_written = 0;
-	let mut conclude_with_silence = false;
 	while output_written < output_requested {
 	    let mut num_read = 0;
 	    loop {
 		match self.fill_local_buffer(output.len()) {
-		    FlexPCMResult::Wrote(r, timeslice) => {
-			error!("FIXME"); // timeslice!
+		    SyncPCMResult::Wrote(r, timeslice) => {
+			"error";println!("FIXME"); // timeslice!
 			num_read = r;
 			break;
 		    },
-		    FlexPCMResult::Flush => {
+		    SyncPCMResult::Flush => {
 			self.samples_in_buf = 0;
 			self.freqs = FreqRange::new();
 			self.state = None;
@@ -251,23 +250,69 @@ impl PCMWriter for LinearFilter {
 		    }
 		}
 	    };
-	    // trace!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
-	    // trace!("[TOP]  out = {:?}", &output[..output_written]);
-	    debug!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
+	    // "trace";println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
+	    // "trace";println!("[TOP]  out = {:?}", &output[..output_written]);
+	    "debug";println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
 	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
 	    output_written += num_written;
-	    if conclude_with_silence {
-		return;
-	    }
-	    debug!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
+	    "debug";println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
 		panic!("No progress in linear filter: input buf {}/{} vs out {output_written}/{output_requested}", self.samples_in_buf, self.buf.len());
 	    }
         }
+	return todo!();
+    }
+
+    fn advance_sync(&mut self, timeslice : super::writer::Timeslice) {
+        todo!()
+    }
+}
+
+impl PCMWriter for LinearFilter {
+
+    fn write_pcm(&mut self, output : &mut [f32]) {
+	panic!("No longer supporeted, please use the PCMSyncWriter interface");
+	// let output_requested = output.len();
+	// let mut output_written = 0;
+	// let mut conclude_with_silence = false;
+	// while output_written < output_requested {
+	//     let mut num_read = 0;
+	//     loop {
+	// 	match self.fill_local_buffer(output.len()) {
+	// 	    SyncPCMResult::Wrote(r, timeslice) => {
+	// 		"error";println!("FIXME"); // timeslice!
+	// 		num_read = r;
+	// 		break;
+	// 	    },
+	// 	    SyncPCMResult::Flush => {
+	// 		self.samples_in_buf = 0;
+	// 		self.freqs = FreqRange::new();
+	// 		self.state = None;
+	// 		continue;
+	// 	    }
+	// 	}
+	//     };
+	//     // "trace";println!("[TOP]  buf = {:?}", &self.buf[..self.samples_in_buf]);
+	//     // "trace";println!("[TOP]  out = {:?}", &output[..output_written]);
+	//     "debug";println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.samples_in_buf, self.buf.len());
+	//     let num_written = self.emit_buffer(&mut output[output_written..]);
+
+	//     output_written += num_written;
+	//     if conclude_with_silence {
+	// 	return;
+	//     }
+	//     "debug";println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
+	//     if num_read == 0 && num_written == 0 {
+	// 	panic!("No progress in linear filter: input buf {}/{} vs out {output_written}/{output_requested}", self.samples_in_buf, self.buf.len());
+	//     }
+        // }
     }
 
 }
+
+// ----------------------------------------
+// SampleState: The linear interpolator
 
 
 #[derive(Copy, Clone)]
@@ -301,7 +346,7 @@ impl SampleState {
 
     fn resample(&mut self, outbuf : &mut [f32], inbuf : &[f32]) {
 	let sample_len = inbuf.len();
-	trace!("  ## resamp from {}", inbuf[0]);
+	"trace";println!("  ## resamp from {}", inbuf[0]);
 	let mut pos = self.sample_pos_int;
 
 	// fractional position counter
@@ -320,7 +365,7 @@ impl SampleState {
 	    let sample_v_current_fragment = sample_v_current * (fpos_denom - fpos_nom);
 	    let sample_v_next_fragment = sample_v_next * fpos_nom;
 
-	    trace!("  ## interpol {}, {}", sample_v_current, sample_v_next);
+	    "trace";println!("  ## interpol {}, {}", sample_v_current, sample_v_next);
 
 	    let sample_v = (sample_v_current_fragment + sample_v_next_fragment) / fpos_denom;
 
@@ -346,7 +391,123 @@ impl Display for SampleState {
     }
 }
 
+// ========================================
+// Testing
+
+#[cfg(test)]
+use crate::audio::dsp::sync::{PCMBasicSyncBarrier, T, mock_asw, cread};
+#[cfg(test)]
+use crate::audio::dsp::writer::PCMSyncBarrier;
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use std::sync::{Mutex, Arc};
+
 // ----------------------------------------
+// Helpers
+
+#[cfg(test)]
+struct MFWTick {
+    maxwrite : usize,
+    s : Vec<f32>,
+    f : Vec<(usize, Freq)>,
+    timeslice : usize,
+}
+
+#[cfg(test)]
+impl MFWTick {
+    fn new(samples : Vec<isize>, freqs : Vec<(usize, Freq)>) -> MFWTick {
+	return MFWTick::new_with_maxwrite(1000, samples, freqs);
+    }
+
+    fn new_with_maxwrite(maxwrite : usize, samples : Vec<isize>, freqs : Vec<(usize, Freq)>) -> MFWTick {
+	let mut s_f32 = Vec::new();
+	for s in samples {
+	    s_f32.push(s as f32);
+	}
+	return MFWTick {
+	    maxwrite,
+	    s : s_f32,
+	    f : freqs,
+	    timeslice : 0,
+	}
+    }
+
+    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange) -> SyncPCMResult {
+	let maxsize = usize::min(self.maxwrite,
+				 usize::min(output.len(), self.s.len()));
+	if self.is_empty() {
+	    output.fill(-1.0 * self.timeslice as f32);
+	    return SyncPCMResult::Wrote(output.len(), Some(self.timeslice));
+	}
+	output[0..maxsize].copy_from_slice(&self.s[0..maxsize]);
+	let f = &self.f;
+	for (pos, freq) in f {
+	    freqrange.append(*pos, *freq);
+	}
+	self.f = vec![];
+	self.s.copy_within(maxsize.., 0);
+	return SyncPCMResult::Wrote(maxsize, if self.is_empty() { Some(self.timeslice) } else { None });
+    }
+
+    fn is_empty(&self) -> bool {
+	return self.f.is_empty();
+    }
+}
+
+#[cfg(test)]
+struct MockFlexWriter {
+    t : VecDeque<RefCell<MFWTick>>,
+    ticks : Option<usize>,
+}
+
+#[cfg(test)]
+impl PCMFlexWriter for MockFlexWriter {
+    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange) -> SyncPCMResult {
+	match self.t.front() {
+	    None => { panic!("Out of slices"); },
+	    Some(t) => {
+		let result = t.borrow_mut().write_flex_pcm(output, freqrange);
+		match result {
+		    SyncPCMResult::Wrote(_, Some(i)) => { self.ticks = Some(i);  },
+		    _                                => {},
+		}
+		return result;
+	    }
+	}
+    }
+
+    fn advance_sync(&mut self, timeslice : Timeslice) {
+	assert_eq!(Some(timeslice), self.ticks);
+	self.ticks = None;
+	self.t.pop_front();
+    }
+}
+
+#[cfg(test)]
+impl MockFlexWriter {
+    pub fn new(t : Vec<MFWTick>) -> MockFlexWriter {
+	let mut tdeque = VecDeque::new();
+	for tt in &t {
+	    tdeque.push_back(RefCell::new(MFWTick{
+		maxwrite : tt.maxwrite,
+		s : (&tt.s[..]).to_vec(),
+		f : (&tt.f[..]).to_vec(),
+		timeslice : 0,
+	    }));
+	}
+	for (index, tt) in tdeque.iter_mut().enumerate() {
+	    tt.borrow_mut().timeslice = index + 1;
+	}
+	MockFlexWriter {
+	    t : tdeque,
+	    ticks : None,
+	}
+    }
+}
+
+// ----------------------------------------
+// Tests
 
 #[cfg(test)]
 #[test]
@@ -529,170 +690,206 @@ fn test_downsample_one_point_five_incremental() {
 		 &outbuf[..]);
 }
 
-// #[cfg(test)]
-// struct MockFlexWriter { s : Vec<f32>, f : Vec<(usize, Freq)>, maxwrite : usize }
-// #[cfg(test)]
-// impl PCMFlexWriter for MockFlexWriter {
-//     fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange, _msecs : usize) -> FlexPCMResult {
-// 	let maxsize = usize::min(self.maxwrite, usize::min(output.len(), self.s.len()));
-// 	output[0..maxsize].copy_from_slice(&self.s[0..maxsize]);
-// 	let f = &self.f;
-// 	for (pos, freq) in f {
-// 	    freqrange.append(*pos, *freq);
-// 	}
-// 	self.f = vec![];
-// 	self.s.copy_within(maxsize.., 0);
-// 	return FlexPCMResult::Wrote(maxsize);
-//     }
-// }
+#[cfg(test)]
+#[test]
+fn test_linear_filter_resampling_incremental() {
+    let mut outbuf = [0.0; 14];
+    let flexwriter = MockFlexWriter::new(vec![
+	// slice 1
+	MFWTick::new(vec![
+	    1, 2,                   // 1:1
+	    3, 4, 5, 6,             // 2:1 (downsample)
+	    7, 8, 9,                // 1:2 (upsample)
+	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+	], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
+	]);
 
-// #[cfg(test)]
-// #[test]
-// fn test_linear_filter_resampling_incremental() {
-//     let mut outbuf = [0.0; 14];
-//     let flexwriter = MockFlexWriter {
-// 	maxwrite : 100,
-// 	s : vec![1.0, 2.0,                           // 1:1
-// 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
-// 		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
-// 		 10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
-// 	],
-// 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
-//     };
-//     let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-//     lf.write_pcm(&mut outbuf[0..1]);
-//     assert_eq!( [1.0,
-// 		 0.0, 0.0, 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
+    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
 
-//     lf.write_pcm(&mut outbuf[1..4]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(1, None), lf.write_sync_pcm(&mut outbuf[0..1]));
+    assert_eq!( [1.0,
+		 0.0, 0.0, 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
 
-//     lf.write_pcm(&mut outbuf[4..5]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0,
-// 		 0.0, 0.0, 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(3, None), lf.write_sync_pcm(&mut outbuf[1..4]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
 
-//     lf.write_pcm(&mut outbuf[5..6]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5,
-// 		 0.0, 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
-//     lf.write_pcm(&mut outbuf[6..7]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5, 8.0,
-// 		 0.0,
-// 		 0.0, 0.0, 0.0, 0.0,
-// 		 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[4..5]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0,
+		 0.0, 0.0, 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
 
-//     lf.write_pcm(&mut outbuf[7..11]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-// 		 10.0,
-// 		 0.0, 0.0, 0.0,
-// 		 ],
-// 		 &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[5..6]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0, 7.5,
+		 0.0, 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[6..7]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0, 7.5, 8.0,
+		 0.0,
+		 0.0, 0.0, 0.0, 0.0,
+		 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
 
-//     lf.write_pcm(&mut outbuf[11..13]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-// 		 10.0, 25.0, 40.0,
-// 		 0.0,
-// 		 ],
-// 		 &outbuf[..]);
-// }
+    assert_eq!(SyncPCMResult::Wrote(4, None), lf.write_sync_pcm(&mut outbuf[7..11]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		 10.0,
+		 0.0, 0.0, 0.0,
+		 ],
+		 &outbuf[..]);
 
-// #[cfg(test)]
-// #[test]
-// fn test_linear_filter_resampling() {
-//     let mut outbuf = [0.0; 14];
-//     let flexwriter = MockFlexWriter {
-// 	maxwrite : 100,
-// 	s : vec![1.0, 2.0,                           // 1:1
-// 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
-// 		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
-// 		 10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
-// 	],
-// 	f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
-//     };
-//     let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-//     lf.write_pcm(&mut outbuf[..]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-// 		 10.0, 25.0, 40.0, 55.0,
-// 		 ],
-// 		 &outbuf[..]);
-// }
+    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[11..13]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		 10.0, 25.0, 40.0,
+		 0.0,
+		 ],
+		 &outbuf[..]);
+}
 
-// #[cfg(test)]
-// #[test]
-// fn test_linear_filter_limit_writes() {
-//     for i in 1..3 {
-// 	let mut outbuf = [0.0; 14];
-// 	let flexwriter = MockFlexWriter {
-// 	    maxwrite : i,
-// 	    s : vec![1.0, 2.0,                           // 1:1
-// 		     3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
-// 		     7.0, 8.0, 9.0,                      // 1:2 (upsample)
-// 		     10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
-// 	    ],
-// 	    f : vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)],
-// 	};
-// 	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-// 	lf.write_pcm(&mut outbuf[..]);
-// 	assert_eq!( [1.0, 2.0,
-// 		     3.0, 5.0,
-// 		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-// 		     10.0, 25.0, 40.0, 55.0,],
-// 		     &outbuf[..]);
-//     }
-// }
+#[cfg(test)]
+#[test]
+fn test_linear_filter_limit_writes() {
+    for i in 1..3 {
+	let mut outbuf = [0.0; 14];
+	let flexwriter = MockFlexWriter::new(vec![
+	// slice 1
+	    MFWTick::new_with_maxwrite(1, vec![
+		1, 2,                   // 1:1
+		3, 4, 5, 6,             // 2:1 (downsample)
+		7, 8, 9,                // 1:2 (upsample)
+		10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+	    ], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
+	]);
 
-// #[cfg(test)]
-// #[test]
-// fn test_linear_filter_tiny_buffer() {
-//     let mut outbuf = [0.0; 14];
-//     let flexwriter = MockFlexWriter {
-// 	maxwrite : 1000,
-// 	s : vec![1.0, 2.0,                           // 1:1
-// 		 3.0, 4.0, 5.0, 6.0,                 // 2:1 (downsample)
-// 		 7.0, 8.0, 9.0,                      // 1:2 (upsample)
-// 		 10.0, 20.0, 30.0, 40.0, 50.0, 60.0  // 1.5:1 (downsample)
-// 	],
-// 	f : vec![(0, 40), (2, 80), (6, 20), (9, 60)],
-//     };
-//     let mut lf = LinearFilter::nw(80, 40, Rc::new(RefCell::new(flexwriter)));
-//     lf.write_pcm(&mut outbuf[..]);
-//     assert_eq!( [1.0, 2.0,
-// 		 3.0, 5.0,
-// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-// 		 10.0, 25.0, 40.0, 55.0,],
-// 		 &outbuf[..]);
-// }
+	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+	assert_eq!(SyncPCMResult::Wrote(14, None), lf.write_sync_pcm(&mut outbuf[..]));
+	assert_eq!( [1.0, 2.0,
+		     3.0, 5.0,
+		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		     10.0, 25.0, 40.0, 55.0,],
+		     &outbuf[..]);
+    }
+}
 
-// // ================================================================================
+#[cfg(test)]
+#[test]
+fn test_linear_filter_limit_full() {
+    for i in 1..3 {
+	let mut outbuf = [0.0; 14];
+	let flexwriter = MockFlexWriter::new(vec![
+	// slice 1
+	    MFWTick::new_with_maxwrite(100, vec![
+		1, 2,                   // 1:1
+		3, 4, 5, 6,             // 2:1 (downsample)
+		7, 8, 9,                // 1:2 (upsample)
+		10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+	    ], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
+	]);
+
+	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+	assert_eq!(SyncPCMResult::Wrote(14, None), lf.write_sync_pcm(&mut outbuf[..]));
+	assert_eq!( [1.0, 2.0,
+		     3.0, 5.0,
+		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		     10.0, 25.0, 40.0, 55.0,],
+		     &outbuf[..]);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_linear_filter_multislice() {
+    let mut outbuf = [0.0; 16];
+    let flexwriter = MockFlexWriter::new(vec![
+	// slice 1
+	MFWTick::new(vec![
+	    1, 2,                   // 1:1
+	    3, 4, 5, 6,             // 2:1 (downsample)
+	], vec![(0, 10000), (2, 20000)]),
+	// slice 2
+	MFWTick::new(vec![
+	    7, 8, 9,                // 1:2 (upsample)
+	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+	], vec![(0, 5000), (3, 15000)]),
+	]);
+
+    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+    assert_eq!(SyncPCMResult::Wrote(4, Some(1)), lf.write_sync_pcm(&mut outbuf[..]));
+    assert_eq!(SyncPCMResult::Wrote(2, Some(1)), lf.write_sync_pcm(&mut outbuf[4..6]));
+    assert_eq!(SyncPCMResult::Wrote(10, None), lf.write_sync_pcm(&mut outbuf[6..]));
+    assert_eq!( [1.0, 2.0,
+		 3.0, 5.0,
+		 -1.0, -1.0,
+		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+		 10.0, 25.0, 40.0, 55.0,
+		 ],
+		 &outbuf[..]);
+}
+
+// ----------------------------------------
+// Syonchronisation integration tests
+
+#[cfg(test)]
+#[test]
+fn integrate_test_binary_sync() {
+    let mut data0 = [0.0; 8];
+    let mut data1 = [0.0; 8];
+    let mut sbar = PCMBasicSyncBarrier::new();
+    todo!("Fill in reasonable values");
+    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+	T::S(vec![10.0, 11.0]),
+	T::TS(-11.0, 1),
+	T::S(vec![12.0, 13.0]),
+	T::TS(-12.0, 2),
+	T::S(vec![14.0, 15.0, 16.0, 17.0]),
+	T::TS(-13.0, 3),
+    ]));
+    let flexwriter = MockFlexWriter::new(vec![
+	// slice 1
+	MFWTick::new(vec![
+	    1, 2,                   // 1:1
+	    3, 4, 5, 6,             // 2:1 (downsample)
+	], vec![(0, 10000), (2, 20000)]),
+	// slice 2
+	MFWTick::new(vec![
+	    7, 8, 9,                // 1:2 (upsample)
+	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+	], vec![(0, 5000), (3, 15000)]),
+	]);
+    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+    let c1 = sbar.sync(Arc::new(Mutex::new(lf)));
+
+    cread(c0.clone(), &mut data0[0..8]);
+    assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+	       data0[..]);
+
+    cread(c1.clone(), &mut data1[0..8]);
+    assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
+	       data1[..]);
+}

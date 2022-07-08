@@ -261,7 +261,7 @@ use super::writer::PCMSyncWriter;
 // Helpers
 
 #[cfg(test)]
-enum T {
+pub enum T {
     S(Vec<f32>),
     TS(f32, Timeslice), // repeat the first f32 until the timeslice is advanced to
 }
@@ -325,11 +325,8 @@ impl PCMSyncWriter for MockASW {
     }
 }
 
-// ----------------------------------------
-// Tests
-
 #[cfg(test)]
-fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
+pub fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
     return Arc::new(Mutex::new(MockASW {
 	name,
 	ops : VecDeque::from(ops),
@@ -339,11 +336,14 @@ fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
 }
 
 #[cfg(test)]
-fn cread(writer : ArcWriter, dest : &mut [f32]) {
+pub fn cread(writer : ArcWriter, dest : &mut [f32]) {
     let mut guard = writer.lock().unwrap();
     let wr = guard.deref_mut();
     wr.write_pcm(dest);
 }
+
+// ----------------------------------------
+// Tests
 
 #[cfg(test)]
 #[test]
@@ -391,7 +391,7 @@ fn test_binary() {
 	T::S(vec![12.0, 13.0]),
 	T::TS(-12.0, 2),
 	T::S(vec![14.0, 15.0, 16.0, 17.0]),
-	T::TS(-13.0, 2),
+	T::TS(-13.0, 3),
     ]));
     let c1 = sbar.sync(mock_asw("1".to_string(), vec![
 	T::S(vec![20.0, 21.0, 22.0, 23.0]),
@@ -399,7 +399,7 @@ fn test_binary() {
 	T::S(vec![24.0, 25.0]),
 	T::TS(-22.0, 2),
 	T::S(vec![26.0, 27.0]),
-	T::TS(-23.0, 2),
+	T::TS(-23.0, 3),
     ]));
     cread(c0.clone(), &mut data0[0..8]);
     assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],

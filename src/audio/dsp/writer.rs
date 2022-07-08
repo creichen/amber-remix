@@ -53,14 +53,6 @@ pub type ArcSyncWriter = Arc<Mutex<dyn PCMSyncWriter>>;
 // ================================================================================
 // Flexible-frequency writers that must synchronise on timeslice boundaries
 
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum FlexPCMResult {
-    /// Specify number of samples written and optionally whether writer is ready for next time slice
-    Wrote(usize, Option<Timeslice>),
-    /// Source reset: flush buffers, set current time slice to 0, try to write again
-    Flush,
-}
-
 /// Writes variable-frequency PCM data
 pub trait PCMFlexWriter {
     /// Write the specified number of samples to the given slice.
@@ -68,7 +60,7 @@ pub trait PCMFlexWriter {
     /// The FlexPCMWriter might thus be asked to produce audio beyond what it thinks the length of the current time slice is,
     /// but that decision is up to the consumer below (which will discard "ueseless" samples).
     /// Returns the number of samples written.
-    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange) -> FlexPCMResult;
+    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange) -> SyncPCMResult;
 
     /// Permit the writer to advance to the next time slice (as specified)
     fn advance_sync(&mut self, timeslice : Timeslice);
