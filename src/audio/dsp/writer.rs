@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -6,118 +5,84 @@ use crate::audio::dsp::frequency_range::Freq;
 use crate::audio::dsp::frequency_range::FreqRange;
 
 // ================================================================================
+// Fixed-frequency writers that do not need synchronisation
 
-/// A monotonically increasing time designator
-/// We use time slices to indicate ticks (0.02s intervals), but that interpretation is arbitrary.
-type Timeslice = usize;
+pub trait FrequencyTrait {
+    /// Associated frequency, e.g., output frequency for writers
+    fn frequency(&self) -> Freq;
+}
 
 /// Writes fixed-frequency PCM data
-pub trait PCMWriter {
-    /// Output frequency
-    fn frequency(&self) -> Freq;
-
+pub trait PCMWriter : FrequencyTrait {
     /// Write the specified number of samples to the given slice
     fn write_pcm(&mut self, output : &mut [f32]);
 }
 
-type ArcWriter = Arc<Mutex<dyn PCMWriter>>;
+pub type ArcWriter = Arc<Mutex<dyn PCMWriter>>;
 
 // ================================================================================
+// Fixed-frequency writers that can synchronise on timeslice boundaries
+
+/// A monotonically increasing time designator
+/// We use time slices to indicate ticks (0.02s intervals), but that interpretation is arbitrary.
+pub type Timeslice = usize;
+
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum SyncPCMResult {
+    /// Specify number of samples written and optionally whether writer is ready for next time slice
+    Wrote(usize, Option<Timeslice>),
+    /// Source reset: flush buffers, set current time slice to 0, try to write again
+    Flush,
+}
+
+/// Writes fixed-frequency PCM data
+pub trait PCMSyncWriter : FrequencyTrait {
+    /// Write the specified number of samples to the given slice
+    /// Will write that many bytes except for two situations:
+    /// - Encountered time slice change (in which case the first "Wrote()" after the time slice
+    ///   change may report fewer bytes than requested, but later calls must no
+    /// - Flush
+    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult;
+
+    /// Permit the writer to advance to the next time slice (as specified)
+    fn advance_sync(&mut self, timeslice : Timeslice);
+}
+
+pub type ArcSyncWriter = Arc<Mutex<dyn PCMSyncWriter>>;
+
+// ================================================================================
+// Flexible-frequency writers that must synchronise on timeslice boundaries
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum FlexPCMResult {
     /// Specify number of samples written and optionally whether writer is ready for next time slice
     Wrote(usize, Option<Timeslice>),
-    Flush, // Source reset: flush buffers, set current time slice to 0, try to write again
+    /// Source reset: flush buffers, set current time slice to 0, try to write again
+    Flush,
+    /// Nothing to write right now
     Silence,
 }
 
 /// Writes variable-frequency PCM data
-pub trait FlexPCMWriter {
+pub trait PCMFlexWriter {
     /// Write the specified number of samples to the given slice.
     /// TIME specifies the timeslice for which we should generate data.
     /// The FlexPCMWriter might thus be asked to produce audio beyond what it thinks the length of the current time slice is,
     /// but that decision is up to the consumer below (which will discard "ueseless" samples).
     /// Returns the number of samples written.
-    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange, time : Timeslice) -> FlexPCMResult;
+    fn write_flex_pcm(&mut self, output : &mut [f32], freqrange : &mut FreqRange) -> FlexPCMResult;
+
+    /// Permit the writer to advance to the next time slice (as specified)
+    fn advance_sync(&mut self, timeslice : Timeslice);
 }
+
+pub type ArcFlexWriter = Arc<Mutex<dyn PCMFlexWriter>>;
 
 // ================================================================================
 
-/// Synchronising multiple writers across time slices
-///
-/// Synchronising multiple (Flex) writers is handled by an external
-pub trait PCMAudioSyncWriter : PCMWriter {
-    ///
-    fn writer_sync_state(&self) -> (usize, Timeslice);
-
-    /// +
-    fn writer_sync_forward(&mut self, samples: usize, slice: Timeslice);
+/// Synchronise multiple PCMSyncWriters/ArcSyncWriters across time slices
+pub trait PCMSyncBarrier {
+    /// Register an ArcSyncWriter for synchronisation
+    fn sync(&mut self, writer : ArcSyncWriter) -> ArcWriter;
 }
 
-type ArcSyncWriter = Arc<Mutex<dyn PCMAudioSyncWriter>>;
-
-type SyncID = usize;
-
-pub trait WriterSynchronizerTrait {
-
-    ///
-    fn register(&mut self) -> SyncID;
-
-    /// 
-    fn report_timeslice_ready(&self, SyncID, usize, Timeslice) -> (usize, Timeslice);
-
-    /// +
-    fn writer_sync_forward(&mut self, samples: usize, slice: Timeslice);
-}
-
-
-// ================================================================================
-
-
-
-struct WriterState {
-    timeslice : Timeslice,
-    written : usize,
-    writer : ArcSyncWriter,
-}
-
-struct WriterSync {
-    writer_states : Vec<WriterState>,
-}
-
-impl WriterSync {
-    fn synchroniser_for(self : Rc<WriterSync>, writer: ArcSyncWriter) -> WriterSyncFwd {
-	let guard = writer.lock().unwrap();
-	let freq = guard.frequency();
-	return WriterSyncFwd {
-	    wsync : self,
-	    writer,
-	    freq,
-	};
-    }
-
-    fn requesting(&mut self, samples : usize) -> usize {
-	// check all writers for their state
-	// 
-    }
-}
-
-struct WriterSyncFwd {
-    wsync : Rc<WriterSync>,
-    writer : ArcSyncWriter,
-    freq : Freq,
-}
-
-impl WriterSyncFwd {
-}
-
-impl PCMWriter for WriterSyncFwd {
-    fn frequency(&self) -> Freq {
-	return self.freq;
-    }
-
-    fn write_pcm(&mut self, output : &mut [f32]) {
-	let result = self.wsync.requesting(output.len());
-    }
-}

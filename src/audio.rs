@@ -3,13 +3,12 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use core::time;
 use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
-//use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell, borrow::BorrowMut};
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
-use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::vtracker::{TrackerSensor, Tracker}, iterator::ArcPoly};
+use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}}, iterator::ArcPoly};
 #[allow(unused)]
-use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::FlexPCMWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
+use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::PCMFlexWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
 pub use self::iterator::AudioIterator;
 pub use self::iterator::MockAudioIterator;
 pub use self::iterator::AQOp;
@@ -32,7 +31,7 @@ const AUDIO_BUF_MAX_SIZE : usize = 16384;
 
 struct LinearFilteringPipeline {
     it_proc : Rc<RefCell<dyn AudioIteratorProcessor>>,
-    // aqueue : Rc<RefCell<dyn FlexPCMWriter>>,
+    // aqueue : Rc<RefCell<dyn PCMFlexWriter>>,
     // linear_filter : Rc<RefCell<LinearFilter>>,
     stereo_mapper : Rc<RefCell<StereoMapper>>,
 }
@@ -59,128 +58,12 @@ impl LinearFilteringPipeline {
     }
 }
 
-// ================================================================================
-// OutputBuffer
-
-const OUTPUT_BUFFER_IS_FULL : usize = 0xffffffff;
-
-// Ring buffer semantics
-struct OutputBuffer {
-    last_poll : usize,
-    write_pos : usize, // may be OUTPUT_BUFFER_IS_FULL
-    read_pos : usize,
-    data : [f32; AUDIO_BUF_MAX_SIZE * 2],
-}
-
-impl OutputBuffer {
-    fn new() -> OutputBuffer {
-	OutputBuffer {
-	    last_poll : AUDIO_BUF_DEFAULT_POLL_SIZE,
-	    write_pos : 0,
-	    read_pos : 0,
-	    data : [0.0; AUDIO_BUF_MAX_SIZE * 2],
-	}
-    }
-
-    pub fn capacity(&self) -> usize {
-	return self.data.len();
-    }
-
-    pub fn remaining_capacity(&self) -> usize {
-	return self.capacity() - self.len();
-    }
-
-    pub fn is_full(&self) -> bool {
-	return self.write_pos == OUTPUT_BUFFER_IS_FULL;
-    }
-
-    pub fn is_empty(&self) -> bool {
-	return self.len() == 0;
-    }
-
-    pub fn len(&self) -> usize {
-	let cap = self.capacity();
-	if self.is_full() {
-	    return cap;
-	};
-	if self.write_pos < self.read_pos {
-	    return self.write_pos + cap - self.read_pos;
-	}
-	return self.write_pos - self.read_pos;
-    }
-
-    /// How much are we expecting to read from here?
-    pub fn expected_read(&self) -> usize {
-	return self.last_poll;
-    }
-
-    fn can_read_to_end_of_buffer(&self) -> bool{
-	return self.is_full() || self.read_pos > self.write_pos;
-    }
-
-    fn write_to(&mut self, dest : &mut [f32]) -> usize {
-	let initially_available = self.len();
-	let requested = dest.len();
-	let read_end_pos = if self.can_read_to_end_of_buffer() { self.capacity() } else { self.write_pos };
-	let avail = read_end_pos - self.read_pos;
-
-	let to_write = usize::min(avail, requested);
-
-	if to_write > 0 {
-	    dest[0..to_write].copy_from_slice(&self.data[self.read_pos..self.read_pos + to_write]);
-
-	    if self.is_full() {
-		self.write_pos = self.read_pos;
-	    }
-	    self.read_pos += to_write;
-	}
-	// We might be done now
-	if to_write == requested || to_write == initially_available {
-	    return to_write;
-	}
-	// Otherwise, we must have hit the end of the buffer
-	// Call ourselves one final time to finish up
-	self.read_pos -= self.capacity();
-	return to_write + self.write_to(&mut dest[to_write..]);
-    }
-
-    fn read_from(&mut self, src : &[f32]) -> usize {
-	if self.is_full() {
-	    return 0;
-	}
-	let initially_available = self.capacity() - self.len();
-	let requested = src.len();
-	let write_start_pos = self.write_pos;
-	let write_end_pos = if self.read_pos <= write_start_pos { self.capacity() } else { self.read_pos };
-	let avail = write_end_pos - write_start_pos;
-
-	let to_write = usize::min(avail, requested);
-
-	if to_write > 0 {
-	    self.data[write_start_pos..write_start_pos+to_write].copy_from_slice(&src[0..to_write]);
-
-	    self.write_pos += to_write;
-	    if self.write_pos == self.read_pos {
-		self.write_pos = OUTPUT_BUFFER_IS_FULL;
-	    }
-	}
-	// We might be done now
-	if to_write == requested || to_write == initially_available {
-	    return requested;
-	}
-	// Otherwise, we must have hit the end of the buffer
-	// Call ourselves one final time to finish up
-	self.write_pos -= self.capacity();
-	return to_write + self.read_from(&src[to_write..]);
-
-    }
-}
 
 // ================================================================================
 // Callback
 
 struct Callback {
-    shared_buf : Arc<Mutex<OutputBuffer>>,
+    shared_buf : Arc<Mutex<RingBuf>>,
     tracker : TrackerSensor,
 }
 
@@ -190,7 +73,6 @@ impl AudioCallback for Callback {
     fn callback(&mut self, output: &mut [Self::Channel]) {
 	let mut guard = self.shared_buf.lock().unwrap();
 	let buf = guard.deref_mut();
-	buf.last_poll = output.len();
 	let num_written = buf.write_to(output);
 
 	if num_written < output.len() {
@@ -208,7 +90,7 @@ impl AudioCallback for Callback {
 }
 
 impl Callback {
-    fn new(shared_buf : Arc<Mutex<OutputBuffer>>, tracker : TrackerSensor) -> Callback {
+    fn new(shared_buf : Arc<Mutex<RingBuf>>, tracker : TrackerSensor) -> Callback {
 	return Callback {
 	    shared_buf, tracker,
 	}
@@ -220,7 +102,7 @@ impl Callback {
 
 pub struct AudioCore {
     spec : AudioSpec,
-    shared_buf : Arc<Mutex<OutputBuffer>>,
+    shared_buf : Arc<Mutex<RingBuf>>,
     device : Option<sdl2::audio::AudioDevice<Callback>>,
     callback_tracker_sensor : TrackerSensor,
 }
@@ -271,7 +153,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	    samples: 0,
 	    size: 0,
 	},
-	shared_buf : Arc::new(Mutex::new(OutputBuffer::new())),
+	shared_buf : Arc::new(Mutex::new(RingBuf::new(AUDIO_BUF_MAX_SIZE))),
 	device : None,
 	callback_tracker_sensor : TrackerSensor::new(),
     }));
@@ -309,7 +191,7 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<OutputBuffer>>, callback_vtsensor : TrackerSensor) -> Mixer {
+    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<RingBuf>>, callback_vtsensor : TrackerSensor) -> Mixer {
 	let (tx, rx) = mpsc::channel();
 
 	let _ = thread::spawn(move || {
@@ -341,8 +223,8 @@ struct MixerThread {
     amiga_pipelines : [LinearFilteringPipeline; 4],
     aux_pipeline : LinearFilteringPipeline,
     control_channel : Receiver<MixerOp>,
-    buf : Arc<Mutex<OutputBuffer>>,
-    tmp_buf : OutputBuffer,
+    buf : Arc<Mutex<RingBuf>>,
+    tmp_buf : RingBuf,
     trackers : Vec<RefCell<Tracker>>,
 }
 
@@ -370,7 +252,7 @@ fn make_pipeline(name : &str,
 
 fn run_mixer_thread(freq : Freq,
 		    samples : Arc<Vec<i8>>,
-		    buf : Arc<Mutex<OutputBuffer>>,
+		    buf : Arc<Mutex<RingBuf>>,
 		    control_channel : Receiver<MixerOp>,
 		    callback_vtsensor : TrackerSensor)
 {
@@ -402,7 +284,7 @@ fn run_mixer_thread(freq : Freq,
 	aux_pipeline: pipeline,
 	control_channel,
 	buf,
-	tmp_buf : OutputBuffer::new(),
+	tmp_buf : RingBuf::new(AUDIO_BUF_MAX_SIZE),
 	trackers,
     };
     mt.run();
