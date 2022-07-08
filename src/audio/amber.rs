@@ -755,6 +755,7 @@ impl<SDB> AudioIterator for ChannelIterator<SDB> where SDB : SongDataBank {
 	let avolume = (((self.state.avolume as usize) * (self.channel_avolume as usize)) >> 6) as AVolume;
 	out_queue.push_back(AQOp::SetVolume(volume(avolume)));
 	out_queue.push_back(AQOp::WaitMillis(TICK_DURATION_MILLIS));
+	out_queue.push_back(AQOp::Timeslice(self.state.num_ticks));
 	debug!("   : note={:?}, period={}", note, self.state.period);
 	debug!("   :: {:?}", out_queue);
 	self.state.num_ticks += 1;

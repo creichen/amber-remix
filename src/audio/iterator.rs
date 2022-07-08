@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::{Arc, Mutex}};
 
 use crate::datafiles::music::BasicSample;
 
-use super::{dsp::frequency_range::Freq, SampleRange};
+use super::{dsp::{frequency_range::Freq, writer::Timeslice}, SampleRange};
 
 // ================================================================================
 // AudioIterator
@@ -17,6 +17,9 @@ use super::{dsp::frequency_range::Freq, SampleRange};
 pub enum AQOp {
     /// Process channel settings for specified nr of milliseconds
     WaitMillis(usize),
+    /// Timeslice transition marker; ensures synchronisation for minor variations in how
+    /// WaitMillis is interpreted (if sent after WaitMillis)
+    Timeslice(Timeslice),
     /// Enqueue to the sample queue (applies after the current sample finishes playing)
     SetSamples(Vec<AQSample>),
     /// Set audio frequency in Hz (applies at the start of the next sample)

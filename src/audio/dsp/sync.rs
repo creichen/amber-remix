@@ -7,11 +7,6 @@ use crate::audio::Freq;
 
 use super::{writer::{Timeslice, ArcSyncWriter, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, ArcWriter}, ringbuf::RingBuf};
 
-#[cfg(test)]
-use std::collections::VecDeque;
-#[cfg(test)]
-use super::writer::PCMSyncWriter;
-
 // ----------------------------------------
 // Basic Sync barrier implementation
 // Assumes that we never have more than MAX_BUFFER_SIZE output samples to produce per timeslices
@@ -168,11 +163,11 @@ impl BasicWriterSyncImpl {
 		oks += 1;
 	    }
 	}
-	println!("[BWSI]   prefill check -> {oks}");
+	trace!("[BWSI]   prefill check -> {oks}");
 	if oks == 0 {
-	    println!("All sources flushed");
+	    trace!("All sources flushed");
 	} else if oks == num_sources {
-	    println!("All sources reported success");
+	    trace!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
 	    let mut sum_offset = 0;
 
@@ -184,7 +179,7 @@ impl BasicWriterSyncImpl {
 	    }
 
 	    let avg_offset = sum_offset / num_sources;
-	    println!("  Setting slice length to {avg_offset}");
+	    trace!("  Setting slice length to {avg_offset}");
 
 	    for state in self.sources.iter_mut() {
 		if !state.fill_until(avg_offset) {
@@ -194,7 +189,7 @@ impl BasicWriterSyncImpl {
 		    state.advance(avg_offset, timeslice);
 		}
 	    }
-	    println!("  Completed timeslice {timeslice:?}");
+	    debug!("  Completed timeslice {timeslice:?}");
 
 	} else {
 	    panic!("Inconsistent flush: {}/{} sources flushed", num_sources - oks, num_sources);
@@ -205,11 +200,11 @@ impl BasicWriterSyncImpl {
     fn write_for(&mut self, writer_nr : usize, output : &mut [f32]) {
 	let mut write_pos = 0;
 	let mut last_write_pos = output.len() + 1; // something different to avoid triggering the sanity check
-	println!("[BWSI] writer {writer_nr} wants {} samples", output.len());
+	trace!("[BWSI] writer {writer_nr} wants {} samples", output.len());
 	while write_pos < output.len() {
 	    let source = &mut self.sources[writer_nr];
 	    let num_written = source.write_pcm(&mut output[write_pos..]);
-	    println!("[BWSI]  wrote {num_written}");
+	    trace!("[BWSI]  wrote {num_written}");
 
 	    if num_written == 0 && last_write_pos == write_pos {
 		panic!("No progress: {}/{}/{}; buf={}/{}.  is the source really producing ticks?  Is our buffer big enough?",
@@ -222,7 +217,7 @@ impl BasicWriterSyncImpl {
 	    if write_pos < output.len() {
 		// Ran out of buffer?
 		//source.reset_buf_readwrite_pos();
-		println!("[BWSI]   ran out of buffer, must prefill");
+		trace!("[BWSI]   ran out of buffer, must prefill");
 		self.prefill_buffers();
 	    }
 	}
@@ -249,13 +244,18 @@ impl FrequencyTrait for WriterSyncFwd {
 
 impl PCMWriter for WriterSyncFwd {
     fn write_pcm(&mut self, output : &mut [f32]) {
-	println!("[WSF:{}] Forwarding write request of size {}", self.writer_nr, output.len());
+	trace!("[WSF:{}] Forwarding write request of size {}", self.writer_nr, output.len());
 	self.wsync.borrow_mut().write_for(self.writer_nr, output);
     }
 }
 
 // ========================================
 // Testing
+
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use super::writer::PCMSyncWriter;
 
 // ----------------------------------------
 // Helpers
@@ -326,7 +326,7 @@ impl PCMSyncWriter for MockASW {
 }
 
 // ----------------------------------------
-// Actual tests
+// Tests
 
 #[cfg(test)]
 fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
