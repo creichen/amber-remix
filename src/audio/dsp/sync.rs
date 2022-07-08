@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::{Arc, Mutex}, ops::DerefMut, cell::RefCell};
 
 use crate::audio::Freq;
 
-use super::writer::{Timeslice, ArcSyncWriter, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, ArcWriter};
+use super::{writer::{Timeslice, ArcSyncWriter, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, ArcWriter}, ringbuf::RingBuf};
 
 // Implementations of audio stream synchronisation tools
 
@@ -18,9 +18,7 @@ struct BasicWriterState {
 
     source : ArcSyncWriter,
 
-    buf : Vec<f32>,
-    buf_write_pos : usize,
-    buf_read_pos : usize,
+    buf : RingBuf,
 }
 
 impl BasicWriterState {
@@ -30,28 +28,32 @@ impl BasicWriterState {
 	if count == 0 {
 	    return true;
 	}
-	if self.buf_write_pos + count > self.buf.len() {
-	    self.buf.resize_with(self.buf_write_pos + count, || 0.0);
-	}
+	let samples_offered_by_our_buffer;
 	let result = {
 	    let mut guard = self.source.lock().unwrap();
 	    let wr = guard.deref_mut();
-	    wr.write_sync_pcm(&mut self.buf[self.buf_write_pos..self.buf_write_pos + count])
+	    let wrbuf = self.buf.wrbuf(count);
+	    todo!("fixme: this might fail and need two writes");
+	    samples_offered_by_our_buffer = wrbuf.len();
+	    wr.write_sync_pcm(wrbuf)
 	};
 	match result {
-	    SyncPCMResult::Flush                        => {
+	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
-		self.buf_write_pos = 0;
-		self.buf_read_pos = 0;
+		self.buf.reset();
 		return false;
 	    },
-	    SyncPCMResult::Wrote(size, None)            => {
-		self.buf_write_pos += size;
+	    SyncPCMResult::Wrote(written, None)            => {
+		self.written += written;
+		if self.written != samples_offered_by_our_buffer {
+		    panic!("Unexpectedly received fewer bytes than requested");
+		}
 		return true;
 	    },
-	    SyncPCMResult::Wrote(size, Some(timeslice)) => {
-		self.buf_write_pos += size;
-		self.buf_pos_at_which_timeslice_could_start = self.buf_write_pos;
+	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
+		self.buf.unread(samples_offered_by_our_buffer - written).unwrap();
+		self.written += written;
+		self.buf_pos_at_which_timeslice_could_start = self.written;
 		self.next_timeslice = Some(timeslice);
 		return true;
 	    },
@@ -63,42 +65,34 @@ impl BasicWriterState {
 	let wr = guard.deref_mut();
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;
-	self.buf_write_pos = write_pos;
+	self.buf.unread(self.written - write_pos).unwrap();
+	self.written = 0;
 	self.buf_pos_at_which_timeslice_could_start = 0;
     }
 
-    fn fill_until(&mut self, usize : usize) -> bool {
-	if usize > self.buf_write_pos {
-	    return self.read_pcm(MAX_BUFFER_SIZE - self.buf_write_pos);
+    fn fill_until(&mut self, expected : usize) -> bool {
+	if expected > self.written {
+	    return self.read_pcm(expected - self.buf.len());
 	}
 	return true;
     }
 
     fn fill_timeslice(&mut self) -> bool {
 	if let None = self.next_timeslice {
-	    return self.read_pcm(MAX_BUFFER_SIZE - self.buf_write_pos);
+	    return self.read_pcm(self.buf.remaining_capacity());
 	}
 	return true;
     }
 
     fn max_read(&self) -> usize {
-	return self.buf_write_pos - self.buf_read_pos;
+	return self.buf.remaining_capacity();
     }
 
     /// Write as much as possible; return # of bytes written
     fn write_pcm(&mut self, outbuf : &mut [f32]) -> usize {
 	let to_write = usize::min(self.max_read(), outbuf.len());
-	outbuf.copy_from_slice(&self.buf[self.buf_read_pos..self.buf_read_pos+to_write]);
-	self.buf_read_pos += to_write;
+	self.buf.write_to(outbuf);
 	return to_write;
-    }
-
-    fn reset_buf_readwrite_pos(&mut self) {
-	if self.buf_read_pos != self.buf_write_pos {
-	    error!("Resetting buffer read/write positions even though buffer wasn't fully used up");
-	}
-	self.buf_write_pos = 0;
-	self.buf_read_pos = 0;
     }
 }
 
@@ -119,12 +113,9 @@ impl BasicWriterSyncImpl {
 		next_timeslice : None,
 		buf_pos_at_which_timeslice_could_start : 0,
 		written : 0,
-		buf : Vec::with_capacity(MAX_BUFFER_SIZE),
+		buf : RingBuf::new(MAX_BUFFER_SIZE),
 
 		source : writer.clone(),
-
-		buf_write_pos : 0,
-		buf_read_pos : 0,
 	    });
 	    nr
 	};

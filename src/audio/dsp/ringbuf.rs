@@ -25,6 +25,12 @@ impl RingBuf {
 	return self.data.len();
     }
 
+    // Shrink buffer contents to size 0
+    pub fn reset(&self) {
+	self.write_pos = 0;
+	self.read_pos = 0;
+    }
+
     pub fn remaining_capacity(&self) -> usize {
 	return self.capacity() - self.len();
     }
@@ -108,6 +114,25 @@ impl RingBuf {
 	return to_write + self._write_to(&mut dest[to_write..]);
     }
 
+    /// Remove the specified number of most recently added samples
+    /// Return how many were actually removed
+    pub fn unread(&mut self, to_remove : usize) -> Result<usize, String> {
+	if to_remove > self.len() {
+	    return Err(format!("Insufficient capacity: requested unread({to_remove}) on only {} elements", self.len()));
+	}
+	if to_remove == 0 {
+	    return Ok(0);
+	}
+	let initial_write_pos =
+	    if self.write_pos == OUTPUT_BUFFER_IS_FULL { self.read_pos } else { self.write_pos };
+	if to_remove <= initial_write_pos {
+	    self.write_pos = initial_write_pos - to_remove;
+	} else {
+	    self.write_pos = self.capacity() + initial_write_pos - to_remove;
+	}
+	return Ok(to_remove);
+    }
+
     pub fn read_from(&mut self, src : &[f32]) -> usize {
 	if self.is_full() {
 	    return 0;
@@ -138,7 +163,7 @@ impl RingBuf {
     /// Request write access directly into this buffer.  Note that the window may be smaller than requested
     /// even if the buffer has more capacity than requested; in that case; make sure to iterate.
     /// The returned slice is considered to be filled afterwards.
-    pub fn get_buffer<'a>(&'a mut self, size : usize) -> &'a mut [f32] {
+    pub fn wrbuf<'a>(&'a mut self, size : usize) -> &'a mut [f32] {
 	if self.is_full() {
 	    return &mut self.data[0..0];
 	}
@@ -153,6 +178,7 @@ impl RingBuf {
 
 
 // ----------------------------------------
+// Helpers
 
 #[cfg(test)]
 fn assert_empty(b : &mut RingBuf) {
@@ -187,7 +213,7 @@ fn assert_full(b : &mut RingBuf) {
     assert_eq!(true, b.is_full());
     assert_eq!(false, b.is_empty());
     assert_eq!(b.len() + b.remaining_capacity(), b.capacity());
-    assert_eq!(0, b.get_buffer(1).len());
+    assert_eq!(0, b.wrbuf(1).len());
 }
 
 #[cfg(test)]
@@ -198,6 +224,8 @@ fn assert_partially_filled(b : &mut RingBuf, size : usize) {
     assert_eq!(size, b.len());
 }
 
+// ----------------------------------------
+// Tests begin here
 
 #[cfg(test)]
 #[test]
@@ -375,7 +403,7 @@ fn test_overfull_cross_boundary_write_read() {
 
 #[cfg(test)]
 fn assert_windowed_write(b : &mut RingBuf, src : &[f32], len_expected : usize) {
-    let w = b.get_buffer(src.len());
+    let w = b.wrbuf(src.len());
     assert_eq!(len_expected, w.len());
     w.copy_from_slice(&src[..len_expected]);
 }
@@ -548,4 +576,58 @@ fn test_windowed_overfull_cross_boundary_write_read() {
 
     assert_eq!([3.0, 4.0, 5.0, 0.0],
 	       &data2[3..]);
+}
+
+// --------------------
+// reset
+
+#[cfg(test)]
+#[test]
+fn test_reset_empty() {
+    let mut b = RingBuf::new(7);
+    assert_eq!(7, b.capacity());
+    assert_empty(&mut b);
+    b.reset();
+    assert_empty(&mut b);
+}
+
+#[cfg(test)]
+#[test]
+fn test_reset_partially_full() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 3];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(1, b.read_from(&data1[0..1]));
+    assert_partially_filled(&mut b, 1);
+    b.reset();
+    assert_empty(&mut b);
+}
+
+#[cfg(test)]
+#[test]
+fn test_reset_direct_full() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 3];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(3, b.read_from(&data1[0..3]));
+    assert_full(&mut b);
+    b.reset();
+    assert_empty(&mut b);
+}
+
+#[cfg(test)]
+#[test]
+fn test_reset_overlap_full() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 3];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(1, b.read_from(&data1[0..3]));
+    assert_eq!(1, b.write_to(&mut data2[0..3]));
+    assert_eq!(3, b.read_from(&data1[0..3]));
+    assert_full(&mut b);
+    b.reset();
+    assert_empty(&mut b);
 }
