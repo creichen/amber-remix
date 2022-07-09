@@ -30,6 +30,8 @@ pub struct LinearFilter {
     source : Rc<RefCell<dyn PCMFlexWriter>>,
     freqs : FreqRange,
     tracker : TrackerSensor,
+    timeslice : Option<Timeslice>,
+    timeslice_locked : bool, // Cannot make progress until the next request to write_sync_pcm()
 }
 
 impl LinearFilter {
@@ -48,6 +50,8 @@ impl LinearFilter {
 	    source,
 	    freqs : FreqRange::new(),
 	    tracker,
+	    timeslice : None,
+	    timeslice_locked : false,
 	};
     }
 
@@ -70,6 +74,9 @@ impl LinearFilter {
 
     /// Request data from the source to fill the local buffer
     fn fill_local_buffer(&mut self, output_len : usize) -> SyncPCMResult {
+	if self.timeslice_locked {
+	    return SyncPCMResult::Wrote(0, self.timeslice);
+	}
         let requested_output_in_seconds = output_len as f32 / self.out_freq as f32;
         let available_in_seconds = self.local_buffer_size_in_seconds();
         let missing_in_seconds = requested_output_in_seconds - available_in_seconds;
@@ -81,12 +88,10 @@ impl LinearFilter {
 
         let write_result = {
 	    let mut freqs_at_buf_offset = self.freqs.at_offset(buf_offset);
-	    "error";println!("FIXME");
 	    self.source.borrow_mut().write_flex_pcm(&mut self.buf[buf_offset..buf_offset+max_to_write], &mut freqs_at_buf_offset)
 	    //usize::max(1, missing_in_millis))
 	};
 
-	"error";println!("FIXME");
 	if let SyncPCMResult::Wrote(num_written, _) = write_result {
             if num_written == 0 && max_to_write > 0 && missing_in_millis > 0 {
 		if possible_max_to_write == 0 {
@@ -231,6 +236,7 @@ impl FrequencyTrait for LinearFilter {
 
 impl PCMSyncWriter for LinearFilter {
     fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
+	self.timeslice_locked = false;
 	let output_requested = output.len();
 	let mut output_written = 0;
 	while output_written < output_requested {
@@ -238,8 +244,11 @@ impl PCMSyncWriter for LinearFilter {
 	    loop {
 		match self.fill_local_buffer(output.len()) {
 		    SyncPCMResult::Wrote(r, timeslice) => {
-			"error";println!("FIXME"); // timeslice!
 			num_read = r;
+			if self.timeslice == None {
+			    self.timeslice = timeslice;
+			    self.timeslice_locked = true;
+			}
 			break;
 		    },
 		    SyncPCMResult::Flush => {
@@ -258,14 +267,20 @@ impl PCMSyncWriter for LinearFilter {
 	    output_written += num_written;
 	    "debug";println!("[TOP]  TOTAL PROGRESS: {output_written}/{output_requested} with {} samples", self.samples_in_buf);
 	    if num_read == 0 && num_written == 0 {
-		panic!("No progress in linear filter: input buf {}/{} vs out {output_written}/{output_requested}", self.samples_in_buf, self.buf.len());
+		if self.timeslice_locked {
+		    return SyncPCMResult::Wrote(output_written, self.timeslice);
+		} else {
+		    panic!("No progress in linear filter: input buf {}/{} vs out {output_written}/{output_requested}", self.samples_in_buf, self.buf.len());
+		}
 	    }
         }
-	return todo!();
+	return SyncPCMResult::Wrote(output_written, self.timeslice);
     }
 
-    fn advance_sync(&mut self, timeslice : super::writer::Timeslice) {
-        todo!()
+    fn advance_sync(&mut self, timeslice : Timeslice) {
+	assert_eq!(self.timeslice, Some(timeslice));
+	self.timeslice = None;
+	self.source.borrow_mut().advance_sync(timeslice);
     }
 }
 
