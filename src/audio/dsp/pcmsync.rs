@@ -58,21 +58,34 @@ impl BasicWriterState {
 	if count == 0 {
 	    return true;
 	}
-	let mut samples_offered_by_our_buffer;
+	let mut samples_offered_by_our_buffer1 = 0;
+	let mut samples_offered_by_our_buffer2 = 0;
+	let mut samples_offered_by_our_buffer = 0;
+	let mut written1 = 0;
+	let mut len0 = self.buf.len();
+	let mut len1 = 0;
+	let mut len2 = 0;
+	info!("BEFORE {:p} {}", &self.buf, self.buf.internal());
 	let result = {
 	    // let mut guard = self.source.lock().unwrap();
 	    // let wr = guard.deref_mut();
 	    let mut wr = self.source.borrow_mut();
 	    let wrbuf = self.buf.wrbuf(count);
 	    samples_offered_by_our_buffer = wrbuf.len();
+	    samples_offered_by_our_buffer1 = samples_offered_by_our_buffer;
 	    let result = wr.write_sync_pcm(wrbuf);
 	    if let SyncPCMResult::Wrote(actual_count, None) = result {
 		if samples_offered_by_our_buffer < count {
+		    written1 = actual_count;
+		    len1 = self.buf.len();
 		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
-		    samples_offered_by_our_buffer += wrbuf2.len();
+		    samples_offered_by_our_buffer2 = wrbuf2.len();
+		    samples_offered_by_our_buffer += samples_offered_by_our_buffer2;
 		    wr.write_sync_pcm(wrbuf2)
 		} else { result }
 	    } else { result} };
+	let mut len2 = self.buf.len();
+	info!("buf size -> {}", self.buf.len());
 	match result {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
@@ -80,6 +93,7 @@ impl BasicWriterState {
 		return false;
 	    },
 	    SyncPCMResult::Wrote(written, None)            => {
+		let written = written + written1;
 		self.written += written;
 		if written != samples_offered_by_our_buffer {
 		    panic!("Unexpectedly received fewer bytes than requested {}/{}", written, samples_offered_by_our_buffer);
@@ -87,9 +101,12 @@ impl BasicWriterState {
 		return true;
 	    },
 	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
+		let written = written + written1;
 		if written > samples_offered_by_our_buffer {
-		    panic!("Wrote more than offered: {written}/{samples_offered_by_our_buffer}; now {}", self.buf.len());
+		    panic!("Somehow wrote more than possible: {written}/{samples_offered_by_our_buffer}; now {}", self.buf.len());
 		}
+		trace!("::{len0};{len1};{len2}; offered {samples_offered_by_our_buffer} = {samples_offered_by_our_buffer1}+{samples_offered_by_our_buffer2}; written={written}");
+		info!("AFTER {:p} {}", &self.buf, self.buf.internal());
 		self.buf.drop_back(samples_offered_by_our_buffer - written).unwrap();
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
@@ -100,8 +117,6 @@ impl BasicWriterState {
     }
 
     fn advance(&mut self, write_pos : usize, timeslice : Timeslice) {
-	// let mut guard = self.source.lock().unwrap();
-	// let wr = guard.deref_mut();
 	let mut wr = self.source.borrow_mut();
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;

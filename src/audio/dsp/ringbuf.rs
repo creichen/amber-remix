@@ -23,6 +23,10 @@ impl RingBuf {
 	}
     }
 
+    pub fn internal(&self) -> String {
+	return format!("{{ rd:{:x} wr:{:x} len:{:x} }}", self.read_pos, self.write_pos, self.len());
+    }
+
     pub fn capacity(&self) -> usize {
 	return self.data.len();
     }
@@ -109,6 +113,10 @@ impl RingBuf {
 	}
 	// We might be done now
 	if to_write == requested || to_write == initially_available {
+	    if self.read_pos == self.data.len() {
+		self.read_pos = 0;
+	    }
+
 	    return to_write;
 	}
 	// Otherwise, we must have hit the end of the buffer
@@ -636,6 +644,46 @@ fn test_windowed_overfull_cross_boundary_write_read() {
     assert_eq!([3.0, 4.0, 5.0, 0.0],
 	       &data2[3..]);
 }
+
+
+struct AS {
+    b : RingBuf,
+}
+
+#[cfg(test)]
+fn test_windowed_scoped_write_read_aux1(_dummy : &mut [f32]) {
+}
+
+#[cfg(test)]
+fn test_windowed_scoped_write_read_aux2(o : &mut AS) {
+    let len0;
+    let len1;
+    {
+	let b0 = o.b.wrbuf(4096);
+	len0 = b0.len();
+	test_windowed_scoped_write_read_aux1(b0);
+	if true {
+	    let b1 = o.b.wrbuf(0);
+	    len1 = b1.len();
+	    test_windowed_scoped_write_read_aux1(b1);
+	} else {
+	    len1 = 999;
+	}
+    }
+    assert_full(&mut o.b);
+    assert_eq!(4096, len0);
+    assert_eq!(0, len1);
+}
+
+#[cfg(test)]
+#[test]
+fn test_windowed_scoped_write_read() {
+    let mut rb = AS {
+	b : RingBuf::new(4096),
+    };
+    test_windowed_scoped_write_read_aux2(&mut rb);
+}
+
 
 // --------------------
 // reset
