@@ -28,7 +28,10 @@ impl FreqRangeBase {
 	    if last_freq == freq {
 		return;
 	    }
-	    if last_pos >= pos {
+	    // allow update
+	    if last_pos == pos {
+		self.frequencies.pop();
+	    } else if last_pos > pos {
 		panic!("Trying to append position {pos} that precedes current last position {last_pos}");
 	    }
 	}
