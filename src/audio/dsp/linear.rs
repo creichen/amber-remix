@@ -119,7 +119,7 @@ impl LinearFilter {
 		let no_timeslice_reported = timeslice == None;
 		let timeslice_already_known = self.timeslice != None;
 		if no_timeslice_reported || timeslice_already_known {
-		    "error";println!("Buffer error, status: {max_to_write}/{offered_to_write}/{max_to_write}/{}/{}", self.buf.len(), self.buf.capacity());
+		    error!("Buffer error, status: {max_to_write}/{offered_to_write}/{max_to_write}/{}/{}", self.buf.len(), self.buf.capacity());
 		    if self.buf.is_full() {
 			panic!("Buffer full");
 		    } else if offered_to_write == 0 {
@@ -130,7 +130,7 @@ impl LinearFilter {
 		}
 	    }
 
-	    "trace";println!("** prep: wrote {num_written}/{max_to_write}, now have {}", self.buf.len());
+	    trace!("** prep: wrote {num_written}/{max_to_write}, now have {}", self.buf.len());
 	}
 
 	return write_result;
@@ -189,14 +189,14 @@ impl LinearFilter {
 	if time_into_resampler <= 0.5 {
 	    time_into_resampler = 0.0;
 	}
-	"info";println!("Updating sample conversion rate: {in_freq} Hz => {} Hz, start={time_into_resampler} ", self.output_freq);
+	info!("Updating sample conversion rate: {in_freq} Hz => {} Hz, start={time_into_resampler} ", self.output_freq);
 	let result = SampleState::new(in_freq, self.output_freq, time_into_resampler);
 	self.resampler = Some(result);
 	return result;
     }
 
     fn resample_to_output(&mut self, resampler : &mut SampleState, output_slice : &mut [f32], max_read : usize) -> usize {
-	"trace";println!("        --> Requesting resampler with [0..{}] <-  [0..{}] (len={})", output_slice.len(), max_read, self.buf.len());
+	trace!("        --> Requesting resampler with [0..{}] <-  [0..{}] (len={})", output_slice.len(), max_read, self.buf.len());
 	resampler.resample(output_slice,
 			   self.buf.peek_front(max_read));
 	let samples_used = resampler.reset_int_position(self.buf.len());
@@ -211,7 +211,7 @@ impl LinearFilter {
 	    let out_remaining = out_end - out_pos;
 	    let in_remaining = self.max_available_to_read();
 
-	    "trace";println!("... onto the next; in: buf_len:{}, left:{}, timeslice:{:?}",
+	    trace!("... onto the next; in: buf_len:{}, left:{}, timeslice:{:?}",
 			     self.buf.len(), in_remaining, self.timeslice);
 
 	    if self.freqs.is_empty() {
@@ -239,10 +239,11 @@ impl LinearFilter {
 	    // Heuristic: try to oversupply resampler
 	    if insample_num_available + 1 > in_remaining {
 		// We lack that extra sample for nicer interpolation?
-		if None == self.samples_until_timeslice() {
+		if None == self.timeslice {
 		    // No timelice yet => source has more to send
 		    if !self.buf.is_full() {
 			// ...and we have the space => let's stop here and ask for more data first
+			"debug";println!("   let's grab more data");
 			break 'pull_loop;
 		    }
 		    // ...but we don't have storage => clear up some of that storage
@@ -272,21 +273,21 @@ impl LinearFilter {
 	    let max_out = usize::min(out_end - out_pos,
 				     max_out_from_insample);
 
-	    "trace";println!("-- out@{out_pos}");
-	    "trace";println!("   freqs={}", self.freqs);
-	    "trace";println!("   outbuf=[{out_pos}..{out_end}]  -> len={out_remaining}");
-	    "trace";println!("   inbuf=[0..{:?}]", self.buf.len());
-	    "trace";println!("     -> expected max-out={max_out} = min({}, {max_out_from_insample})", out_end - out_pos);
-	    "trace";println!("        expected max inbuf read: [0..{}] (from max {:?})", insample_num_available, insample_remaining);
-	    "trace";println!("        it: {resampler}");
+	    trace!("-- out@{out_pos}");
+	    trace!("   freqs={}", self.freqs);
+	    trace!("   outbuf=[{out_pos}..{out_end}]  -> len={out_remaining}");
+	    trace!("   inbuf=[0..{:?}]", self.buf.len());
+	    trace!("     -> expected max-out={max_out} = min({}, {max_out_from_insample})", out_end - out_pos);
+	    trace!("        expected max inbuf read: [0..{}] (from max {:?})", insample_num_available, insample_remaining);
+	    trace!("        it: {resampler}");
 
 	    let read = self.resample_to_output(&mut resampler, &mut output[out_pos..out_pos+max_out],
 					       // Try to add an extra byte to improve interpolation
 					       usize::min(insample_num_available + 1,
 							  self.buf.len()));
 	    out_pos += max_out;
-	    "trace";println!("        read: {read}");
-	    "trace";println!("        it': {resampler}");
+	    trace!("        read: {read}");
+	    trace!("        it': {resampler}");
 	    self.resampler = Some(resampler);
 	}
         return out_pos;
@@ -336,8 +337,8 @@ impl PCMSyncWriter for LinearFilter {
 		    }
 		}
 	    };
-	    // "trace";println!("[TOP]  buf = {:?}", &self.buf[..self.buf.len()]);
-	    // "trace";println!("[TOP]  out = {:?}", &output[..output_written]);
+	    // trace!("[TOP]  buf = {:?}", &self.buf[..self.buf.len()]);
+	    // trace!("[TOP]  out = {:?}", &output[..output_written]);
 	    "debug";println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.buf.len(), self.buf.len());
 	    let num_written = self.emit_buffer(&mut output[output_written..]);
 
@@ -381,7 +382,7 @@ impl PCMWriter for LinearFilter {
 	//     loop {
 	// 	match self.fill_local_buffer(output.len()) {
 	// 	    SyncPCMResult::Wrote(r, timeslice) => {
-	// 		"error";println!("FIXME"); // timeslice!
+	// 		error!("FIXME"); // timeslice!
 	// 		num_read = r;
 	// 		break;
 	// 	    },
@@ -393,8 +394,8 @@ impl PCMWriter for LinearFilter {
 	// 	    }
 	// 	}
 	//     };
-	//     // "trace";println!("[TOP]  buf = {:?}", &self.buf[..self.buf.len()]);
-	//     // "trace";println!("[TOP]  out = {:?}", &output[..output_written]);
+	//     // trace!("[TOP]  buf = {:?}", &self.buf[..self.buf.len()]);
+	//     // trace!("[TOP]  out = {:?}", &output[..output_written]);
 	//     "debug";println!("[TOP]  after {num_read} reads: requesting write at: {output_written}/{output_requested} with {}/{} samples", self.buf.len(), self.buf.len());
 	//     let num_written = self.emit_buffer(&mut output[output_written..]);
 
@@ -454,8 +455,8 @@ impl SampleState {
 
     fn resample<T>(&mut self, outbuf : &mut [f32], inbuf : T) where T : IndexLen<f32> {
 	let inbuf_len = inbuf.len();
-	"trace";println!("  ## [..{}] <- [..{}]", outbuf.len(), inbuf.len());
-	"trace";println!("  ## resamp from {}", inbuf.get(0));
+	trace!("  ## [..{}] <- [..{}]", outbuf.len(), inbuf.len());
+	trace!("  ## resamp from {}", inbuf.get(0));
 	let mut pos = self.sample_pos_int;
 
 	// fractional position counter
@@ -466,7 +467,7 @@ impl SampleState {
 	let fpos_nom_inc = (fpos_nom_inc_total % self.out_freq) as f32;
 
 	for out in outbuf.iter_mut() {
-	    "trace";println!("  ## out <- in[{}]", pos);
+	    trace!("  ## out <- in[{}]", pos);
 	    // Linear interpolation
 	    let sample_v_current = inbuf.get(pos);
 
@@ -475,11 +476,12 @@ impl SampleState {
 	    let sample_v_current_fragment = sample_v_current * (fpos_denom - fpos_nom);
 	    let sample_v_next_fragment = sample_v_next * fpos_nom;
 
-	    "trace";println!("  ## interpol {}, {}", sample_v_current, sample_v_next);
+	    trace!("  ## interpol {}, {}", sample_v_current, sample_v_next);
 
 	    let sample_v = (sample_v_current_fragment + sample_v_next_fragment) / fpos_denom;
 
-	    *out += sample_v;
+	    trace!("  ## => {sample_v}");
+	    *out = sample_v;
 
 	    pos += pos_inc;
 	    fpos_nom = fpos_nom + fpos_nom_inc;
@@ -952,35 +954,20 @@ fn test_linear_filter_multislice() {
 		 &outbuf[..]);
 }
 
-#[ignore]
-#[cfg(test)]
-#[test]
-fn test_read_past_timeslice() {
-    todo!();
-}
-
-#[ignore]
-#[cfg(test)]
-#[test]
-fn test_boundary_cases() {
-    todo!();
-}
-
 // ----------------------------------------
 // Syonchronisation integration tests
 
-#[ignore]
 #[cfg(test)]
 #[test]
 fn integrate_test_binary_sync() {
-    let mut data0 = [0.0; 8];
-    let mut data1 = [0.0; 8];
+    let mut data0 = [0.0; 14];
+    let mut data1 = [0.0; 14];
     let mut sbar = PCMBasicSyncBarrier::new();
-    todo!("Fill in reasonable values");
+
     let c0 = sbar.sync(mock_asw("0".to_string(), vec![
 	T::S(vec![10.0, 11.0]),
 	T::TS(-11.0, 1),
-	T::S(vec![12.0, 13.0]),
+	T::S(vec![80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, 88.0, 09.0]),
 	T::TS(-12.0, 2),
 	T::S(vec![14.0, 15.0, 16.0, 17.0]),
 	T::TS(-13.0, 3),
@@ -994,17 +981,33 @@ fn integrate_test_binary_sync() {
 	// slice 2
 	MFWTick::new(vec![
 	    7, 8, 9,                // 1:2 (upsample)
+	], vec![(0, 5000)]),
+	// slice 3
+	MFWTick::new(vec![
 	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
-	], vec![(0, 5000), (3, 15000)]),
+	], vec![(0, 15000)]),
 	]);
-    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+    let lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     let c1 = sbar.sync(Arc::new(Mutex::new(lf)));
 
-    cread(c0.clone(), &mut data0[0..8]);
-    assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+    cread(c0.clone(), &mut data0[..]);
+    assert_eq!([10.0, 11.0,
+		-11.0, // repeat to fill
+		// sync on ts1
+		80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, // 88.0, 09.0, // discard during sync
+		// sync on ts2
+		14.0, 15.0, 16.0
+               ],
 	       data0[..]);
 
-    cread(c1.clone(), &mut data1[0..8]);
-    assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
+    cread(c1.clone(), &mut data1[..]);
+    assert_eq!([1.0, 2.0,
+		3.0, // 5.0, // discarded during sync
+		// sync on ts1
+		7.0, 7.5, 8.0, 8.5, 9.0, 9.0,
+		-2.0, -2.0, // repeat to fill
+		// sync on ts2
+		10.0, 25.0, 40.0,
+		 ],
 	       data1[..]);
 }
