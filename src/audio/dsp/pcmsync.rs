@@ -1,11 +1,18 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use std::{rc::Rc, sync::{Arc, Mutex}, ops::DerefMut, cell::RefCell};
+use std::{rc::Rc, cell::RefCell};
 
 use crate::audio::Freq;
 
-use super::{writer::{Timeslice, ArcSyncWriter, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, ArcWriter}, ringbuf::RingBuf};
+use super::{writer::{Timeslice, RcSyncWriter, RcSyncBarrier, FrequencyTrait, PCMWriter, SyncPCMResult, PCMSyncBarrier, RcPCMWriter}, ringbuf::RingBuf};
+
+// ----------------------------------------
+// Main API
+
+pub fn new_basic() -> RcSyncBarrier {
+    return Rc::new(RefCell::new(PCMBasicSyncBarrier::new()));
+}
 
 // ----------------------------------------
 // Basic Sync barrier implementation
@@ -26,8 +33,8 @@ impl PCMBasicSyncBarrier {
 }
 
 impl PCMSyncBarrier for PCMBasicSyncBarrier {
-    fn sync(&mut self, writer : ArcSyncWriter) -> ArcWriter {
-        return Arc::new(Mutex::new(BasicWriterSyncImpl::synchronizer_for(self.sync.clone(), writer)))
+    fn sync(&mut self, writer : RcSyncWriter) -> RcPCMWriter {
+        return Rc::new(RefCell::new(BasicWriterSyncImpl::synchronizer_for(self.sync.clone(), writer)))
     }
 }
 
@@ -39,7 +46,7 @@ struct BasicWriterState {
     buf_pos_at_which_timeslice_could_start : usize,
     written : usize,
 
-    source : ArcSyncWriter,
+    source : RcSyncWriter,
 
     buf : RingBuf,
 }
@@ -51,16 +58,18 @@ impl BasicWriterState {
 	if count == 0 {
 	    return true;
 	}
-	let samples_offered_by_our_buffer;
+	let mut samples_offered_by_our_buffer;
 	let result = {
-	    let mut guard = self.source.lock().unwrap();
-	    let wr = guard.deref_mut();
+	    // let mut guard = self.source.lock().unwrap();
+	    // let wr = guard.deref_mut();
+	    let mut wr = self.source.borrow_mut();
 	    let wrbuf = self.buf.wrbuf(count);
 	    samples_offered_by_our_buffer = wrbuf.len();
 	    let result = wr.write_sync_pcm(wrbuf);
 	    if let SyncPCMResult::Wrote(actual_count, None) = result {
 		if samples_offered_by_our_buffer < count {
 		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
+		    samples_offered_by_our_buffer += wrbuf2.len();
 		    wr.write_sync_pcm(wrbuf2)
 		} else { result }
 	    } else { result} };
@@ -78,6 +87,9 @@ impl BasicWriterState {
 		return true;
 	    },
 	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
+		if written > samples_offered_by_our_buffer {
+		    panic!("Wrote more than offered: {written}/{samples_offered_by_our_buffer}; now {}", self.buf.len());
+		}
 		self.buf.drop_back(samples_offered_by_our_buffer - written).unwrap();
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
@@ -88,8 +100,9 @@ impl BasicWriterState {
     }
 
     fn advance(&mut self, write_pos : usize, timeslice : Timeslice) {
-	let mut guard = self.source.lock().unwrap();
-	let wr = guard.deref_mut();
+	// let mut guard = self.source.lock().unwrap();
+	// let wr = guard.deref_mut();
+	let mut wr = self.source.borrow_mut();
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;
 	self.buf.drop_back(self.written - write_pos).unwrap();
@@ -128,9 +141,10 @@ impl BasicWriterSyncImpl {
 	}
     }
 
-    fn synchronizer_for(rself : Rc<RefCell<Self>>, writer: ArcSyncWriter) -> WriterSyncFwd {
+    fn synchronizer_for(rself : Rc<RefCell<Self>>, writer: RcSyncWriter) -> WriterSyncFwd {
 	let freq = {
-	    let guard = writer.lock().unwrap();
+	    // let guard = writer.lock().unwrap();
+	    let guard = writer.borrow();
 	    guard.frequency()
 	};
 	let writer_nr =	{
@@ -169,6 +183,12 @@ impl BasicWriterSyncImpl {
 	} else if oks == num_sources {
 	    trace!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
+	    if None==timeslice {
+		error!("Broken timeslices:");
+		for (index, state) in self.sources.iter_mut().enumerate() {
+		    error!("  #!{index}: {:?}", state.next_timeslice);
+		}
+	    }
 	    let mut sum_offset = 0;
 
 	    for (index, state) in self.sources.iter_mut().enumerate() {
@@ -326,8 +346,8 @@ impl PCMSyncWriter for MockASW {
 }
 
 #[cfg(test)]
-pub fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
-    return Arc::new(Mutex::new(MockASW {
+pub fn mock_asw(name : String, ops : Vec<T>) -> RcSyncWriter {
+    return Rc::new(RefCell::new(MockASW {
 	name,
 	ops : VecDeque::from(ops),
 	repeat_me_if_stuck : -1.11111,
@@ -336,9 +356,10 @@ pub fn mock_asw(name : String, ops : Vec<T>) -> ArcSyncWriter {
 }
 
 #[cfg(test)]
-pub fn cread(writer : ArcWriter, dest : &mut [f32]) {
-    let mut guard = writer.lock().unwrap();
-    let wr = guard.deref_mut();
+pub fn cread(writer : RcPCMWriter, dest : &mut [f32]) {
+//    let mut guard = writer.lock().unwrap();
+//    let wr = guard.deref_mut();
+    let mut wr = writer.borrow_mut();
     wr.write_pcm(dest);
 }
 

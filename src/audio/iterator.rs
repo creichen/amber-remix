@@ -66,7 +66,10 @@ pub fn simple(v : Vec<AQOp>) -> ArcIt {
 }
 
 pub fn silent() -> ArcIt {
-    return simple(vec![AQOp::SetVolume(0.0), AQOp::SetFreq(1000), AQOp::WaitMillis(1000)]);
+    return simple(vec![
+	AQOp::SetVolume(0.0), AQOp::SetFreq(1000), AQOp::WaitMillis(20), AQOp::Timeslice(1),
+//	AQOp::WaitMillis(20), AQOp::Timeslice(2),
+    ]);
 }
 
 /// MockAudioIterator For testing
@@ -106,7 +109,9 @@ impl AudioIterator for MockAudioIterator {
     fn next(&mut self, queue : &mut VecDeque<AQOp>) {
 	match self.ops.pop_front() {
 	    None     => {},
-	    Some(vv) => { queue.append(&mut VecDeque::from(vv)); },
+	    Some(vv) => { queue.append(&mut VecDeque::from((&vv[..]).to_vec()));
+			  //self.ops.push_back((&vv[..]).to_vec());
+	    },
 	}
     }
 }

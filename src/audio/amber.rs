@@ -937,7 +937,6 @@ impl PolyIterator for SongPolyIterator {
 }
 
 struct SongPolyIterator {
-    songit : Arc<Mutex<SongIterator>>,
     ports : Vec<ArcIt>,
 }
 
@@ -950,7 +949,6 @@ impl SongPolyIterator {
 	    ports.push( Arc::new(Mutex::new(SongChannelProxy { songit : songit.clone(), index })));
 	}
 	return SongPolyIterator {
-	    songit : songit.clone(),
 	    ports,
 	};
     }

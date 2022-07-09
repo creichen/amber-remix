@@ -1,5 +1,7 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -100,7 +102,7 @@ impl AudioQueue {
 	// if we are waiting for that
 	while !self.waiting_for_next_timeslice() {
 	    let action = self.queue.pop_front();
-	    info!("[AQ]  ::update: {action:?}");
+	    pinfo!("[AQ]  ::update: {action:?}");
 	    match action {
 		Some(AQOp::WaitMillis(0))      => { },
 		Some(AQOp::WaitMillis(millis)) => { self.remaining_secs += millis as f64 * INV_1000;
@@ -145,7 +147,7 @@ impl AudioQueue {
 	if let Some(_) = self.timeslice {
 	    self.have_reported_timeslice_update = true;
 	}
-	trace!("-------> Wrote(({written}, {:?}))", self.timeslice);
+	ptrace!("-------> Wrote(({written}, {:?}))", self.timeslice);
 	return SyncPCMResult::Wrote(written, self.timeslice);
     }
 
@@ -164,25 +166,17 @@ impl PCMFlexWriter for AudioQueue {
     fn write_flex_pcm(&mut self, outbuf : &mut [f32], freqrange : &mut FreqRange) -> SyncPCMResult {
 	if self.flush_requested {
 	    self.flush_requested = false;
-	    info!("[AQ] => Flush");
+	    pinfo!("[AQ] => Flush");
 	    return SyncPCMResult::Flush;
 	}
 
 	let mut outbuf_pos = 0;
 	let outbuf_len = outbuf.len();
-	debug!("[AQ] Asked for {outbuf_len} samples");
+	pdebug!("[AQ] Asked for {outbuf_len} samples");
 
 
-	let mut last_outbuf_pos = 1;
-	let mut check_count = 10;
+	let mut progress = true;
 	while outbuf_pos < outbuf_len {
-	    if outbuf_pos == last_outbuf_pos {
-		check_count -= 1;
-		if check_count == 0 {
-		    panic!("Stuck!");
-		}
-	    }
-	    last_outbuf_pos = outbuf_pos;
 	    // How many samples can we fit into the buffer?
 	    let max_outbuf_write = outbuf_len - outbuf_pos;
 	    // How much sample timing info do we have remaining?
@@ -190,16 +184,24 @@ impl PCMFlexWriter for AudioQueue {
 		                // gives us leave to write as much as we can
 		if self.have_bounded_time() { self.remaining_secs } else { f64::INFINITY };
 
-	    trace!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
+	    ptrace!("[AQ] f={} Hz  vol={}  secs_remaining={}  samples_left={}",
 		     self.freq, self.volume, self.remaining_secs, self.current_sample.remaining());
-	    trace!("[AQ] available in out buffer: time:{secs_to_write} space:{max_outbuf_write}");
+	    ptrace!("[AQ] available in out buffer: time:{secs_to_write} space:{max_outbuf_write}");
+	    if !progress {
+		// check_count -= 1;
+		// if check_count == 0 {
+		panic!("Stuck!");
+		// }
+	    }
+	    progress = false;
 
 	    if secs_to_write > 0.0 {
 		// We should write the current sample information
 		if self.current_sample.done() {
 		    if !self.sample_stopped() {
-			debug!("[AQ] Sample finishes");
+			pdebug!("[AQ] Sample finishes");
 			self.stop_sample();
+			progress = true;
 		    }
 
 		    let opt_range = match self.current_sample_vec.pop_front() {
@@ -213,6 +215,7 @@ impl PCMFlexWriter for AudioQueue {
 			None                        => None,
 		    };
 		    if let Some(range) = opt_range {
+			progress = true;
 			self.current_sample = self.sample_source.get_sample(range);
 		    }
 
@@ -221,6 +224,14 @@ impl PCMFlexWriter for AudioQueue {
 		let num_samples_to_write_by_secs =
 		    if !self.waiting_for_next_timeslice() { f64::ceil(secs_to_write * self.freq as f64) as usize } else { max_outbuf_write };
 		if self.current_sample.done() {
+		    // Waiting but no sample information
+		    let samples_to_fill = usize::min(num_samples_to_write_by_secs, max_outbuf_write);
+		    if samples_to_fill > 0 {
+			outbuf[outbuf_pos..outbuf_pos+samples_to_fill].fill(0.0); // Fill with the sound of silence
+			self.tracker.add_many(0.0, samples_to_fill);
+			outbuf_pos += samples_to_fill;
+			progress = true;
+		    }
 		} else {
 		    // Waiting and have current sample information
 		    let samples_remaining = usize::min(max_outbuf_write, self.current_sample.remaining());
@@ -231,7 +242,7 @@ impl PCMFlexWriter for AudioQueue {
 		    } else {
 			num_samples_to_write = num_samples_to_write_by_secs;
 		    }
-		    trace!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
+		    ptrace!("[AQ] writing min(time:{num_samples_to_write_by_secs}, src&dest-space:{samples_remaining}) = {num_samples_to_write}");
 		    self.current_sample.write(&mut outbuf[outbuf_pos..outbuf_pos+num_samples_to_write]);
 		    let vol = self.volume;
 		    let mut accumulator = 0.0;
@@ -244,19 +255,26 @@ impl PCMFlexWriter for AudioQueue {
 			self.tracker.add_many(accumulator, num_samples_to_write);
 		    }
 		    outbuf_pos += num_samples_to_write;
+		    if num_samples_to_write > 0 {
+			progress = true;
+		    }
 		}
-		if self.have_bounded_time() {
-		    self.remaining_secs -= secs_written_this_round;
-		}
-		trace!{"[AQ] written: {outbuf_pos}/{outbuf_len}; remaining secs - {secs_written_this_round} = {}", self.remaining_secs}
+		// if self.have_bounded_time() {
+		//     ptrace!("Filling up the rest with zeroes");
+		//     outbuf[outbuf_pos..].fill(0.0); // Fill with the sound of silence
+		// }
+		self.remaining_secs -= secs_written_this_round;
+		ptrace!{"[AQ] written: {outbuf_pos}/{outbuf_len}; remaining secs - {secs_written_this_round} = {}", self.remaining_secs}
 	    } else {
 		// Waiting for the audio iterator to send WaitMillis
 		if self.queue.len() == 0 {
 		    self.poll_iterator_into_queue();
 		}
-		if self.queue.len() == 0 {
+		if self.queue.len() > 0 {
+		    progress = true;
+		} else {
 		    // Iterator has given up on us?
-		    trace!("[AQ] => Silence");
+		    ptrace!("[AQ] => Silence");
 		    if self.newly_at_timeslice_boundary() {
 			self.success(outbuf_pos);
 		    }
@@ -264,7 +282,8 @@ impl PCMFlexWriter for AudioQueue {
 		    return self.success(outbuf_len);
 		}
 		match self.update_state_from_next_queue_items() {
-		    Some(new_freq) => freqrange.append(outbuf_pos, new_freq),
+		    Some(new_freq) => { freqrange.append(outbuf_pos, new_freq);
+		                        progress = true; },
 		    None           => {},
 		}
 		if self.waiting_for_next_timeslice() && !self.have_reported_timeslice_update {
@@ -272,7 +291,7 @@ impl PCMFlexWriter for AudioQueue {
 		}
 	    }
 	};
-	trace!("[AQ] => Wrote({outbuf_pos})");
+	ptrace!("[AQ] => Wrote({outbuf_pos})");
 	return self.success(outbuf_pos);
     }
 
@@ -297,7 +316,7 @@ impl AudioIteratorProcessor for AudioQueue {
 	//self.current_sample = SampleWriter::empty();
 	self.audio_source = source;
 	self.soft_reset();
-	info!("[AQ] ** New iterator installed -> {} s remain ({} / {}))",
+	pinfo!("[AQ] ** New iterator installed -> {} s remain ({} / {}))",
 	      self.remaining_secs,
 	      self.current_sample.remaining(), self.freq);
 	self.flush();
@@ -359,7 +378,6 @@ fn test_sample_bufsize_limited() {
     assert_eq!((1000, None),
 	       freqrange.get(0));
 }
-
 
 #[cfg(test)]
 #[test]
@@ -496,7 +514,8 @@ fn test_volume() {
 #[cfg(test)]
 #[test]
 fn test_run_out() {
-    let mut outbuf = [-1.0; 8];
+    let mut outbuf0 = [-1.0; 8];
+    let mut outbuf1 = [-1.0; 8];
     let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
 				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
 				       AQOp::WaitMillis(5),
@@ -504,11 +523,14 @@ fn test_run_out() {
     let ssrc = setup_samplesource();
     let mut aq = AudioQueue::nw(ait, ssrc);
     let mut freqrange = FreqRange::new();
-    let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
+    let r = aq.write_flex_pcm(&mut outbuf0, &mut freqrange);
     assert_eq!(SyncPCMResult::Wrote(8, None), r);
-    let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange);
     assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-	       &outbuf[..]);
+	       &outbuf0[..]);
+    let r = aq.write_flex_pcm(&mut outbuf1, &mut freqrange);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
+    assert_eq!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+	       &outbuf1[..]);
     assert_eq!((1000, None),  freqrange.get(0));
 }
 
@@ -638,8 +660,9 @@ fn test_wait_on_timeslice() {
 		// ts-1 active
 		3000.0, 11.0, 12.0,
 		// ts-2 available
-		13.0, 11.0],
-	       &outbuf[..10]);
+		13.0, 11.0,
+		-1.0],
+	       &outbuf[..11]);
 
     aq.advance_sync(2);
 

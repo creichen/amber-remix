@@ -1,9 +1,7 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use std::{cell::RefCell, rc::Rc};
-
-use super::{writer::PCMWriter, vtracker::TrackerSensor};
+use super::{writer::RcPCMWriter, vtracker::TrackerSensor};
 
 const BUF_SIZE : usize = 32;
 
@@ -11,12 +9,12 @@ pub struct StereoMapper {
     left : f32,
     right : f32,
     buf : [f32; BUF_SIZE],
-    source : Rc<RefCell<dyn PCMWriter>>,
+    source : RcPCMWriter,
     tracker : TrackerSensor,
 }
 
 impl<'a> StereoMapper {
-    pub fn new(left : f32, right : f32, source : Rc<RefCell<dyn PCMWriter>>, tracker : TrackerSensor) -> StereoMapper {
+    pub fn new(left : f32, right : f32, source : RcPCMWriter, tracker : TrackerSensor) -> StereoMapper {
 	return StereoMapper {
 	    left,
 	    right,

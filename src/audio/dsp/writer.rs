@@ -1,5 +1,5 @@
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::audio::dsp::frequency_range::Freq;
 use crate::audio::dsp::frequency_range::FreqRange;
@@ -18,7 +18,7 @@ pub trait PCMWriter : FrequencyTrait {
     fn write_pcm(&mut self, output : &mut [f32]);
 }
 
-pub type ArcWriter = Arc<Mutex<dyn PCMWriter>>;
+pub type RcPCMWriter = Rc<RefCell<dyn PCMWriter>>;
 
 // ================================================================================
 // Fixed-frequency writers that can synchronise on timeslice boundaries
@@ -48,7 +48,7 @@ pub trait PCMSyncWriter : FrequencyTrait {
     fn advance_sync(&mut self, timeslice : Timeslice);
 }
 
-pub type ArcSyncWriter = Arc<Mutex<dyn PCMSyncWriter>>;
+pub type RcSyncWriter = Rc<RefCell<dyn PCMSyncWriter>>;
 
 // ================================================================================
 // Flexible-frequency writers that must synchronise on timeslice boundaries
@@ -66,13 +66,12 @@ pub trait PCMFlexWriter {
     fn advance_sync(&mut self, timeslice : Timeslice);
 }
 
-pub type ArcFlexWriter = Arc<Mutex<dyn PCMFlexWriter>>;
-
 // ================================================================================
 
 /// Synchronise multiple PCMSyncWriters/ArcSyncWriters across time slices
 pub trait PCMSyncBarrier {
     /// Register an ArcSyncWriter for synchronisation
-    fn sync(&mut self, writer : ArcSyncWriter) -> ArcWriter;
+    fn sync(&mut self, writer : RcSyncWriter) -> RcPCMWriter;
 }
 
+pub type RcSyncBarrier = Rc<RefCell<dyn PCMSyncBarrier>>;

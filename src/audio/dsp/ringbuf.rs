@@ -958,7 +958,6 @@ fn test_drop_front_full_overlap_cross_boundaries() {
 #[test]
 fn test_peek_front() {
     let data1 = [1.0, 2.0, 3.0];
-    let mut data2 = [0.0; 3];
     let mut b = RingBuf::new(3);
 
     assert_eq!(3, b.read_from(&data1[0..3]));

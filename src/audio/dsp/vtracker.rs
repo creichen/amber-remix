@@ -3,6 +3,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use std::{sync::{Arc, Mutex}, ops::DerefMut, collections::VecDeque, fmt::Display};
 
+pub const ENABLED : bool = true; // (not enforced): subsystems can choose to only track if this is "true"
 
 const SPARKLINE : [char; 9] = ['-', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const MAX : u64 = 128;
@@ -34,6 +35,7 @@ impl TrackerData {
 pub struct TrackerSensor {
     r : Arc<Mutex<TrackerData>>,
 }
+
 
 impl TrackerSensor {
     pub fn new() -> TrackerSensor { TrackerSensor { r : Arc::new(Mutex::new(TrackerData::new())) } }
