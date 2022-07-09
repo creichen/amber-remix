@@ -690,87 +690,8 @@ fn test_downsample_one_point_five_incremental() {
 		 &outbuf[..]);
 }
 
-#[cfg(test)]
-#[test]
-fn test_linear_filter_resampling_incremental() {
-    let mut outbuf = [0.0; 14];
-    let flexwriter = MockFlexWriter::new(vec![
-	// slice 1
-	MFWTick::new(vec![
-	    1, 2,                   // 1:1
-	    3, 4, 5, 6,             // 2:1 (downsample)
-	    7, 8, 9,                // 1:2 (upsample)
-	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
-	], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
-	]);
-
-    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-
-    assert_eq!(SyncPCMResult::Wrote(1, None), lf.write_sync_pcm(&mut outbuf[0..1]));
-    assert_eq!( [1.0,
-		 0.0, 0.0, 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-
-    assert_eq!(SyncPCMResult::Wrote(3, None), lf.write_sync_pcm(&mut outbuf[1..4]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-
-    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[4..5]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 7.0,
-		 0.0, 0.0, 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-
-    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[5..6]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 7.0, 7.5,
-		 0.0, 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[6..7]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 7.0, 7.5, 8.0,
-		 0.0,
-		 0.0, 0.0, 0.0, 0.0,
-		 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-
-    assert_eq!(SyncPCMResult::Wrote(4, None), lf.write_sync_pcm(&mut outbuf[7..11]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-		 10.0,
-		 0.0, 0.0, 0.0,
-		 ],
-		 &outbuf[..]);
-
-    assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[11..13]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-		 10.0, 25.0, 40.0,
-		 0.0,
-		 ],
-		 &outbuf[..]);
-}
+// --------------------
+// Full filter
 
 #[cfg(test)]
 #[test]
@@ -797,99 +718,181 @@ fn test_linear_filter_limit_writes() {
     }
 }
 
-#[cfg(test)]
-#[test]
-fn test_linear_filter_limit_full() {
-    for i in 1..3 {
-	let mut outbuf = [0.0; 14];
-	let flexwriter = MockFlexWriter::new(vec![
-	// slice 1
-	    MFWTick::new_with_maxwrite(100, vec![
-		1, 2,                   // 1:1
-		3, 4, 5, 6,             // 2:1 (downsample)
-		7, 8, 9,                // 1:2 (upsample)
-		10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
-	    ], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
-	]);
+// #[cfg(test)]
+// #[test]
+// fn test_linear_filter_limit_full() {
+//     for i in 1..3 {
+// 	let mut outbuf = [0.0; 14];
+// 	let flexwriter = MockFlexWriter::new(vec![
+// 	// slice 1
+// 	    MFWTick::new_with_maxwrite(100, vec![
+// 		1, 2,                   // 1:1
+// 		3, 4, 5, 6,             // 2:1 (downsample)
+// 		7, 8, 9,                // 1:2 (upsample)
+// 		10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+// 	    ], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
+// 	]);
 
-	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-	assert_eq!(SyncPCMResult::Wrote(14, None), lf.write_sync_pcm(&mut outbuf[..]));
-	assert_eq!( [1.0, 2.0,
-		     3.0, 5.0,
-		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-		     10.0, 25.0, 40.0, 55.0,],
-		     &outbuf[..]);
-    }
-}
+// 	let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+// 	assert_eq!(SyncPCMResult::Wrote(14, None), lf.write_sync_pcm(&mut outbuf[..]));
+// 	assert_eq!( [1.0, 2.0,
+// 		     3.0, 5.0,
+// 		     7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+// 		     10.0, 25.0, 40.0, 55.0,],
+// 		     &outbuf[..]);
+//     }
+// }
 
-#[cfg(test)]
-#[test]
-fn test_linear_filter_multislice() {
-    let mut outbuf = [0.0; 16];
-    let flexwriter = MockFlexWriter::new(vec![
-	// slice 1
-	MFWTick::new(vec![
-	    1, 2,                   // 1:1
-	    3, 4, 5, 6,             // 2:1 (downsample)
-	], vec![(0, 10000), (2, 20000)]),
-	// slice 2
-	MFWTick::new(vec![
-	    7, 8, 9,                // 1:2 (upsample)
-	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
-	], vec![(0, 5000), (3, 15000)]),
-	]);
+// #[cfg(test)]
+// #[test]
+// fn test_linear_filter_resampling_incremental() {
+//     let mut outbuf = [0.0; 14];
+//     let flexwriter = MockFlexWriter::new(vec![
+// 	// slice 1
+// 	MFWTick::new(vec![
+// 	    1, 2,                   // 1:1
+// 	    3, 4, 5, 6,             // 2:1 (downsample)
+// 	    7, 8, 9,                // 1:2 (upsample)
+// 	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+// 	], vec![(0, 10000), (2, 20000), (6, 5000), (9, 15000)]),
+// 	]);
 
-    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-    assert_eq!(SyncPCMResult::Wrote(4, Some(1)), lf.write_sync_pcm(&mut outbuf[..]));
-    assert_eq!(SyncPCMResult::Wrote(2, Some(1)), lf.write_sync_pcm(&mut outbuf[4..6]));
-    assert_eq!(SyncPCMResult::Wrote(10, None), lf.write_sync_pcm(&mut outbuf[6..]));
-    assert_eq!( [1.0, 2.0,
-		 3.0, 5.0,
-		 -1.0, -1.0,
-		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-		 10.0, 25.0, 40.0, 55.0,
-		 ],
-		 &outbuf[..]);
-}
+//     let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
 
-// ----------------------------------------
-// Syonchronisation integration tests
+//     assert_eq!(SyncPCMResult::Wrote(1, None), lf.write_sync_pcm(&mut outbuf[0..1]));
+//     assert_eq!( [1.0,
+// 		 0.0, 0.0, 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
 
-#[cfg(test)]
-#[test]
-fn integrate_test_binary_sync() {
-    let mut data0 = [0.0; 8];
-    let mut data1 = [0.0; 8];
-    let mut sbar = PCMBasicSyncBarrier::new();
-    todo!("Fill in reasonable values");
-    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
-	T::S(vec![10.0, 11.0]),
-	T::TS(-11.0, 1),
-	T::S(vec![12.0, 13.0]),
-	T::TS(-12.0, 2),
-	T::S(vec![14.0, 15.0, 16.0, 17.0]),
-	T::TS(-13.0, 3),
-    ]));
-    let flexwriter = MockFlexWriter::new(vec![
-	// slice 1
-	MFWTick::new(vec![
-	    1, 2,                   // 1:1
-	    3, 4, 5, 6,             // 2:1 (downsample)
-	], vec![(0, 10000), (2, 20000)]),
-	// slice 2
-	MFWTick::new(vec![
-	    7, 8, 9,                // 1:2 (upsample)
-	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
-	], vec![(0, 5000), (3, 15000)]),
-	]);
-    let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
-    let c1 = sbar.sync(Arc::new(Mutex::new(lf)));
+//     assert_eq!(SyncPCMResult::Wrote(3, None), lf.write_sync_pcm(&mut outbuf[1..4]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
 
-    cread(c0.clone(), &mut data0[0..8]);
-    assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
-	       data0[..]);
+//     assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[4..5]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 7.0,
+// 		 0.0, 0.0, 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
 
-    cread(c1.clone(), &mut data1[0..8]);
-    assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
-	       data1[..]);
-}
+//     assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[5..6]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 7.0, 7.5,
+// 		 0.0, 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
+//     assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[6..7]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 7.0, 7.5, 8.0,
+// 		 0.0,
+// 		 0.0, 0.0, 0.0, 0.0,
+// 		 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
+
+//     assert_eq!(SyncPCMResult::Wrote(4, None), lf.write_sync_pcm(&mut outbuf[7..11]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+// 		 10.0,
+// 		 0.0, 0.0, 0.0,
+// 		 ],
+// 		 &outbuf[..]);
+
+//     assert_eq!(SyncPCMResult::Wrote(2, None), lf.write_sync_pcm(&mut outbuf[11..13]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+// 		 10.0, 25.0, 40.0,
+// 		 0.0,
+// 		 ],
+// 		 &outbuf[..]);
+// }
+
+// #[cfg(test)]
+// #[test]
+// fn test_linear_filter_multislice() {
+//     let mut outbuf = [0.0; 16];
+//     let flexwriter = MockFlexWriter::new(vec![
+// 	// slice 1
+// 	MFWTick::new(vec![
+// 	    1, 2,                   // 1:1
+// 	    3, 4, 5, 6,             // 2:1 (downsample)
+// 	], vec![(0, 10000), (2, 20000)]),
+// 	// slice 2
+// 	MFWTick::new(vec![
+// 	    7, 8, 9,                // 1:2 (upsample)
+// 	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+// 	], vec![(0, 5000), (3, 15000)]),
+// 	]);
+
+//     let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+//     assert_eq!(SyncPCMResult::Wrote(4, Some(1)), lf.write_sync_pcm(&mut outbuf[..]));
+//     assert_eq!(SyncPCMResult::Wrote(2, Some(1)), lf.write_sync_pcm(&mut outbuf[4..6]));
+//     assert_eq!(SyncPCMResult::Wrote(10, None), lf.write_sync_pcm(&mut outbuf[6..]));
+//     assert_eq!( [1.0, 2.0,
+// 		 3.0, 5.0,
+// 		 -1.0, -1.0,
+// 		 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+// 		 10.0, 25.0, 40.0, 55.0,
+// 		 ],
+// 		 &outbuf[..]);
+// }
+
+// // ----------------------------------------
+// // Syonchronisation integration tests
+
+// #[cfg(test)]
+// #[test]
+// fn integrate_test_binary_sync() {
+//     let mut data0 = [0.0; 8];
+//     let mut data1 = [0.0; 8];
+//     let mut sbar = PCMBasicSyncBarrier::new();
+//     todo!("Fill in reasonable values");
+//     let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+// 	T::S(vec![10.0, 11.0]),
+// 	T::TS(-11.0, 1),
+// 	T::S(vec![12.0, 13.0]),
+// 	T::TS(-12.0, 2),
+// 	T::S(vec![14.0, 15.0, 16.0, 17.0]),
+// 	T::TS(-13.0, 3),
+//     ]));
+//     let flexwriter = MockFlexWriter::new(vec![
+// 	// slice 1
+// 	MFWTick::new(vec![
+// 	    1, 2,                   // 1:1
+// 	    3, 4, 5, 6,             // 2:1 (downsample)
+// 	], vec![(0, 10000), (2, 20000)]),
+// 	// slice 2
+// 	MFWTick::new(vec![
+// 	    7, 8, 9,                // 1:2 (upsample)
+// 	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
+// 	], vec![(0, 5000), (3, 15000)]),
+// 	]);
+//     let mut lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
+//     let c1 = sbar.sync(Arc::new(Mutex::new(lf)));
+
+//     cread(c0.clone(), &mut data0[0..8]);
+//     assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+// 	       data0[..]);
+
+//     cread(c1.clone(), &mut data1[0..8]);
+//     assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
+// 	       data1[..]);
+// }
