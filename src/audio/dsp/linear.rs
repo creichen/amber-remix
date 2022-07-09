@@ -149,9 +149,13 @@ impl LinearFilter {
     fn skip_input_sample(&mut self) {
 	if let (_, Some(remaining)) = self.freqs.get(0) {
 	    self.advance_input(remaining);
-	} else {
-	    panic!("Trying to skip input sample even though we don't know its end yet");
+	    return;
 	}
+	if let Some(remaining) = self.samples_until_timeslice() {
+	    self.advance_input(remaining);
+	    return;
+	}
+	panic!("Trying to skip input sample even though we don't know its end yet");
     }
 
     fn advance_input(&mut self, len : usize) {
@@ -249,8 +253,10 @@ impl LinearFilter {
 	    // How much sample information can we write now?
 	    let max_out_from_insample = resampler.max_out_possible(insample_num_available);
 	    if resampler.sample_pos_int > self.buf.len() {
-		pwarn!("Suspicious buflen for {} vs {}", resampler, self.buf.len());
-		break;
+		pwarn!("Suspicious buflen for {} vs {}, culling", resampler, self.buf.len());
+		resampler.sample_pos_int = 0;
+		self.resampler = Some(resampler);
+		continue;
 	    }
 
 	    // Can we make any progress?
@@ -415,6 +421,9 @@ impl SampleState {
 
     fn resample<T>(&mut self, outbuf : &mut [f32], inbuf : T) where T : IndexLen<f32> {
 	let inbuf_len = inbuf.len();
+	if inbuf_len == 0 {
+	    panic!("Cannot resample with buffer size zero.");
+	}
 	ptrace!("  ## [..{}] <- [..{}]", outbuf.len(), inbuf.len());
 	ptrace!("  ## resamp from {}", inbuf.get(0));
 	let mut pos = self.sample_pos_int;
@@ -479,6 +488,9 @@ use crate::audio::dsp::pcmsync::{PCMBasicSyncBarrier, T, mock_asw, cread};
 use crate::audio::dsp::writer::PCMSyncBarrier;
 #[cfg(test)]
 use std::collections::VecDeque;
+#[cfg(test)]
+use super::pcmsync;
+
 
 // ----------------------------------------
 // Helpers
@@ -947,8 +959,9 @@ fn test_linear_filter_boundary_crash() {
 #[cfg(test)]
 #[test]
 fn integrate_test_binary_sync() {
-    let mut data0 = [0.0; 14];
-    let mut data1 = [0.0; 14];
+
+    let mut data0 = [0.0; 20];
+    let mut data1 = [0.0; 20];
     let mut sbar = PCMBasicSyncBarrier::new();
 
     let c0 = sbar.sync(mock_asw("0".to_string(), vec![
@@ -977,24 +990,49 @@ fn integrate_test_binary_sync() {
     let lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     let c1 = sbar.sync(Rc::new(RefCell::new(lf)));
 
-    cread(c0.clone(), &mut data0[..]);
-    assert_eq!([10.0, 11.0,
-		-11.0, // repeat to fill
-		// sync on ts1
-		80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, // 88.0, 09.0, // discard during sync
-		// sync on ts2
-		14.0, 15.0, 16.0
-               ],
-	       data0[..]);
+    if pcmsync::SYNC_STRATEGY_MAX {
+    // -------------------- SYNC_STRATEGY_MAX
+	cread(c0.clone(), &mut data0[..]);
+	assert_eq!([10.0, 11.0,
+		    -11.0, -11.0, // repeat to fill
+		    // sync on ts1
+		    80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, 88.0, 09.0,
+		    // sync on ts2
+		    14.0, 15.0, 16.0
+        ],
+		   data0[..19]);
 
-    cread(c1.clone(), &mut data1[..]);
-    assert_eq!([1.0, 2.0,
-		3.0, // 5.0, // discarded during sync
-		// sync on ts1
-		7.0, 7.5, 8.0, 8.5, 9.0, 9.0,
-		-2.0, -2.0, // repeat to fill
-		// sync on ts2
-		10.0, 25.0, 40.0,
-		 ],
-	       data1[..]);
+	cread(c1.clone(), &mut data1[..]);
+	assert_eq!([1.0, 2.0,
+		    3.0, 5.0,
+		    // sync on ts1
+		    7.0, 7.5, 8.0, 8.5, 9.0, 9.0,
+		    -2.0, -2.0, -2.0, -2.0, // repeat to fill
+		    // sync on ts2
+		    10.0, 25.0, 40.0,
+	],
+		   data1[..19]);
+    } else {
+	// -------------------- SYNC_STRATEGY_AVT
+	cread(c0.clone(), &mut data0[..14]);
+	assert_eq!([10.0, 11.0,
+		    -11.0, // repeat to fill
+		    // sync on ts1
+		    80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, // 88.0, 09.0, // discard during sync
+		    // sync on ts2
+		    14.0, 15.0, 16.0
+        ],
+		   data0[..14]);
+
+	cread(c1.clone(), &mut data1[..14]);
+	assert_eq!([1.0, 2.0,
+		    3.0, // 5.0, // discarded during sync
+		    // sync on ts1
+		    7.0, 7.5, 8.0, 8.5, 9.0, 9.0,
+		    -2.0, -2.0, // repeat to fill
+		    // sync on ts2
+		    10.0, 25.0, 40.0,
+	],
+		   data1[..14]);
+    }
 }

@@ -51,10 +51,18 @@ struct BasicWriterState {
     buf : RingBuf,
 }
 
+
+// If set, synchronise on the _longest_ tick, rather than the average
+pub const SYNC_STRATEGY_MAX : bool = false;
+
+// Hold back at least this many samples for synchronisation so that we can undo them if needed
+const RESERVE : usize = 0;
+
 impl BasicWriterState {
     /// Read into local buffer
     /// Returns FALSE if flushed
-    fn read_pcm(&mut self, count : usize) -> bool {
+    fn read_pcm(&mut self, requested_count : usize) -> bool {
+	let count = requested_count;
 	if count == 0 {
 	    return true;
 	}
@@ -65,7 +73,7 @@ impl BasicWriterState {
 	let mut len0 = self.buf.len();
 	let mut len1 = 0;
 	let mut len2 = 0;
-	info!("BEFORE {:p} {}", &self.buf, self.buf.internal());
+	info!("BEFORE-pcmread {:p} {}", &self.buf, self.buf.internal());
 	let result = {
 	    // let mut guard = self.source.lock().unwrap();
 	    // let wr = guard.deref_mut();
@@ -106,7 +114,7 @@ impl BasicWriterState {
 		    panic!("Somehow wrote more than possible: {written}/{samples_offered_by_our_buffer}; now {}", self.buf.len());
 		}
 		trace!("::{len0};{len1};{len2}; offered {samples_offered_by_our_buffer} = {samples_offered_by_our_buffer1}+{samples_offered_by_our_buffer2}; written={written}");
-		info!("AFTER {:p} {}", &self.buf, self.buf.internal());
+		info!("AFTER-pcmread {:p} {}", &self.buf, self.buf.internal());
 		self.buf.drop_back(samples_offered_by_our_buffer - written).unwrap();
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
@@ -116,15 +124,22 @@ impl BasicWriterState {
 	}
     }
 
-    fn advance(&mut self, write_pos : usize, timeslice : Timeslice) {
+    /// Advance to next time slice and drop excess buffer data, if any
+    fn advance(&mut self, index : usize, write_pos : usize, timeslice : Timeslice) {
 	let mut wr = self.source.borrow_mut();
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;
-	self.buf.drop_back(self.written - write_pos).unwrap();
+	if self.written < write_pos {
+	    error!("While advancing source #{index} to timeslice {timeslice}: unexpectedly fewer written bytes than desired-- actual:{} expected:{write_pos}", self.written);
+	} else {
+	    info!("BEFORE-dropattempt({write_pos})(#{index}, avg_offset) {:p} {} (written={})", &self.buf, self.buf.internal(), self.written);
+	    self.buf.drop_back(self.written - write_pos).unwrap();
+	}
 	self.written = 0;
 	self.buf_pos_at_which_timeslice_could_start = 0;
     }
 
+    /// Read into the local buffer until we have the desired level
     fn fill_until(&mut self, expected : usize) -> bool {
 	if expected > self.written {
 	    return self.read_pcm(expected - self.written);
@@ -132,6 +147,7 @@ impl BasicWriterState {
 	return true;
     }
 
+    /// Read into the local buffer until we have the next timeslice
     fn fill_timeslice(&mut self) -> bool {
 	if let None = self.next_timeslice {
 	    return self.read_pcm(self.buf.remaining_capacity());
@@ -139,9 +155,11 @@ impl BasicWriterState {
 	return true;
     }
 
-    /// Write as much as possible; return # of bytes written
+    /// Write as much as possible (minus reserve); return # of bytes written
     fn write_pcm(&mut self, outbuf : &mut [f32]) -> usize {
-	return self.buf.write_to(outbuf);
+	let available_count = if self.buf.len() < RESERVE { 0 } else { self.buf.len() - RESERVE };
+	let count = usize::min(available_count, outbuf.len());
+	return self.buf.write_to(&mut outbuf[..count]);
     }
 }
 
@@ -205,30 +223,38 @@ impl BasicWriterSyncImpl {
 		}
 	    }
 	    let mut sum_offset = 0;
+	    let mut max_offset = 0;
 
 	    for (index, state) in self.sources.iter_mut().enumerate() {
-		sum_offset += state.buf_pos_at_which_timeslice_could_start;
+		let offset = state.buf_pos_at_which_timeslice_could_start;
+		sum_offset += offset;
+		max_offset = usize::max(max_offset, max_offset);
 		if timeslice != state.next_timeslice {
 		    warn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
 		}
 	    }
 
-	    let avg_offset = sum_offset / num_sources;
-	    trace!("  Setting slice length to {avg_offset}");
+	    let sync_offset = if SYNC_STRATEGY_MAX { max_offset } else {
+		// arithmetic mean offset
+		sum_offset / num_sources
+	    };
+	    trace!("  Setting slice length to {sync_offset}");
 
-	    for state in self.sources.iter_mut() {
-		if !state.fill_until(avg_offset) {
+	    for (index, state) in self.sources.iter_mut().enumerate() {
+		info!("BEFORE-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
+		if !state.fill_until(sync_offset) {
 		    panic!("Unexpected granular flush");
 		}
+		info!("AFTER-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
 		if let Some(timeslice) = timeslice {
-		    state.advance(avg_offset, timeslice);
+		    state.advance(index, sync_offset, timeslice);
 		}
 	    }
 	    debug!("  Completed timeslice {timeslice:?}");
 
 	} else {
 	    panic!("Inconsistent flush: {}/{} sources flushed", num_sources - oks, num_sources);
-	}
+	};
     }
 
     /// Handle a write request for the specified writer
