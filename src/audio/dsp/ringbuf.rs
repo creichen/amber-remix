@@ -1,6 +1,8 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
+use crate::util::IndexLen;
+
 const OUTPUT_BUFFER_IS_FULL : usize = 0xffffffff;
 
 /// Ring buffer
@@ -63,6 +65,7 @@ impl RingBuf {
 	return self.is_full() || self.read_pos > self.write_pos;
     }
 
+    /// push_back
     pub fn write_to(&mut self, dest : &mut [f32]) -> usize {
 	self.last_poll = dest.len();
 	self._write_to(dest)
@@ -116,9 +119,9 @@ impl RingBuf {
 
     /// Remove the specified number of most recently added samples
     /// Return how many were actually removed
-    pub fn unread(&mut self, to_remove : usize) -> Result<usize, String> {
+    pub fn drop_back(&mut self, to_remove : usize) -> Result<usize, String> {
 	if to_remove > self.len() {
-	    return Err(format!("Insufficient capacity: requested unread({to_remove}) on only {} elements", self.len()));
+	    return Err(format!("Insufficient capacity: requested drop_back({to_remove}) on only {} elements", self.len()));
 	}
 	if to_remove == 0 {
 	    return Ok(0);
@@ -133,6 +136,7 @@ impl RingBuf {
 	return Ok(to_remove);
     }
 
+    /// pop_front()
     pub fn read_from(&mut self, src : &[f32]) -> usize {
 	if self.is_full() {
 	    return 0;
@@ -158,6 +162,28 @@ impl RingBuf {
 	return to_write + self.read_from(&src[to_write..]);
     }
 
+    /// Remove the specified number of samples that would be next to be read
+    /// Return how many were actually removed
+    pub fn drop_front(&mut self, to_remove : usize) -> Result<usize, String> {
+	if to_remove > self.len() {
+	    return Err(format!("Insufficient capacity: requested drop_front({to_remove}) on only {} elements", self.len()));
+	}
+	if to_remove == 0 {
+	    return Ok(0);
+	}
+	if self.write_pos == OUTPUT_BUFFER_IS_FULL {
+	    self.write_pos = self.read_pos;
+	}
+	let bufsize = self.data.len();
+
+	self.read_pos += to_remove;
+
+	if self.read_pos >= bufsize {
+	    self.read_pos -= bufsize
+	}
+	return Ok(to_remove);
+    }
+
     /// Request write access directly into this buffer.  Note that the window may be smaller than requested
     /// even if the buffer has more capacity than requested; in that case; make sure to iterate.
     /// The returned slice is considered to be filled afterwards.
@@ -170,6 +196,40 @@ impl RingBuf {
 	let end_pos = self.write_pos + usize::min(size, avail);
 	self._advance_write_pos(end_pos - start_pos);
 	return &mut self.data[start_pos..end_pos];
+    }
+
+    /// Retrieves an indexed expression for reading out of a slice into the buffer
+    /// Does not drop any values.
+    pub fn peek_front<'a>(&'a self, size : usize) -> RingBufIndex<'a> {
+	let size = usize::min(size, self.len());
+	return RingBufIndex {
+	    buf : &self,
+	    size,
+	}
+    }
+}
+
+pub struct RingBufIndex<'a> {
+    buf : &'a RingBuf,
+    size : usize,
+}
+
+impl<'a> IndexLen<f32> for RingBufIndex<'a> {
+    fn len(&self) -> usize {
+	return self.size;
+    }
+
+    fn get(&self, index: usize) -> f32 {
+	if index >= self.size {
+	    panic!("Out of bounds access: {index} >= {}", self.size);
+	}
+	let buflen = self.buf.data.len();
+	let pos = index + self.buf.read_pos;
+	if pos >= buflen {
+	    return self.buf.data[pos - buflen];
+	} else {
+	    return self.buf.data[pos];
+	}
     }
 }
 
@@ -630,28 +690,28 @@ fn test_reset_overlap_full() {
 }
 
 // --------------------
-// unread
+// drop_back
 
 #[cfg(test)]
 #[test]
-fn test_unread_empty() {
+fn test_drop_back_empty() {
     let mut b = RingBuf::new(7);
     assert_eq!(7, b.capacity());
-    if let Ok(_) = b.unread(1) {
-	panic!("Should not be able to unread");
+    if let Ok(_) = b.drop_back(1) {
+	panic!("Should not be able to drop_back");
     }
 }
 
 #[cfg(test)]
 #[test]
-fn test_unread_partially_full() {
+fn test_drop_back_partially_full() {
     let data1 = [1.0, 2.0, 3.0, 4.0];
     let mut data2 = [0.0; 4];
     let mut b = RingBuf::new(5);
 
     assert_eq!(4, b.read_from(&data1[0..4]));
     assert_partially_filled(&mut b, 4);
-    assert_eq!(Ok(2), b.unread(2));
+    assert_eq!(Ok(2), b.drop_back(2));
     assert_partially_filled(&mut b, 2);
     assert_eq!(2, b.write_to(&mut data2));
     assert_empty(&mut b);
@@ -662,18 +722,18 @@ fn test_unread_partially_full() {
 
 #[cfg(test)]
 #[test]
-fn test_unread_direct_full() {
+fn test_drop_back_direct_full() {
     let data1 = [1.0, 2.0, 3.0];
     let mut data2 = [0.0; 2];
     let mut b = RingBuf::new(3);
 
     assert_eq!(3, b.read_from(&data1[0..3]));
     assert_full(&mut b);
-    assert_eq!(Ok(1), b.unread(1));
+    assert_eq!(Ok(1), b.drop_back(1));
     assert_partially_filled(&mut b, 2);
     assert_eq!(1, b.write_to(&mut data2[0..1]));
     assert_partially_filled(&mut b, 1);
-    assert_eq!(Ok(1), b.unread(1));
+    assert_eq!(Ok(1), b.drop_back(1));
     assert_empty(&mut b);
 
     assert_eq!([1.0, 0.0],
@@ -681,7 +741,7 @@ fn test_unread_direct_full() {
 }
 
 #[cfg(test)]
-fn test_boundary_unread_2(capacity : usize) {
+fn test_boundary_drop_back_2(capacity : usize) {
     let data1 = [1.0, 2.0, 3.0, 4.0];
     let mut data2 = [0.0; 3];
     let mut data3 = [0.0; 3];
@@ -697,19 +757,19 @@ fn test_boundary_unread_2(capacity : usize) {
     } else {
 	assert_partially_filled(&mut b, 4);
     }
-    assert_eq!(Ok(2), b.unread(2));
+    assert_eq!(Ok(2), b.drop_back(2));
     assert_partially_filled(&mut b, 2);
 
     assert_eq!(2, b.write_to(&mut data2));
     assert_empty(&mut b);
-    assert_eq!(Ok(0), b.unread(0));
+    assert_eq!(Ok(0), b.drop_back(0));
 
     assert_eq!([1.0, 2.0, 0.0],
 	       &data2[..]);
 }
 
 #[cfg(test)]
-fn test_boundary_unread_3(capacity : usize) {
+fn test_boundary_drop_back_3(capacity : usize) {
     let data1 = [1.0, 2.0, 3.0, 4.0];
     let mut data2 = [0.0; 3];
     let mut data3 = [0.0; 3];
@@ -725,12 +785,12 @@ fn test_boundary_unread_3(capacity : usize) {
     } else {
 	assert_partially_filled(&mut b, 4);
     }
-    assert_eq!(Ok(3), b.unread(3));
+    assert_eq!(Ok(3), b.drop_back(3));
     assert_partially_filled(&mut b, 1);
 
     assert_eq!(1, b.write_to(&mut data2));
     assert_empty(&mut b);
-    assert_eq!(Ok(0), b.unread(0));
+    assert_eq!(Ok(0), b.drop_back(0));
 
     assert_eq!([1.0, 0.0, 0.0],
 	       &data2[..]);
@@ -738,24 +798,204 @@ fn test_boundary_unread_3(capacity : usize) {
 
 #[cfg(test)]
 #[test]
-fn test_unread_partial_overlap_touch_boundaries() {
-    test_boundary_unread_2(5);
+fn test_drop_back_partial_overlap_touch_boundaries() {
+    test_boundary_drop_back_2(5);
 }
 
 #[cfg(test)]
 #[test]
-fn test_unread_partial_overlap_cross_boundaries() {
-    test_boundary_unread_3(5);
+fn test_drop_back_partial_overlap_cross_boundaries() {
+    test_boundary_drop_back_3(5);
 }
 
 #[cfg(test)]
 #[test]
-fn test_unread_full_overlap_touch_boundaries() {
-    test_boundary_unread_2(4);
+fn test_drop_back_full_overlap_touch_boundaries() {
+    test_boundary_drop_back_2(4);
 }
 
 #[cfg(test)]
 #[test]
-fn test_unread_full_overlap_cross_boundaries() {
-    test_boundary_unread_3(4);
+fn test_drop_back_full_overlap_cross_boundaries() {
+    test_boundary_drop_back_3(4);
 }
+
+// --------------------
+// drop_front
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_empty() {
+    let mut b = RingBuf::new(7);
+    assert_eq!(7, b.capacity());
+    if let Ok(_) = b.drop_front(1) {
+	panic!("Should not be able to drop_front");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_partially_full() {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 4];
+    let mut b = RingBuf::new(5);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    assert_partially_filled(&mut b, 4);
+    assert_eq!(Ok(2), b.drop_front(2));
+    assert_partially_filled(&mut b, 2);
+    assert_eq!(2, b.write_to(&mut data2));
+    assert_empty(&mut b);
+
+    assert_eq!([3.0, 4.0, 0.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_direct_full() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 2];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(3, b.read_from(&data1[0..3]));
+    assert_full(&mut b);
+    assert_eq!(Ok(1), b.drop_front(1));
+    assert_partially_filled(&mut b, 2);
+    assert_eq!(1, b.write_to(&mut data2[0..1]));
+    assert_partially_filled(&mut b, 1);
+    assert_eq!(Ok(1), b.drop_front(1));
+    assert_empty(&mut b);
+
+    assert_eq!([2.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+fn test_boundary_drop_front_2(capacity : usize) {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 3];
+    let mut data3 = [0.0; 3];
+    let mut b = RingBuf::new(capacity);
+
+    assert_eq!(2, b.read_from(&data1[0..2]));
+    assert_eq!(2, b.write_to(&mut data3[0..3]));
+    assert_empty(&mut b);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    if capacity == 4 {
+	assert_full(&mut b);
+    } else {
+	assert_partially_filled(&mut b, 4);
+    }
+    assert_eq!(Ok(2), b.drop_front(2));
+    assert_partially_filled(&mut b, 2);
+
+    assert_eq!(2, b.write_to(&mut data2));
+    assert_empty(&mut b);
+    assert_eq!(Ok(0), b.drop_front(0));
+
+    assert_eq!([3.0, 4.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+fn test_boundary_drop_front_3(capacity : usize) {
+    let data1 = [1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 3];
+    let mut data3 = [0.0; 3];
+    let mut b = RingBuf::new(capacity);
+
+    assert_eq!(2, b.read_from(&data1[0..2]));
+    assert_eq!(2, b.write_to(&mut data3[0..3]));
+    assert_empty(&mut b);
+
+    assert_eq!(4, b.read_from(&data1[0..4]));
+    if capacity == 4 {
+	assert_full(&mut b);
+    } else {
+	assert_partially_filled(&mut b, 4);
+    }
+    assert_eq!(Ok(3), b.drop_front(3));
+    assert_partially_filled(&mut b, 1);
+
+    assert_eq!(1, b.write_to(&mut data2));
+    assert_empty(&mut b);
+    assert_eq!(Ok(0), b.drop_front(0));
+
+    assert_eq!([4.0, 0.0, 0.0],
+	       &data2[..]);
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_partial_overlap_touch_boundaries() {
+    test_boundary_drop_front_2(5);
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_partial_overlap_cross_boundaries() {
+    test_boundary_drop_front_3(5);
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_full_overlap_touch_boundaries() {
+    test_boundary_drop_front_2(4);
+}
+
+#[cfg(test)]
+#[test]
+fn test_drop_front_full_overlap_cross_boundaries() {
+    test_boundary_drop_front_3(4);
+}
+
+// ----------------------------------------
+// peek_front
+
+#[cfg(test)]
+#[test]
+fn test_peek_front() {
+    let data1 = [1.0, 2.0, 3.0];
+    let mut data2 = [0.0; 3];
+    let mut b = RingBuf::new(3);
+
+    assert_eq!(3, b.read_from(&data1[0..3]));
+    assert_full(&mut b);
+
+    for i in 0..3 {
+	let v = b.peek_front(i);
+	for k in 0..i {
+	    assert_eq!((k + 1) as f32, v.get(k));
+	    assert_eq!((k + 1) as f32, v.get(k));
+	}
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_cross_boundary_peek_front() {
+    let data1 = [5.0, 1.0, 2.0, 3.0, 4.0];
+    let mut data2 = [0.0; 4];
+    let mut b = RingBuf::new(5);
+
+    assert_eq!(2, b.read_from(&data1[0..2]));
+    assert_partially_filled(&mut b, 2);
+
+    assert_eq!(2, b.write_to(&mut data2[0..2]));
+    assert_empty(& mut b);
+
+    assert_eq!(4, b.read_from(&data1[1..5]));
+    assert_eq!(1, b.read_from(&data1[0..1]));
+    assert_full(&mut b);
+
+    for i in 0..5 {
+	let v = b.peek_front(i);
+	for k in 0..i {
+	    assert_eq!((k + 1) as f32, v.get(k));
+	    assert_eq!((k + 1) as f32, v.get(k));
+	}
+    }
+}
+

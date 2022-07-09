@@ -78,7 +78,7 @@ impl BasicWriterState {
 		return true;
 	    },
 	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
-		self.buf.unread(samples_offered_by_our_buffer - written).unwrap();
+		self.buf.drop_back(samples_offered_by_our_buffer - written).unwrap();
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
 		self.next_timeslice = Some(timeslice);
@@ -92,7 +92,7 @@ impl BasicWriterState {
 	let wr = guard.deref_mut();
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;
-	self.buf.unread(self.written - write_pos).unwrap();
+	self.buf.drop_back(self.written - write_pos).unwrap();
 	self.written = 0;
 	self.buf_pos_at_which_timeslice_could_start = 0;
     }

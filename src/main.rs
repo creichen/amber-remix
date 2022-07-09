@@ -14,6 +14,7 @@ use crate::audio::amber;
 
 mod datafiles;
 mod audio;
+pub mod util;
 
 fn print_strings(data : &datafiles::AmberStarFiles) {
 
