@@ -989,13 +989,18 @@ fn integrate_test_binary_sync() {
 	MFWTick::new(vec![
 	    10, 20, 30, 40, 50, 60  // 1.5:1 (downsample)
 	], vec![(0, 15000)]),
+	// slice 4
+	MFWTick::new(vec![
+	    10000, // fake
+	], vec![(0, 10)]),
 	]);
     let lf = LinearFilter::nw(20000, 10000, Rc::new(RefCell::new(flexwriter)));
     let c1 = sbar.sync(Rc::new(RefCell::new(lf)));
 
     if pcmsync::SYNC_STRATEGY_MAX {
     // -------------------- SYNC_STRATEGY_MAX
-	cread(c0.clone(), &mut data0[..]);
+	const LEN : usize = 17;
+	cread(c0.clone(), &mut data0[..LEN]);
 	assert_eq!([10.0, 11.0,
 		    -11.0, -11.0, // repeat to fill
 		    // sync on ts1
@@ -1003,9 +1008,9 @@ fn integrate_test_binary_sync() {
 		    // sync on ts2
 		    14.0, 15.0, 16.0
         ],
-		   data0[..19]);
+		   data0[..LEN]);
 
-	cread(c1.clone(), &mut data1[..]);
+	cread(c1.clone(), &mut data1[..LEN]);
 	assert_eq!([1.0, 2.0,
 		    3.0, 5.0,
 		    // sync on ts1
@@ -1014,7 +1019,7 @@ fn integrate_test_binary_sync() {
 		    // sync on ts2
 		    10.0, 25.0, 40.0,
 	],
-		   data1[..19]);
+		   data1[..LEN]);
     } else {
 	// -------------------- SYNC_STRATEGY_AVT
 	cread(c0.clone(), &mut data0[..14]);

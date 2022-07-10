@@ -323,6 +323,8 @@ impl PCMWriter for WriterSyncFwd {
 use std::collections::VecDeque;
 #[cfg(test)]
 use super::writer::PCMSyncWriter;
+#[cfg(test)]
+use crate::audio::dsp::pcmsync;
 
 // ----------------------------------------
 // Helpers
@@ -450,8 +452,8 @@ fn test_unary_passthrough_cross_boundary() {
 #[cfg(test)]
 #[test]
 fn test_binary() {
-    let mut data0 = [0.0; 8];
-    let mut data1 = [0.0; 8];
+    let mut data0 = [0.0; 10];
+    let mut data1 = [0.0; 10];
     let mut sbar = PCMBasicSyncBarrier::new();
     let c0 = sbar.sync(mock_asw("0".to_string(), vec![
 	T::S(vec![10.0, 11.0]),
@@ -469,12 +471,28 @@ fn test_binary() {
 	T::S(vec![26.0, 27.0]),
 	T::TS(-23.0, 3),
     ]));
-    cread(c0.clone(), &mut data0[0..8]);
-    assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
-	       data0[..]);
+    if pcmsync::SYNC_STRATEGY_MAX {
+    // -------------------- SYNC_STRATEGY_MAX
+	cread(c0.clone(), &mut data0[0..10]);
+	assert_eq!([10.0, 11.0, -11.0, -11.0,
+		    12.0, 13.0,
+		    14.0, 15.0, 16.0, 17.0],
+		   data0[..]);
 
-    cread(c1.clone(), &mut data1[0..8]);
-    assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
-	       data1[..]);
+	cread(c1.clone(), &mut data1[0..10]);
+	assert_eq!([20.0, 21.0, 22.0, 23.0,
+		    24.0, 25.0,
+		    26.0, 27.0, -23.0, -23.0],
+		   data1[..]);
+    } else {
+	// -------------------- SYNC_STRATEGY_AVT
+	cread(c0.clone(), &mut data0[0..8]);
+	assert_eq!([10.0, 11.0, -11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
+		   data0[..8]);
+
+	cread(c1.clone(), &mut data1[0..8]);
+	assert_eq!([20.0, 21.0, 22.0, 24.0, 25.0, 26.0, 27.0, -23.0],
+		   data1[..8]);
+    }
 }
 
