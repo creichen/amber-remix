@@ -355,7 +355,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    let window = video_subsystem.window("amber-blasphemy", 3000, 1600)
+    let window = video_subsystem.window("amber-remix", 3000, 1600)
         .position_centered()
         .build()
         .unwrap();
