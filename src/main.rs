@@ -7,10 +7,10 @@ extern crate lazy_static;
 use std::{time::Duration, io, env, fs, path::Path};
 
 use audio::{Mixer, AQOp, SampleRange};
-use datafiles::music::{BasicSample, Song};
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::Canvas};
+use datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
+use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode}};
 
-use crate::audio::amber;
+use crate::{audio::amber, datafiles::pixmap};
 
 mod datafiles;
 mod audio;
@@ -39,6 +39,9 @@ fn print_strings(data : &datafiles::AmberStarFiles) {
     }
 
 }
+
+// ----------------------------------------
+// Audio
 
 enum ISelect {
     Sample,
@@ -166,6 +169,163 @@ impl<'a> InstrSelect<'a> {
     }
 }
 
+// ----------------------------------------
+// GfxExplore
+
+struct GfxExplorer<'a> {
+    data : &'a datafiles::AmberStarFiles,
+    filename : String,
+    offset : usize,
+    width : usize,
+    height : usize,
+    palette : usize,
+    bitplanes : usize,
+    file_index : usize,
+    pad : usize,
+    transparency : bool,
+    print_gfxinfo : bool,
+}
+
+impl<'a> GfxExplorer<'a> {
+    fn new(data : &'a datafiles::AmberStarFiles) -> GfxExplorer {
+	return GfxExplorer {
+	    data,
+	    //filename : "COM_BACK.AMB".to_string(),
+	    //filename : "BACKGRND.AMB".to_string(),
+	    //filename : "MON_GFX.AMB".to_string(),
+	    // filename : "CHARDATA.AMB".to_string(),
+	    //offset : 0,
+	    //pad : 0,
+	    // filename : "AMBERDEV.UDO".to_string(),
+	    // offset: 0x33d70,
+
+	    filename : "ICON_DAT.AMB".to_string(),
+	    offset: 0x814,
+	    pad : 6,
+
+	    width : 16,
+	    height : 16,
+	    palette : 0,
+	    bitplanes : 4,
+	    file_index : 0,
+	    transparency : false,
+	    print_gfxinfo : true,
+	};
+    }
+
+    pub fn mod_offset(&mut self, delta : isize) { self.offset = isize::max(0, self.offset as isize + delta) as usize; self.info(); }
+    pub fn mod_width(&mut self, delta : isize) { self.width = isize::max(0, self.width as isize + delta) as usize;  self.info(); }
+    pub fn mod_height(&mut self, delta : isize) { self.height = isize::max(0, self.height as isize + delta) as usize;  self.info(); }
+    pub fn mod_pad(&mut self, delta : isize) { self.pad = isize::max(0, self.pad as isize + delta) as usize;  self.info(); }
+    pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.palettes.len() - 1) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
+    pub fn mod_bitplanes(&mut self, delta : isize) { self.bitplanes = isize::min(5, isize::max(3, self.bitplanes as isize + delta)) as usize;  self.info(); }
+    pub fn mod_file_index(&mut self, delta : isize) { self.file_index = isize::max(0, self.file_index as isize + delta) as usize;  self.info(); }
+    pub fn toggle_transparency(&mut self) { self.transparency = !self.transparency; self.info(); println!("transparency = {}", self.transparency); }
+
+    fn print_config(&self) {
+	println!("[GFX] {} off:{} padding:{}, (0x{:x}) size:{}x{}, bp:{}, pal:{}",
+		 self.filename, self.offset, self.pad, self.offset, self.width, self.height, self.bitplanes, self.palette);
+    }
+
+    fn get_palette(&self) -> &Palette {
+	return &self.data.palettes[self.palette];
+    }
+
+    fn info(&mut self) {
+	self.print_gfxinfo = true;
+    }
+
+    // For ICN files
+    fn embedded_palette(&mut self) -> Palette {
+	let mut xdata = self.data.load(&self.filename);
+	self.file_index %= xdata.num_entries as usize;
+	let bytes = xdata.decode(self.file_index as u16);
+	return palette::new_with_header(&bytes[0x7d2..], 255/7);
+    }
+
+    fn pixmaps(&mut self) -> Vec<IndexedPixmap> {
+	const PRINT_PADDING : bool = false;
+
+	let mut results = vec![];
+	let mut xdata = self.data.load(&self.filename);
+	self.file_index %= xdata.num_entries as usize;
+	let bytes = xdata.decode(self.file_index as u16);
+
+	let imgsize = (((self.width + 15) / 16) * 2) * self.height * self.bitplanes;
+	let padded_imgsize = imgsize + self.pad;
+	let count = (bytes.len() as usize - self.offset) / padded_imgsize;
+
+	if self.print_gfxinfo {
+	    self.print_config();
+	    println!("[GFX] assuming {imgsize} (0x{imgsize:x}) (padded: {padded_imgsize}, 0x{padded_imgsize:x}) bytes per image -> {count} images, {} (0x{:x}) bytes left over",
+		     bytes.len() - self.offset - (padded_imgsize * count),
+		     bytes.len() - self.offset - (padded_imgsize * count),
+	    );
+	    self.print_gfxinfo = false;
+	}
+
+	for i in 0..count {
+	    let offset = self.offset + padded_imgsize * i;
+	    if PRINT_PADDING && self.pad > 0 {
+		print!("Padding for img #{i:03x}: ");
+		let full_slice = &bytes[offset..offset+padded_imgsize];
+		for i in 0..self.pad {
+		    print!("{:02x} ", full_slice[i]);
+		}
+		println!();
+	    }
+	    let img_slice = &bytes[offset+self.pad..offset+padded_imgsize];
+	    let pixmap = pixmap::new(img_slice, self.width, self.height, self.bitplanes);
+	    results.push(pixmap);
+	}
+	return results;
+    }
+
+    fn print_img(&mut self, which : usize) {
+	let pixmaps = self.pixmaps();
+	let mut colors_used = [false;256];
+	if which < pixmaps.len() {
+	    let pixmap = &pixmaps[which];
+	    for y in 0..pixmap.height {
+		for x in 0..pixmap.width {
+		    let pos = y * pixmap.width + x;
+		    let pixel = pixmap.pixels[pos];
+		    print!("{:2x}", pixel);
+		    colors_used[pixel as usize] = true;
+		}
+		println!("");
+	    }
+	}
+	print!(" Colours used: ");
+	for (i, c) in colors_used.iter().enumerate() {
+	    if *c {
+		print!("{:x}", i);
+	    }
+	}
+	println!();
+    }
+
+    fn make_pixmaps<'b, T>(&mut self, texcreate : &'b TextureCreator<T>) -> Vec<Texture<'b>> {
+//	let palette = self.get_palette();
+	let palette = self.embedded_palette();
+	let mut results = vec![];
+	let pixmaps = self.pixmaps();
+	for pixmap in pixmaps {
+	    let pixmap = if self.transparency {
+		let palette2 = palette.with_transparency(0);
+		pixmap.with_palette(&palette2)
+	    } else {
+	     	pixmap.with_palette(&palette)
+	    };
+	    let mut texture = pixmap.as_texture(texcreate);
+	    texture.set_blend_mode(BlendMode::Blend);
+	    results.push(texture);
+	}
+
+	return results;
+    }
+}
+
 fn draw_sampledata<'a>(full_data : &'a [i8], canvas : &mut Canvas<sdl2::video::Window>, ybase : i32, sampledata : SampleRange) {
     let pos = sampledata.start;
     let len = sampledata.len;
@@ -208,21 +368,51 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 	monopattern_nr : 0,
 	mode : ISelect::Instrument };
 
+    let mut gfxexplore = GfxExplorer::new(data);
+    let mut focus_img : usize = 0;
+
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     let mut i = 0;
     'running: loop {
-        i = (i + 1) % 255;
-        canvas.set_draw_color(Color::RGB(i, 64, 128 - (i>>1)));
+        i = (i + 1) & 0x3f;
+        canvas.set_draw_color(Color::RGB(0, 0, 32 + i));
+	//canvas.set_draw_color(Color::RGB(i, 64, 128 - (i>>1)));
         canvas.clear();
 
 	for j in 0..data.pics80.len() {
 	    let img = &data.pics80[j];
 	    let creator = canvas.texture_creator();
 	    let texture = img.as_texture(&creator);
-	    canvas.copy(&texture, None, Some(Rect::new(j as i32 * (img.width as i32 + 8), 0, img.width, img.height))).unwrap();
+	    canvas.copy(&texture, None, Some(Rect::new(j as i32 * (img.width as i32 + 8), 0, img.width as u32, img.height as u32))).unwrap();
+	}
+
+	{
+	    let mut xpos = 10;
+	    let mut ypos = 200;
+	    let creator = canvas.texture_creator();
+	    let textures = gfxexplore.make_pixmaps(&creator);
+	    let src_width = gfxexplore.width;
+	    let src_height = gfxexplore.height;
+	    let width = src_width * 2;
+	    let height = src_height * 2;
+	    for t in &textures {
+		canvas.copy(&t,
+			    Rect::new(0, 0, src_width as u32, src_height as u32),
+			    Rect::new(xpos as i32, ypos as i32, width as u32, height as u32)).unwrap();
+		xpos += width + 5;
+		if xpos + width > 3000 {
+		    xpos = 10;
+		    ypos += height + 10;
+		}
+	    }
+	    if focus_img < textures.len() {
+		canvas.copy(&textures[focus_img],
+			    Rect::new(0, 0, src_width as u32, src_height as u32),
+			    Rect::new(0, (ypos + height + 10) as i32, (width * 4) as u32, (height * 4) as u32)).unwrap();
+	    }
 	}
 
 	// let img = &data.pic_intro;
@@ -230,14 +420,14 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 	// let texture = &data.pic_intro.as_texture(&creator);
 	// canvas.copy(&texture, None, Rect::new(100, 200, img.width, img.height)).unwrap();
 
-	let sampledata = instr.basicsample();
+	// let sampledata = instr.basicsample();
 
-	canvas.set_draw_color(Color::RGB(150, 255, 0));
-	draw_sampledata(&data.sample_data.data[..], &mut canvas, 300, sampledata.attack);
-	if let Some(sustain) = sampledata.looping {
-	    canvas.set_draw_color(Color::RGB(1, 255, 0));
-	    draw_sampledata(&data.sample_data.data[..], &mut canvas, 500, sustain);
-	}
+	// canvas.set_draw_color(Color::RGB(150, 255, 0));
+	// draw_sampledata(&data.sample_data.data[..], &mut canvas, 300, sampledata.attack);
+	// if let Some(sustain) = sampledata.looping {
+	//     canvas.set_draw_color(Color::RGB(1, 255, 0));
+	//     draw_sampledata(&data.sample_data.data[..], &mut canvas, 500, sustain);
+	// }
 
         for event in event_pump.poll_iter() {
             match event {
@@ -245,8 +435,29 @@ fn show_images(data : &datafiles::AmberStarFiles) {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
 		    break 'running
                 },
-                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
+                Event::KeyDown { keycode : Some(kc), repeat:false, keymod, .. } => {
+		    let mut stride = 1;
+		    if !(keymod & Mod::RSHIFTMOD).is_empty() {
+			stride = 8;
+		    }
+		    if !(keymod & Mod::RALTMOD).is_empty() {
+			stride <<= 2;
+		    }
+		    if !(keymod & Mod::LSHIFTMOD).is_empty() {
+			stride *= -1;
+		    }
 		    match kc {
+			Keycode::F1           => gfxexplore.mod_offset(stride),
+			Keycode::F2           => gfxexplore.mod_pad(stride),
+			Keycode::F3           => { focus_img = if -stride > focus_img as isize { 0 } else { (stride + focus_img as isize) as usize }; println!("focus: {focus_img}");},
+			Keycode::F4           => gfxexplore.toggle_transparency(),
+			Keycode::F5           => gfxexplore.mod_palette(stride),
+			Keycode::F7           => gfxexplore.mod_width(stride),
+			Keycode::F8           => gfxexplore.mod_height(stride),
+			Keycode::F9           => gfxexplore.mod_bitplanes(stride),
+			Keycode::F11          => gfxexplore.print_img(focus_img),
+			Keycode::F12          => gfxexplore.mod_file_index(stride),
+
 			Keycode::LeftBracket  => instr.move_song(-1),
 			Keycode::RightBracket => instr.move_song(1),
 			Keycode::Minus        => instr.move_sample(-1),
@@ -334,7 +545,7 @@ fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
 // ================================================================================
 fn main() -> io::Result<()> {
     env_logger::init();
-    let data = datafiles::AmberStarFiles::load("data");
+    let data = datafiles::AmberStarFiles::new("data");
     let args : Vec<String> = env::args().collect();
 
     if args.len() >= 2 {

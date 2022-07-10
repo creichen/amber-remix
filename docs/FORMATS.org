@@ -1,5 +1,5 @@
 *AmberStar Formats*
-
+(require 'ox-gfm)
 AmberStar encodes its data in formats that are similar, but not
 universally cases identical to the AmberMoon formats.  This document
 attempts to be comprehensive at re-iterating all relevant format
@@ -30,7 +30,7 @@ below.
 - This document makes no claim(s) to completeness, soundness, or
   fitness for a specific purpose, expressed or implied.
 
-** Practial Notes: Endianness and Alignment
+** Practical Notes: Endianness and Alignment
 
 - Unless noted otherwise, all numbers are encoded in big-endian two's
   complement format (e.g., a 16 bit representation of the number 1000
@@ -42,6 +42,14 @@ below.
   depend on parts of the language semantics that are explicitly
   undefined, so if in doubt, make use to read each byte individually
   and reassemble later.)
+
+* Sources
+
+The information below is based on educated guesses, general
+information about the Amiga and about AmberStar that are publicly
+available, plus the following sources:
+- Prior efforts to decode the sequel, Ambermoon: [[https://github.com/Pyrdacor/Ambermoon]]
+- Assembly code for Hippel-CoSo and Hippel-V7 shipped with UADE:  https://zakalwe.fi/uade/
 
 * Container Formats
 
@@ -58,37 +66,37 @@ container; we can read them directly.
 Below is an overview of the relevant files. Files without a
 "Container" are ~raw~ files.
 
-| File         | Container | Elements | Explanation   | Decoded             |
-|--------------+-----------+----------+---------------+---------------------|
-| AMBERDEV.UDO | LOB       |        1 | AMBERDEV data | only very partially |
-| Amberload    |           |          |               |                     |
-| AUTOMAP.AMB  | AMBR      |      152 |               |                     |
-| BACKGRND.AMB | AMPC      |       10 |               |                     |
-| CHARDATA.AMB | AMBR      |       78 |               |                     |
-| CHESTDAT.AMB | AMPC      |      163 |               |                     |
-| CODETXT.AMB  | AMBR      |        2 | TEXT format   | yes                 |
-| COL_PALL.AMB | AMBR      |       10 |               |                     |
-| COM_BACK.AMB | AMPC      |       14 |               |                     |
-| EXTRO.UDO    |           |          |               |                     |
-| F_T_ANIM.ICN |           |          |               |                     |
-| ICON_DAT.AMB | AMPC      |        2 |               |                     |
-| INTRO_P.UDO  | LOB       |        1 |               |                     |
-| INTRO.UDO    | LOB       |        1 |               |                     |
-| LABBLOCK.AMB | AMPC      |       68 |               |                     |
-| LAB_DATA.AMB | AMBR      |       23 |               |                     |
-| MAP_DATA.AMB | AMPC      |      152 |               |                     |
-| MAPTEXT.AMB  | AMBC      |      152 | TEXT format   | yes                 |
-| MON_DATA.AMB | AMBR      |       67 |               |                     |
-| MON_GFX.AMB  | AMPC      |       21 |               |                     |
-| PARTYDAT.SAV |           |          |               |                     |
-| PICS80.AMB   | AMPC      |       52 | PICS80 format | mostly              |
-| PUZZLE.ICN   |           |          |               |                     |
-| PUZZLE.TXT   |           |          |               |                     |
-| SAMPLEDA.IMG |           |          |               |                     |
-| TACTIC.ICN   |           |          |               |                     |
-| TH_LOGO.UDO  | LOB       |        1 |               |                     |
-| WARESDAT.AMB | AMPC      |       16 |               |                     |
-|              |           |          |               |                     |
+| File         | Container | Elements | Format                   | Explanation                   | Decoded                           |
+|--------------+-----------+----------+--------------------------+-------------------------------+-----------------------------------|
+| AMBERDEV.UDO | LOB       |        1 | Many (incl. Hippel-CoSo) | Assortment of data            | only very partially               |
+| Amberload    |           |          |                          |                               |                                   |
+| AUTOMAP.AMB  | AMBR      |      152 |                          |                               |                                   |
+| BACKGRND.AMB | AMPC      |       10 | BITMAP_4 144x144 (?)     | Town (+dungeon) backgrounds   | only partially, palettes missing  |
+| CHARDATA.AMB | AMBR      |       78 |                          |                               |                                   |
+| CHESTDAT.AMB | AMPC      |      163 |                          |                               |                                   |
+| CODETXT.AMB  | AMBR      |        2 | TEXT                     |                               | yes                               |
+| COL_PALL.AMB | AMBR      |       10 | PALETTE_HD               |                               | mostly, missing exact RGB mapping |
+| COM_BACK.AMB | AMPC      |       14 | BITMAP_4 176x112         | Combat background images      | Missing palettes                  |
+| EXTRO.UDO    |           |          | (incl. Hippel-7V)        |                               |                                   |
+| F_T_ANIM.ICN |           |          |                          |                               |                                   |
+| ICON_DAT.AMB | AMPC      |        2 | ICON_DAT                 | Map tile graphics             | partially                         |
+| INTRO_P.UDO  | LOB       |        1 | (incl. Hippel-7V)        |                               |                                   |
+| INTRO.UDO    | LOB       |        1 |                          |                               |                                   |
+| LABBLOCK.AMB | AMPC      |       68 |                          |                               |                                   |
+| LAB_DATA.AMB | AMBR      |       23 |                          |                               |                                   |
+| MAP_DATA.AMB | AMPC      |      152 |                          |                               |                                   |
+| MAPTEXT.AMB  | AMBC      |      152 | TEXT                     |                               | yes                               |
+| MON_DATA.AMB | AMBR      |       67 |                          |                               |                                   |
+| MON_GFX.AMB  | AMPC      |       21 |                          |                               |                                   |
+| PARTYDAT.SAV |           |          |                          |                               |                                   |
+| PICS80.AMB   | AMPC      |       52 | PICS80                   |                               | mostly, missing palette bindings  |
+| PUZZLE.ICN   |           |          |                          |                               |                                   |
+| PUZZLE.TXT   |           |          |                          |                               |                                   |
+| SAMPLEDA.IMG |           |          | PCM                      | Sample data for in-game songs | yes                               |
+| TACTIC.ICN   |           |          |                          |                               |                                   |
+| TH_LOGO.UDO  | LOB       |        1 |                          |                               |                                   |
+| WARESDAT.AMB | AMPC      |       16 |                          |                               |                                   |
+
 
 The AmberStar container formats are a strict subset of the AmberMoon
 formats, so AmberMoon tools should work fine for handling AmberStar
@@ -164,7 +172,7 @@ Decompression ends as soon as the output buffer is full.
 | sizes                     | u32[num_elements]           |                |
 | element[0]                | u8[sizes[0]]                | raw data       |
 | ...                       |                             |                |
-| element[num_elements - 1] | u8[sizes[num_elemnets - 1]] | raw data       |
+| element[num_elements - 1] | u8[sizes[num_elements - 1]] | raw data       |
 
 This uncompressed format is straightforward, though it is oddly
 inefficient, in that looking up one element requires adding up the
@@ -179,9 +187,9 @@ sizes of all preceding elements to find that element's offset.
 | sizes                           | u32[num_elements]           |                       |
 | element_block[0]                | u8[sizes[0]]                | LOB-compressed or raw |
 | ...                             |                             |                       |
-| element_block[num_elements - 1] | u8[sizes[num_elemnets - 1]] | LOB-compressed or raw |
+| element_block[num_elements - 1] | u8[sizes[num_elements - 1]] | LOB-compressed or raw |
 
-~AMPC~ is similar to ~AMBR~, except that isntead of directly storing
+~AMPC~ is similar to ~AMBR~, except that instead of directly storing
 raw data, it may also store LOB-compressed data (see above).  An
 ~element_block~ can thus be in one of:
 - ~LOB block~ format
@@ -205,11 +213,14 @@ must never "accidentally" start with the ~LOB~ header).
 The ~AMBERDEV~ file contains a large assortment of data (and possibly executable code?).  Some known
 bits of interest below:
 
-| Start offset | Description           |
-|--------------+-----------------------|
-| 2170b        | String Fragment Table |
+| Start offset    | Description                     | Format                                       |
+|-----------------+---------------------------------+----------------------------------------------|
+| 2170b           | String Fragment Table           | cf. Text Encoding                            |
+| 31a46           | Song names                      | 0-terminated string, terminated by another 0 |
+| 33d70 (approx.) | Graphics                        | 16x16, details tbd                           |
+| 4cdc0           | Songs, starting with"City Walk" | CoSo                                         |
 
-** String Framgent Table
+** String Fragment Table
 
 The String Fragment Table is a sequence of strings that are each
 preceded by a single byte indicating the string's length plus one.
@@ -291,6 +302,13 @@ Each of these is encoded as a sequence of 4 16 bit words:
 - bitplane[2] : u16
 - bitplane[3] : u16
 
+** PALETTE_HDR format
+(used by COL_PALL and ICON_DAT)
+
+Starts with a 16 bit word that indicates the number of colours.
+Otherwise analogous to PALETTE_16, though colour indices seem to go
+only up to 7 (?) in ICON_DAT.
+
 ** PALETTE_16 format
 
 (Used by PICS80)
@@ -299,7 +317,7 @@ Same as in AmberMoon.  16 colours, with each palette entry encoded as
 two bytes / four nibbles: ~XR GB~, where ~X~ is always 0.  ~R~, ~G~,
 and ~B~ range from ~0~ (minimum) to ~f~ (maximum).
 
-** PICS80 Foramt
+** PICS80 Format
 
 Contains 26 80x80 pixel images.  Each image is encoded as a bitmap and a palette, with
 image ~n~ stored as:
@@ -313,7 +331,7 @@ image ~n~ stored as:
 |            2 | Inn                                          |               |              |                   |
 |            3 | Store                                        |               |              |                   |
 |            4 | Basement lab                                 |               |              |                   |
-|            5 | Monster with a sword                         |               | Bad palette? |   27??            |
+|            5 | Monster with a sword                         |               | Bad palette? | 27 ??             |
 |            6 | Stable                                       |               |              |                   |
 |            7 | Temple                                       |               |              |                   |
 |            8 | Rat altar                                    |               |              |                   |
@@ -335,6 +353,43 @@ image ~n~ stored as:
 |           24 | Volcano and castle                           |               | Bad palette? |                   |
 |           25 | Hand holding something (the AmberStar?)      |               | Bad palette? |                   |
 
+** ICON_DAT
+
+This format describes graphics for map tiles.  Both container elements
+describe 250 (0xfa) map icons.  The file format is as follows:
+
+| Name                 | Format          | Comments                           |
+|----------------------+-----------------+------------------------------------|
+| ?                    | u16             | Unknown values are (0xed and 0xf9) |
+| animation_type[250]  | u8[250]         | (not verified)                     |
+| animation_start[250] | u16[250]        | (not verified)                     |
+| ?                    | u16[250]        | Seemingly bit flags for each icon  |
+| ?                    | u8(250]         | Small numbers (0-10) for each icon |
+| palette              | PALETTE_HDR     | 66 bytes                           |
+| images               | BITMAP_HDR[250] | starts at 0x814                    |
+
+Note that icons may consist of (loop over) multiple images.
+
+- ~animation_type~: Unclear.  Seems to take values 1-4, 6, and 7.  Some observations:
+  - ~1~: seems to be used for static images
+  - ~2~: used for three images of a person sitting on a chair, looking
+    in different directions, perhaps adjusted to look at the player
+    character?
+  - ~3~: used for what appears to be a gate opening animation
+  - ~4~: looping?
+  - ~6~: used for a bursting bubble
+  - ~7~: used for a bursting bubble
+
+- ~animation_start~: indicates for each icon what the first image for
+  that icon is.  ~animation_start[icon] = img~ means that the icon
+  uses the images between:
+  - first: ~images[img - 1]~
+  - last: ~images[animation_start[icon + 1] - 1]~, except for the last icon,
+    which always seems to have only one image.
+  (i.e., ~images[0]~ is encoded as ~1~ in this table).
+
+
+** Graphics files
 
 * Songs
 
@@ -364,12 +419,12 @@ A CoSo record starts with the following header:
 | pos_monopatterns     | u32    |                                |
 | pos_divisions        | u32    |                                |
 | pos_song             | u32    |                                |
-| pos_sammples         | u32    |                                |
+| pos_samples          | u32    |                                |
 | total_length         | u32    |                                |
 | magic number         | u8[4]  | always  ~TFMX~                 |
 | num_instruments - 1  | u2     |                                |
 | num_timbres - 1      | u2     | 1 less than the actual count   |
-| num_minipatterns - 1 | u2     | 1 less than the actual count   |
+| num_monopatterns - 1 | u2     | 1 less than the actual count   |
 | num_divisions - 1    | u2     | 1 less than the actual count   |
 | 0x40                 | u2     | unknown / unused               |
 | 0                    | u2     | unknown / unused               |
@@ -417,7 +472,7 @@ markers also indicate the end of the preceding section:
 | Monopatterns         | pos_patterns    | indexed |     variable | num_patterns       |
 | Divisions            | pos_divisions   | array   |           12 | num_divisions      |
 | Songs                | pos_song        | array   |            6 | num_songs          |
-| Samples              | pos_sammples    | array   |           10 | num_samples        |
+| Samples              | pos_samples     | array   |           10 | num_samples        |
 | (end of CoSo record) | total_length    |         |              | 0                  |
 
 All sections except for the header may store multiple elements.  The table above
@@ -462,7 +517,7 @@ screen redraw interrupt.
 
 **** Notes, Pitch, and Period
 
-The *period* is the amount of time alotted for playing a sample,
+The *period* is the amount of time allotted for playing a sample,
 expressed in Amiga timer ticks.  The sample frequency is then the
 number of times we can fit this period into one second's worth of
 timer ticks:
@@ -476,7 +531,7 @@ In CoSo, the period is determined by the _channel note_, which is the
 sum of the following:
 - *Instrument* pitch (which may be ~RELATIVE~ or ~ABSOLUTE~)
 - *Monopattern* note (only with ~RELATIVE~ instrument pitch)
-- *Division* trasnpose (only with ~RELATIVE~ instrument pitch)
+- *Division* transpose (only with ~RELATIVE~ instrument pitch)
 
 Below are the note-to-period mappings, split by octave and semitone:
 
@@ -504,31 +559,33 @@ in that order, see below.
 **** Vibrato
 
 CoSo supports use a notion of *Vibrato* that modulates the audio
-frequency with a sawtooth pattern.  CoSo describes the sawtooth
+frequency with a saw-tooth pattern.  CoSo describes the saw-tooth
 function via *slope* an *depth* parameters.
 
-Let *period* = slope / depth (rounded up).  Then the sawtooth
+Let *period* = slope / depth (rounded up).  Then the saw-tooth
 function has the form:
 
-v(t) = { max(-depth/2,  depth/2 - slope * (t mod (period * 2)))   <=>   t mod period is even
-       { min( depth/2, -depth/2 + slope * (t mod (period * 2)))   <=>   t mod period is odd
+\(
+  v(t) = \left \{ \begin{array}{l[]lcl} \max&(-\frac{\textsf{depth}}{2}, \phantom{-}\frac{depth}{2} - \textsf{slope} * (t \mod (\textbf{period} \times 2))) &\iff& t \mod \textbf{period}\textrm{ is even} \\
+                                        \min&(\phantom{-}\frac{\textsf{depth}}{2}, -\frac{depth}{2} + \textsf{slope} * (t \mod (\textbf{period} \times 2))) &\iff& t \mod \textbf{period}\textrm{ is odd} \\ \end{array} \right .$
+\)
 
 (though tick counting seems to start at 1, meaning that v(0) is never used).
 
 The *period* modulated by vibrato then becomes:
 
-period'(t) := period * (1 + v(t) / 1024)
+$\textbf{period}'(t) = \textbf{period} \times \left (1 + \frac{v(t)}{1024} \right )$
 
 **** Portando
 
 CoSo supports a linear variant of *Portando*, parameterised by
 *portando_slope*.  The effect is defined as follows:
 
-p(t) = 1 - (t * portando_delta / 1024)
+$p(t) = 1 - \frac{t \times \text{portando\_delta}}{1024}$
 
 such that
 
-period''(t) := perid * p(t)
+$\textbf{period}''(t) = \textbf{period} \times  p(t)$
 
 The Portando effect always applies after Vibrato.
 
@@ -606,7 +663,7 @@ The meanings of the bytes are below (in hexadecimal encoding):
 |------------+-------------------------------------------------------------------+------------------------------------------------------------+----------+---------------------|
 | e6         | [len>>1:u16]  [delta>>1:i16]  [speed:u8]                          | ... unused: SLIDE(len, ?, delta, speed)                    |        0 | Unused in AmberStar |
 |------------+-------------------------------------------------------------------+------------------------------------------------------------+----------+---------------------|
-| e7         | [sample:u8]                                                       | SAPMLE(sample, 0)                                          |        0 |                     |
+| e7         | [sample:u8]                                                       | SAMPLE(sample, 0)                                          |        0 |                     |
 |            |                                                                   | RESET-VOL                                                  |          |                     |
 |------------+-------------------------------------------------------------------+------------------------------------------------------------+----------+---------------------|
 | e8         | [ticks:u8]                                                        | ... unused: INSTRUMENT-DELAY(ticks)                        |    ticks | Unused in AmberStar |
@@ -639,7 +696,7 @@ The operations above are detailed below:
 
 - ~SAMPLE(sample, reset_position)~: Switch to the specified ~sample~
   as the sample for this instrument.  If ~reset_position~ is ~1~ or if
-  the sample is diferent from the previously assigned sample for this
+  the sample is different from the previously assigned sample for this
   channel, also reset the sample's loop.
 
 - ~SLIDE(len, loop, delta, speed)~: Interpret the current sample as a
@@ -658,7 +715,7 @@ less likely to be correct:
 
 - ~SAMPLE-CUSTOM(sample, offset)~: A variant of ~SAMPLE(sample, 1)~
   that seems to allow access to alternative start offset and loop
-  information for the same sample data (readom from the *Samples*
+  information for the same sample data (read from from the *Samples*
   section).
 
 - ~VIBRATO(vslope, vdepth)~: Update the current vibrato settings for this channel.
@@ -739,8 +796,8 @@ The explanations for the operations are below:
 - ~PATTERN-DELAY~: Wait.
 - ~NOTE(note)~: Set the current channel note.  Resets any current Portando effect.
 - ~TIMBRE(timbre, DEFAULT)~: Set the channel's timbre.
-- ~TIMBRE(timbre, instrument)~: Set the channel's timbre but override its instrument with the one speciifed here.
-- ~PORTANDO(portando_slope)~: Activate portando for this note, with the given (i.e., precomputed) ~portando_slope~.
+- ~TIMBRE(timbre, instrument)~: Set the channel's timbre but override its instrument with the one specified here.
+- ~PORTANDO(portando_slope)~: Activate portando for this note, with the given (i.e., recomputed) ~portando_slope~.
 
 *** Divisions
 
@@ -766,17 +823,17 @@ The effect can be one of the following:
 | _if effect[c] = 0b1111yyyy | channel_volume := (16 - 0byyy) * 6 |
 
 - ~timbre_adjust~ shifts the *Timbres* selected by the *Monopattern* up by the given amount.
-- ~channel_speed~ gives a factor for slowing down the notes in the *Monochannel*.
+- ~channel_speed~ gives a factor for slowing down the notes across *all* channels
 - ~FULL-STOP~: terminates the entire song.
 - ~channel_volume~ permanently sets the channel's volume (as a percentage value).
 
 Divisions play one monopattern on each of the channels until the
-pattern's completion.  Each channel then moves onto the next division,
-independently of each other.
-(*TO VERIFY*)
+pattern's completion.  In principle, each channel might move onto the
+next division, independently of each other, though in practice the
+channels seem to be mapped to monopatterns of the same length (*TO VERIFY*).
 
 The song terminates when the next division would be at or after the
-~end~ of te *Song*.
+~end~ of the Song.
 
 *** Songs
 

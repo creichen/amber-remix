@@ -17,8 +17,8 @@ const DEBUG : bool = true;
 mod string_fragment_table;
 mod map_string_table;
 mod decode;
-mod palette;
-mod pixmap;
+pub mod palette;
+pub mod pixmap;
 pub mod music;
 pub mod sampledata;
 
@@ -418,6 +418,7 @@ fn load_relative(path : &str, filename : &str) -> DataFile {
 }
 
 pub struct AmberStarFiles {
+    pub path : String,
     pub amberdev : Vec<u8>,
     pub string_fragments : string_fragment_table::StringFragmentTable,
     pub map_text : Vec<map_string_table::MapStringTable>,
@@ -452,14 +453,18 @@ fn load_palettes(dfile : &mut DataFile) -> Vec<Palette> {
     let mut result = vec![];
     for i in 0..dfile.num_entries {
 	let dat = dfile.decode(i);
-	let pal = palette::new_with_header(&dat[..]);
+	let pal = palette::new_with_header(&dat[..], 42);
 	result.push(pal);
     }
     return result;
 }
 
 impl AmberStarFiles {
-    pub fn load(path : &str) -> AmberStarFiles {
+    pub fn load<'a>(&self, f : &str) -> DataFile {
+	return load_relative(&self.path, f);
+    }
+
+    pub fn new(path : &str) -> AmberStarFiles {
 	let amberdev = load_relative(path, "AMBERDEV.UDO").decode(0);
 	const STRINGTABLE_OFFSET : usize = 0x2170b;
 	let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[STRINGTABLE_OFFSET..]);
@@ -489,7 +494,10 @@ impl AmberStarFiles {
 	let mut sampledata_f = load_relative(path, "SAMPLEDA.IMG");
 	let sample_data = sampledata::SampleData::new(sampledata_f.decode(0));
 
+	let path : String = format!("{}", path);
+
 	return AmberStarFiles {
+	    path,
 	    amberdev,
 	    string_fragments,
 	    map_text,
