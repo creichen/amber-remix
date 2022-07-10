@@ -56,7 +56,7 @@ struct BasicWriterState {
 
 
 // If set, synchronise on the _longest_ tick, rather than the average
-pub const SYNC_STRATEGY_MAX : bool = false;
+pub const SYNC_STRATEGY_MAX : bool = true;
 
 // Hold back at least this many samples for synchronisation so that we can undo them if needed
 const RESERVE : usize = 0;
@@ -218,7 +218,7 @@ impl BasicWriterSyncImpl {
 	    for (index, state) in self.sources.iter_mut().enumerate() {
 		let offset = state.buf_pos_at_which_timeslice_could_start;
 		sum_offset += offset;
-		max_offset = usize::max(max_offset, max_offset);
+		max_offset = usize::max(max_offset, offset);
 		if timeslice != state.next_timeslice {
 		    warn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
 		}
@@ -247,6 +247,16 @@ impl BasicWriterSyncImpl {
 	};
     }
 
+    fn print_status(&self) {
+	info!("[PCMSYNC] Status:");
+	for (index, state) in self.sources.iter().enumerate() {
+	    info!("[PCMSYNC] #{index} : timeslice {:?} starting @{}",
+		  state.next_timeslice, state.buf_pos_at_which_timeslice_could_start);
+	    info!("[PCMSYNC]     written : {}", state.written);
+	    info!("[PCMSYNC]     buf : {} / {}", state.buf.len(), state.buf.capacity());
+	}
+    }
+
     /// Handle a write request for the specified writer
     fn write_for(&mut self, writer_nr : usize, output : &mut [f32]) {
 	let mut write_pos = 0;
@@ -254,23 +264,29 @@ impl BasicWriterSyncImpl {
 	trace!("[BWSI] writer {writer_nr} wants {} samples", output.len());
 	while write_pos < output.len() {
 	    let source = &mut self.sources[writer_nr];
+	    let source_buflen_before_write = source.buf.len();
+	    let source_bufcapacity = source.buf.capacity();
 	    let num_written = source.write_pcm(&mut output[write_pos..]);
 	    trace!("[BWSI]  wrote {num_written}");
 
+	    let source_buflen_after_write = source.buf.len();
+	    if write_pos < output.len() {
+		// Ran out of buffer?
+		//source.reset_buf_readwrite_pos();
+		info!("[BWSI]   ran out of buffer, must prefill");
+		self.prefill_buffers();
+	    }
+	    let source_buflen_after_prefill = self.sources[writer_nr].buf.len();
+
 	    if num_written == 0 && last_write_pos == write_pos {
-		panic!("No progress: {}/{}/{}; buf={}/{}.  is the source really producing ticks?  Is our buffer big enough?",
-		       last_write_pos, write_pos, output.len(), source.buf.len(), source.buf.capacity());
+		self.print_status();
+		panic!("No progress: lastwritepos:{}/writepos:{}/outlen:{}; buf_capacity={}, buflens=(start:{}/post-write:{}/post-prefill:{}).  Is the source really producing ticks?  Is our buffer big enough?",
+		       last_write_pos, write_pos, output.len(), source_bufcapacity,
+		       source_buflen_before_write, source_buflen_after_write, source_buflen_after_prefill);
 	    }
 
 	    last_write_pos = write_pos;
 	    write_pos += num_written;
-
-	    if write_pos < output.len() {
-		// Ran out of buffer?
-		//source.reset_buf_readwrite_pos();
-		trace!("[BWSI]   ran out of buffer, must prefill");
-		self.prefill_buffers();
-	    }
 	}
     }
 }

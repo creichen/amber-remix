@@ -5,7 +5,8 @@
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use core::time;
-use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell};
+use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell, process};
+use std::panic;
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
@@ -80,7 +81,8 @@ impl AudioCallback for Callback {
 	let num_written = buf.write_to(output);
 
 	if num_written < output.len() {
-	    warn!("Buffer underrun {num_written}/{}", output.len());
+	    println!("Buffer underrun {num_written}/{}", output.len());
+	    //warn!("Buffer underrun {num_written}/{}", output.len());
 	}
 	for x in output[num_written..].iter_mut() {
 	    *x = 0.0;
@@ -198,7 +200,13 @@ impl Mixer {
     fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<RingBuf>>, callback_vtsensor : TrackerSensor) -> Mixer {
 	let (tx, rx) = mpsc::channel();
 
+	let stacktrace_hook = panic::take_hook();
 	let _ = thread::spawn(move || {
+	    // Completely bail on panic
+	    panic::set_hook(Box::new(move |panic_info| {
+		stacktrace_hook(panic_info);
+		process::exit(1);
+	    }));
 	    run_mixer_thread(freq, samples, out_buf.clone(), rx, callback_vtsensor);
 	});
 
