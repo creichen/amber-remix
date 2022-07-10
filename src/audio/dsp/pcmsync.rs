@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
@@ -66,34 +69,23 @@ impl BasicWriterState {
 	if count == 0 {
 	    return true;
 	}
-	let mut samples_offered_by_our_buffer1 = 0;
-	let mut samples_offered_by_our_buffer2 = 0;
-	let mut samples_offered_by_our_buffer = 0;
 	let mut written1 = 0;
-	let mut len0 = self.buf.len();
-	let mut len1 = 0;
-	let mut len2 = 0;
-	info!("BEFORE-pcmread {:p} {}", &self.buf, self.buf.internal());
+	let mut samples_offered_by_our_buffer;
 	let result = {
 	    // let mut guard = self.source.lock().unwrap();
 	    // let wr = guard.deref_mut();
 	    let mut wr = self.source.borrow_mut();
 	    let wrbuf = self.buf.wrbuf(count);
 	    samples_offered_by_our_buffer = wrbuf.len();
-	    samples_offered_by_our_buffer1 = samples_offered_by_our_buffer;
 	    let result = wr.write_sync_pcm(wrbuf);
 	    if let SyncPCMResult::Wrote(actual_count, None) = result {
 		if samples_offered_by_our_buffer < count {
 		    written1 = actual_count;
-		    len1 = self.buf.len();
 		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
-		    samples_offered_by_our_buffer2 = wrbuf2.len();
-		    samples_offered_by_our_buffer += samples_offered_by_our_buffer2;
+		    samples_offered_by_our_buffer += wrbuf2.len();
 		    wr.write_sync_pcm(wrbuf2)
 		} else { result }
 	    } else { result} };
-	let mut len2 = self.buf.len();
-	info!("buf size -> {}", self.buf.len());
 	match result {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
@@ -113,8 +105,6 @@ impl BasicWriterState {
 		if written > samples_offered_by_our_buffer {
 		    panic!("Somehow wrote more than possible: {written}/{samples_offered_by_our_buffer}; now {}", self.buf.len());
 		}
-		trace!("::{len0};{len1};{len2}; offered {samples_offered_by_our_buffer} = {samples_offered_by_our_buffer1}+{samples_offered_by_our_buffer2}; written={written}");
-		info!("AFTER-pcmread {:p} {}", &self.buf, self.buf.internal());
 		self.buf.drop_back(samples_offered_by_our_buffer - written).unwrap();
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;

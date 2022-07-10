@@ -3,6 +3,18 @@
 Resources for decoding Amiga **AmberStar** data files, including
 **Hippel-CoSo** sound modules.
 
+## Building and running
+
+Make sure that the Amiga AmberStar data files are in the `data/` subdirectory.  Their
+names should be in all-caps (`AMBERDEV.UDO` etc.).
+
+To compile and run, use the Rust `cargo` tool.
+
+The current run modes are supported:
+- `cargo run strings`: Dump out all text strings
+- `cargo run graphics`: Shows some graphics
+- `cargo run song $X`: Tries to play in-game song `${X}` (will likely crash sooner or later).
+
 ## Why?
 I wanted a zero-stakes project to learn the basics of Rust, and this
 seemed fun.  No promises as to whether this will or will not go
@@ -24,13 +36,6 @@ The following don't do anything yet:
 - *Game Scripts*
 
 Only tested on a late English version of the game.
-
-## Building and running
-
-The current run modes are supported:
-- `cargo run strings`: Dump out all text strings
-- `cargo run graphics`: Shows some graphics
-- `cargo run song $X`: Tries to play in-game song `${X}` (will likely crash sooner or later).
 
 ## Decoding status and documentation
 - All container formats can be decoded.

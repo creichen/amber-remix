@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 use core::fmt;
 use std::assert;
 use std::fs::File;

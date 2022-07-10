@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
@@ -351,7 +354,8 @@ impl MixerThread {
 	for op in self.control_channel.try_iter() {
 	    match op {
 		MixerOp::ShutDown        => { return true },
-		MixerOp::SetIterator(it) => { /*self.aux_pipeline.set_iterator(it) */},
+		/* mono pipeline temporarily disabled: */
+		MixerOp::SetIterator(_it) => { /*self.aux_pipeline.set_iterator(it) */},
 		MixerOp::SetPoly(polyit) => {
 		    let its : Vec<ArcIt>;
 		    {

@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
@@ -174,19 +177,19 @@ impl LinearFilter {
     }
 
     fn get_resampler(&mut self, in_freq: usize) -> SampleState {
-	let mut time_into_resampler = 0.0;
+	let time_into_resampler = 0.0;
 	match self.resampler {
 	    // Frequency change?  Invalidate.
 	    Some(s) => { if s.in_freq == in_freq {
 			    return s;
 	               } else {
-		            time_into_resampler = f32::from(s);
+//		            time_into_resampler = f32::from(s);
 	    }},
 	    None    =>  {},
 	};
 	// Heuristic: favour actual samples unless we've already made some progress
 	// if time_into_resampler <= 0.5 {
-	    time_into_resampler = 0.0;
+	//    time_into_resampler = 0.0;
 	// }
 	pdebug!("Updating sample conversion rate: {in_freq} Hz => {} Hz, start={time_into_resampler} ", self.output_freq);
 	let result = SampleState::new(in_freq, self.output_freq, time_into_resampler);

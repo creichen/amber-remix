@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
@@ -227,6 +230,7 @@ impl<'a> GfxExplorer<'a> {
 		 self.filename, self.offset, self.pad, self.offset, self.width, self.height, self.bitplanes, self.palette);
     }
 
+    #[allow(unused)]
     fn get_palette(&self) -> &Palette {
 	return &self.data.palettes[self.palette];
     }
@@ -326,6 +330,7 @@ impl<'a> GfxExplorer<'a> {
     }
 }
 
+#[allow(unused)]
 fn draw_sampledata<'a>(full_data : &'a [i8], canvas : &mut Canvas<sdl2::video::Window>, ybase : i32, sampledata : SampleRange) {
     let pos = sampledata.start;
     let len = sampledata.len;

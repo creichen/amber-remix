@@ -1,3 +1,6 @@
+// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
@@ -1009,6 +1012,7 @@ fn test_cross_boundary_peek_front() {
 // ----------------------------------------
 // Special checks
 
+#[cfg(test)]
 struct AS {
     b : RingBuf,
 }
