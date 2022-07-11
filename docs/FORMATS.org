@@ -1,5 +1,5 @@
-*AmberStar Formats*
-(require 'ox-gfm)
+* AmberStar Formats
+
 AmberStar encodes its data in formats that are similar, but not
 universally cases identical to the AmberMoon formats.  This document
 attempts to be comprehensive at re-iterating all relevant format
