@@ -260,7 +260,7 @@ either of two ~00~ bytes, indicating that the table is empty, or of the followin
 | Name               | Format                                 |
 |--------------------+----------------------------------------|
 | num_text           | u8                                     |
-| 0                  | ~0~                                    |
+| 0                  | u8                                     |
 | pos[0]             | u16                                    |
 | ...                | ...                                    |
 | pos[num_text]      | u16                                    |
