@@ -355,15 +355,16 @@ image ~n~ stored as:
 
 ** ICON_DAT
 
-This format describes graphics for map tiles.  Both container elements
-describe 250 (0xfa) map icons.  The file format is as follows:
+This format describes graphics for map tiles ("map tile icons").  Both
+container elements describe 250 (0xfa) map icons.  The file format is
+as follows:
 
 | Name                 | Format          | Comments                           |
 |----------------------+-----------------+------------------------------------|
 | ?                    | u16             | Unknown values are (0xed and 0xf9) |
 | animation_type[250]  | u8[250]         | (not verified)                     |
 | animation_start[250] | u16[250]        | (not verified)                     |
-| ?                    | u16[250]        | Seemingly bit flags for each icon  |
+| ?                    | u32[250]        | Seemingly bit flags for each icon  |
 | ?                    | u8(250]         | Small numbers (0-10) for each icon |
 | palette              | PALETTE_HDR     | 66 bytes                           |
 | images               | BITMAP_HDR[250] | starts at 0x814                    |

@@ -26,7 +26,7 @@ use super::vtracker::TrackerSensor;
 use super::writer::FrequencyTrait;
 use super::writer::Timeslice;
 
-const BUFFER_SIZE_MILLIS : usize = 50;
+const BUFFER_SIZE_MILLIS : usize = 500;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct TimesliceGuard {
@@ -262,6 +262,16 @@ impl LinearFilter {
 		continue;
 	    }
 
+	    // Try to add an extra byte to improve interpolation
+	    let max_from_insample = usize::min(insample_num_available + 1,
+					       self.buf.len());
+
+	    // Input is empty?
+	    if max_from_insample == 0 {
+		pinfo!("Input buffer suddenly empty, must request additional data");
+		break;
+	    }
+
 	    // Can we make any progress?
 	    if max_out_from_insample == 0 {
 		pdebug!("Can't progress: max_out = 0");
@@ -290,9 +300,7 @@ impl LinearFilter {
 	    ptrace!("        it: {resampler}");
 
 	    let read = self.resample_to_output(&mut resampler, &mut output[out_pos..out_pos+max_out],
-					       // Try to add an extra byte to improve interpolation
-					       usize::min(insample_num_available + 1,
-							  self.buf.len()));
+					       max_from_insample);
 
 	    if vtracker::ENABLED {
 		for x in &output[out_pos..out_pos+max_out] {
@@ -427,8 +435,8 @@ impl SampleState {
 	if inbuf_len == 0 {
 	    panic!("Cannot resample with buffer size zero.");
 	}
-	ptrace!("  ## [..{}] <- [..{}]", outbuf.len(), inbuf.len());
-	ptrace!("  ## resamp from {}", inbuf.get(0));
+	//ptrace!("  ## [..{}] <- [..{}]", outbuf.len(), inbuf.len());
+	//ptrace!("  ## resamp from {}", inbuf.get(0));
 	let mut pos = self.sample_pos_int;
 
 	// fractional position counter
@@ -439,7 +447,7 @@ impl SampleState {
 	let fpos_nom_inc = (fpos_nom_inc_total % self.out_freq) as f32;
 
 	for out in outbuf.iter_mut() {
-	    ptrace!("  ## out <- in[{}]", pos);
+	    //ptrace!("  ## out <- in[{}]", pos);
 	    // Linear interpolation
 	    let safe_pos = usize::min(pos, inbuf_len - 1);
 	    let sample_v_current = inbuf.get(safe_pos);
@@ -449,11 +457,11 @@ impl SampleState {
 	    let sample_v_current_fragment = sample_v_current * (fpos_denom - fpos_nom);
 	    let sample_v_next_fragment = sample_v_next * fpos_nom;
 
-	    ptrace!("  ## interpol {}, {}", sample_v_current, sample_v_next);
+	    //ptrace!("  ## interpol {}, {}", sample_v_current, sample_v_next);
 
 	    let sample_v = (sample_v_current_fragment + sample_v_next_fragment) / fpos_denom;
 
-	    ptrace!("  ## => {sample_v}");
+	    //ptrace!("  ## => {sample_v}");
 	    *out = sample_v;
 
 	    pos += pos_inc;

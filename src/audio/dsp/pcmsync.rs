@@ -21,7 +21,7 @@ pub fn new_basic() -> RcSyncBarrier {
 // Basic Sync barrier implementation
 // Assumes that we never have more than MAX_BUFFER_SIZE output samples to produce per timeslices
 
-const MAX_BUFFER_SIZE : usize = 4096;
+const MAX_BUFFER_SIZE : usize = 32768;
 
 pub struct PCMBasicSyncBarrier {
     sync : Rc<RefCell<BasicWriterSyncImpl>>,
@@ -64,7 +64,7 @@ const RESERVE : usize = 0;
 impl BasicWriterState {
     /// Read into local buffer
     /// Returns FALSE if flushed
-    fn read_pcm(&mut self, requested_count : usize) -> bool {
+    fn read_pcm(&mut self, index : usize, requested_count : usize) -> bool {
 	let count = requested_count;
 	if count == 0 {
 	    return true;
@@ -90,6 +90,7 @@ impl BasicWriterState {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
 		self.buf.reset();
+		debug!("---- This was source #{index}, reporting _Flush_");
 		return false;
 	    },
 	    SyncPCMResult::Wrote(written, None)            => {
@@ -98,6 +99,8 @@ impl BasicWriterState {
 		if written != samples_offered_by_our_buffer {
 		    panic!("Unexpectedly received fewer bytes than requested {}/{}", written, samples_offered_by_our_buffer);
 		}
+		self.written += written;
+		debug!("---- This was source #{index}, reporting {} writes but no timeslice", self.written);
 		return true;
 	    },
 	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
@@ -109,6 +112,7 @@ impl BasicWriterState {
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
 		self.next_timeslice = Some(timeslice);
+		debug!("---- This was source #{index}, reporting {} writes and a timeslice", self.written);
 		return true;
 	    },
 	}
@@ -130,18 +134,22 @@ impl BasicWriterState {
     }
 
     /// Read into the local buffer until we have the desired level
-    fn fill_until(&mut self, expected : usize) -> bool {
+    fn fill_until(&mut self, index : usize, expected : usize) -> bool {
 	if expected > self.written {
-	    return self.read_pcm(expected - self.written);
+	    return self.read_pcm(index, expected - self.written);
 	}
 	return true;
     }
 
     /// Read into the local buffer until we have the next timeslice
-    fn fill_timeslice(&mut self) -> bool {
+    fn fill_timeslice(&mut self, index : usize) -> bool {
 	if let None = self.next_timeslice {
-	    return self.read_pcm(self.buf.remaining_capacity());
+	    let result = self.read_pcm(index, self.buf.remaining_capacity());
+	    debug!("source[#{index}].fill_timeslice(): now timeslice={:?}", self.next_timeslice);
+	    debug!("  written = {}", self.written);
+	    return result;
 	}
+	debug!("source[#{index}].fill_timeslice(): already at timeslice {:?}", self.next_timeslice);
 	return true;
     }
 
@@ -195,8 +203,8 @@ impl BasicWriterSyncImpl {
     fn prefill_buffers(&mut self) {
 	let mut oks = 0;
 	let num_sources = self.sources.len();
-	for state in self.sources.iter_mut() {
-	    if state.fill_timeslice() {
+	for (index, state) in self.sources.iter_mut().enumerate() {
+	    if state.fill_timeslice(index) {
 		oks += 1;
 	    }
 	}
@@ -207,13 +215,14 @@ impl BasicWriterSyncImpl {
 	    trace!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
 	    if None==timeslice {
-		error!("Broken timeslices:");
+		error!("Buffers have not reached timeslice yet:");
 		for (index, state) in self.sources.iter_mut().enumerate() {
-		    error!("  #!{index}: {:?}", state.next_timeslice);
+		    error!("  #!{index}: {:?} size={}/{}", state.next_timeslice, state.buf.len(), state.buf.capacity());
 		}
 	    }
 	    let mut sum_offset = 0;
 	    let mut max_offset = 0;
+	    let mut disagreement = false;
 
 	    for (index, state) in self.sources.iter_mut().enumerate() {
 		let offset = state.buf_pos_at_which_timeslice_could_start;
@@ -221,7 +230,11 @@ impl BasicWriterSyncImpl {
 		max_offset = usize::max(max_offset, offset);
 		if timeslice != state.next_timeslice {
 		    warn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
+		    disagreement = true;
 		}
+	    }
+	    if disagreement {
+		self.print_status();
 	    }
 
 	    let sync_offset = if SYNC_STRATEGY_MAX { max_offset } else {
@@ -232,7 +245,7 @@ impl BasicWriterSyncImpl {
 
 	    for (index, state) in self.sources.iter_mut().enumerate() {
 		info!("BEFORE-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
-		if !state.fill_until(sync_offset) {
+		if !state.fill_until(index, sync_offset) {
 		    panic!("Unexpected granular flush");
 		}
 		info!("AFTER-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);

@@ -24,6 +24,7 @@ pub mod palette;
 pub mod pixmap;
 pub mod music;
 pub mod sampledata;
+pub mod tile;
 
 #[derive(Debug)]
 pub enum FileHeaderType {

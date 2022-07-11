@@ -48,6 +48,32 @@ pub fn new(src : &[u8], width : usize, height : usize, bitplanes : usize) -> Ind
     return result;
 }
 
+/// Image with width, height, #bitplanes header.  Also returns # of bytes used.
+pub fn new_icon_frame(src : &[u8]) -> IndexedPixmap {
+    const HEADER_SIZE : usize = 6;
+
+    let width = decode::u16(src, 0) as usize;
+    let height = decode::u16(src, 2) as usize;
+    let bitplanes = decode::u16(src, 4) as usize;
+
+    let width_words = ((width + 15) >> 4) * 2;
+
+    return new(&src[HEADER_SIZE..], width, height, bitplanes);
+}
+
+pub fn icon_len(src : &[u8]) -> usize {
+    const HEADER_SIZE : usize = 6;
+
+    let width = decode::u16(src, 0) as usize;
+    let height = decode::u16(src, 2) as usize;
+    let bitplanes = decode::u16(src, 4) as usize;
+
+    let width_words = ((width + 15) >> 4) * 2;
+    let size = HEADER_SIZE + (width_words * height * bitplanes);
+
+    return size;
+}
+
 impl IndexedPixmap {
     pub fn with_palette(&self, palette : &Palette) -> Pixmap {
 	let mut data : Vec<u8> = vec![0; self.pixels.len() * 4];
