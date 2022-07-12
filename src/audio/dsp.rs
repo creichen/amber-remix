@@ -4,9 +4,10 @@
 /// DSP Architecture
 
 pub mod frequency_range;
+pub mod ringbuf;
 pub mod writer;
 pub mod linear;
 pub mod stereo_mapper;
 pub mod vtracker;
 pub mod pcmsync;
-pub mod ringbuf;
+// pub mod crossfade;

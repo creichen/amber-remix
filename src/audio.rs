@@ -44,7 +44,7 @@ impl LinearFilteringPipeline {
 	   sample_source : Rc<dyn SampleSource>, output_freq : Freq,
 	   sync : RcSyncBarrier,
 	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> LinearFilteringPipeline {
-	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue)));
+	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue, output_freq)));
 	let unsynced_linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, output_freq, aqueue.clone(), sen_linear)));
 	let linear_filter = sync.borrow_mut().sync(unsynced_linear_filter);
 	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, linear_filter.clone(), sen_stereo);

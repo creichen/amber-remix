@@ -4,6 +4,8 @@
 use core::fmt;
 use std::rc::Rc;
 
+use super::Freq;
+
 //use super::dsp::frequency_range::Freq;
 
 const ONE_128TH : f32 = 1.0 / 128.0;
@@ -92,7 +94,7 @@ impl SampleWriter {
 
 pub trait SampleSource {
     /// Gets the sample that corresponds to the specified sample range.
-    fn get_sample(&self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter;
+    fn get_sample(&self, range : SampleRange, preferred_freq : Freq) -> SampleWriter;
 }
 
 #[derive(Clone)]
@@ -120,7 +122,7 @@ impl SimpleSampleSource {
 }
 
 impl SampleSource for SimpleSampleSource {
-    fn get_sample(&self, range : SampleRange/*, preferred_freq : Freq*/) -> SampleWriter {
+    fn get_sample(&self, range : SampleRange, _preferred_freq : Freq) -> SampleWriter {
 	return SampleWriter::new(self.data.clone(), range);
     }
 }

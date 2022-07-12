@@ -6,14 +6,18 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
+/// Linearly interpolating remixer
+///
+/// Not expected to produce particularly high-quality output.  The main benefit of this mixer
+/// is that it can "resample" between arbitrary frequencies and produce something that is mildly
+/// better than the bare minimum.
+
+
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
 use crate::audio::dsp::vtracker;
-/// Linearly interpolating remixer
-///
-/// Not expected to produce particularly high-quality output
 
 use crate::audio::dsp::writer::PCMSyncWriter;
 use crate::audio::dsp::writer::PCMFlexWriter;

@@ -897,11 +897,12 @@ impl SongIterator {
 	    }
 	}
 	if self.division_index == self.division_last {
-	    pinfo!("---- Finished playing song ---");
+	    pwarn!("---- Finished playing song ---"); // Make this pinfo! later
 	    self.stopped = true;
 	    return;
 	}
 	self.set_division(self.division_index + 1);
+	pwarn!("-- division: {}/{}", self.division_index, self.division_last);
     }
 
     pub fn send_silence(&self, queue : &mut VecDeque<AQOp>) {

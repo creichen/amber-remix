@@ -42,7 +42,8 @@ pub struct AudioQueue {
     audio_source : ArcIt,
     queue : VecDeque<AQOp>,  // unprocessed AQOps
     flush_requested : bool,
-    freq : Freq,
+    freq : Freq, // Current sample frequency
+    out_freq_pref : Freq, // Preferred output/sample frequency
 
     timeslice : Option<Timeslice>, // If Some(_), prevents further queue polling until we've been advanced
     have_reported_timeslice_update : bool, // true after we report timeslice and before the client advances to the next timeslice
@@ -53,11 +54,11 @@ pub struct AudioQueue {
 
 impl AudioQueue {
     #[cfg(test)]
-    pub fn nw(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>) -> AudioQueue {
-	return AudioQueue::new(audio_source, sample_source, TrackerSensor::new());
+    fn nw(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>) -> AudioQueue {
+	return AudioQueue::new(audio_source, sample_source, TrackerSensor::new(), 44100);
     }
 
-    pub fn new(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>, tracker : TrackerSensor) -> AudioQueue {
+    pub fn new(audio_source : ArcIt, sample_source : Rc<dyn SampleSource>, tracker : TrackerSensor, out_freq_pref : Freq) -> AudioQueue {
 	return AudioQueue {
 	    sample_source,
 	    current_sample : SampleWriter::empty(),
@@ -67,6 +68,7 @@ impl AudioQueue {
 	    queue : VecDeque::new(),
 	    flush_requested : false,
 	    freq : 1,
+	    out_freq_pref,
 
 	    timeslice : None,
 	    have_reported_timeslice_update : false,
@@ -219,7 +221,7 @@ impl PCMFlexWriter for AudioQueue {
 		    };
 		    if let Some(range) = opt_range {
 			progress = true;
-			self.current_sample = self.sample_source.get_sample(range);
+			self.current_sample = self.sample_source.get_sample(range, self.freq);
 		    }
 
 		}
