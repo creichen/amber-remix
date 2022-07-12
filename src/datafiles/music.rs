@@ -3,6 +3,8 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use core::fmt;
 use std::collections::HashMap;
@@ -361,14 +363,14 @@ impl<'a> RawSong<'a> {
 	let monopatterns = RawSection::new(decode::u32(data, 12), decode::u16(data, 40) + 1, divisions.pos);
 	let timbres      = RawSection::new(decode::u32(data,  8), decode::u16(data, 38) + 1, monopatterns.pos);
 	let instruments  = RawSection::new(decode::u32(data,  4), decode::u16(data, 36) + 1, timbres.pos);
-	info!("--  Song at {:x}:", data_pos);
+	pinfo!("--  Song at {:x}:", data_pos);
 	for (n, d) in [("instruments", instruments),
 		       ("timbres", timbres),
 		       ("monopatterns", monopatterns),
 		       ("divisions", divisions),
 		       ("subsongs", subsongs),
 		       ("samples", samples)] {
-	    info!("  {n:12} {d}");
+	    pinfo!("  {n:12} {d}");
 	}
 	return RawSong {
 	    data, samples, subsongs, divisions, monopatterns, timbres, instruments,
@@ -402,7 +404,7 @@ impl<'a> RawSong<'a> {
 	    };
 	    let sample = BasicSample { attack  : SampleRange::new(pos, length),
 				       looping, };
-	    info!("  Sample #{i}:\t{}", sample);
+	    pinfo!("  Sample #{i}:\t{}", sample);
 	    result.push(sample);
 	}
 	return result;
@@ -417,7 +419,7 @@ impl<'a> RawSong<'a> {
 	    let mut goto_label = None;
 
 	    if raw_ins.at_end() {
-		info!("Empty instrument definition after {} instruments, stopping",
+		pinfo!("Empty instrument definition after {} instruments, stopping",
 		      result.len());
 		break;
 	    }
@@ -527,7 +529,7 @@ impl<'a> RawSong<'a> {
 		None        => {},
 		Some(label) => match pos_map.get(&label) {
 		    None => {
-			error!("Instrument definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
+			perror!("Instrument definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
 			       raw_ins.start, label, label)},
 		    Some(ops_index) => {
 			let lhs = &ops[..*ops_index];
@@ -544,7 +546,7 @@ impl<'a> RawSong<'a> {
 		ops.pop();
 	    }
 	    let instrument = Instrument { ops };
-	    info!("Instrument #{} (0x{:x}) : {instrument}", result.len(), raw_ins.start);
+	    pinfo!("Instrument #{} (0x{:x}) : {instrument}", result.len(), raw_ins.start);
 	    result.push(instrument);
 	} // looping over instrument table
 	return result;
@@ -556,7 +558,7 @@ impl<'a> RawSong<'a> {
 	for mut raw_tmb in timbre_table {
 
 	    if raw_tmb.available(6) {
-		info!("Empty timbre definition after {} timbres, stopping",
+		pinfo!("Empty timbre definition after {} timbres, stopping",
 		      result.len());
 		break;
 	    }
@@ -607,7 +609,7 @@ impl<'a> RawSong<'a> {
 		None        => {},
 		Some(label) => match pos_map.get(&(label as usize)) {
 		    None => {
-			error!("Timbre definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
+			perror!("Timbre definition at 0x{:x} wants to go to bad offset 0x{:x} / {}!",
 			       raw_tmb.start, label, label)},
 		    Some(ops_index) => {
 			let lhs = &ops[..*ops_index];
@@ -630,7 +632,7 @@ impl<'a> RawSong<'a> {
 		    sustain : loop_ops,
 		}
 	    });
-	    info!("Timbre #{} (0x{:x}) : {}", result.len() - 1, raw_tmb.start, result.last().unwrap());
+	    pinfo!("Timbre #{} (0x{:x}) : {}", result.len() - 1, raw_tmb.start, result.last().unwrap());
 
 	}
 	return result;
@@ -642,7 +644,7 @@ impl<'a> RawSong<'a> {
 	let monopattern_table = self.table_index(self.monopatterns);
 	for mut raw_mp in monopattern_table {
 	    if raw_mp.at_end() {
-		info!("Empty monopattern definition after {} monopatterns, stopping",
+		pinfo!("Empty monopattern definition after {} monopatterns, stopping",
 		      result.len());
 		break;
 	    }
@@ -701,7 +703,7 @@ impl<'a> RawSong<'a> {
 	    result.push(Monopattern {
 		ops,
 	    });
-	    info!("Monopattern #0x{:02x} (0x{:x}) : {}", result.len() - 1, raw_mp.start, result.last().unwrap());
+	    pinfo!("Monopattern #0x{:02x} (0x{:x}) : {}", result.len() - 1, raw_mp.start, result.last().unwrap());
 
 	}
 	return result;
@@ -735,7 +737,7 @@ impl<'a> RawSong<'a> {
 			OP_VOLUME   => effect = DivisionEffect::ChannelVolume(64 - (effect_value as usize)),
 			_           => {
 			    effect = DivisionEffect::TimbreAdjust(0);
-			    error!("Unknown division effect type {effect_type}");
+			    perror!("Unknown division effect type {effect_type}");
 			}
 		    }
 		} else {
@@ -748,7 +750,7 @@ impl<'a> RawSong<'a> {
 	    }
 
 	    result.push(Division { channels : chan_data });
-	    info!("Division #0x{:02x} (0x{:x}) : {}", result.len() - 1, ddata_pos, result.last().unwrap());
+	    pinfo!("Division #0x{:02x} (0x{:x}) : {}", result.len() - 1, ddata_pos, result.last().unwrap());
 
 	}
 	return result;
@@ -764,7 +766,7 @@ impl<'a> RawSong<'a> {
 	    let speed = decode::u16(sdata, 4) as usize;
 
 	    result.push(SongInfo { first_division, last_division, speed });
-	    info!("SongInfo #0x{:02x} (0x{:x}) : {}", result.len() - 1, sdata_pos, result.last().unwrap());
+	    pinfo!("SongInfo #0x{:02x} (0x{:x}) : {}", result.len() - 1, sdata_pos, result.last().unwrap());
 
 	}
 	return result;
@@ -853,7 +855,7 @@ impl<'a> TableIndexedElement<'a> {
     fn step(&mut self, size : usize) {
 	self.current_pos += size;
 	if self.current_pos > self.end() {
-	    error!("Stepped outside of TableIndexedElement: {:x} / {:x} ", self.current_pos, self.end());
+	    perror!("Stepped outside of TableIndexedElement: {:x} / {:x} ", self.current_pos, self.end());
 	}
     }
 
@@ -910,7 +912,7 @@ impl<'a> SongSeeker<'a> {
 	    return None;
 	}
 
-	info!("-------------------- Found song #{} at {:x}", self.count, npos);
+	pinfo!("-------------------- Found song #{} at {:x}", self.count, npos);
 	self.count += 1;
 
 	let data = &self.data[npos..];
@@ -924,7 +926,7 @@ impl<'a> SongSeeker<'a> {
 	let divisions = rawsong.divisions();
 	let songs = rawsong.songs();
 	if songs.len() != 1 {
-	    error!("Unexpected number of songs: {}", songs.len());
+	    perror!("Unexpected number of songs: {}", songs.len());
 	    if songs.len() == 0 {
 		return None;
 	    }

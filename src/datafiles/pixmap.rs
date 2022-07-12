@@ -1,7 +1,11 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
-use log::debug;
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
 use sdl2::{render::{Texture, TextureCreator}, pixels::PixelFormatEnum};
 
 use crate::datafiles::decode;
@@ -36,7 +40,7 @@ pub fn new(src : &[u8], width : usize, height : usize, bitplanes : usize) -> Ind
 		    if (mask & 0x8000) == 0x8000 {
 			let out_pos = (y * width + x) as usize;
 			if y < 2 {
-			    debug!("  {pos}[{x},{y}] -> {out_pos} |= {bitplane_value}")
+			    ptrace!("  {pos}[{x},{y}] -> {out_pos} |= {bitplane_value}")
 			}
 			result.pixels[out_pos] |= bitplane_value;
 		    }
@@ -70,10 +74,7 @@ pub fn icon_len(src : &[u8]) -> usize {
 
     let (width, height, bitplanes, width_words) = icon_header(&src);
 
-    print!("  -> {:x}, {:x}, {:x}", width, height, bitplanes);
-
     let size = HEADER_SIZE + (width_words * height * bitplanes);
-    println!("  => {size:x}");
 
     return size;
 }

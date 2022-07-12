@@ -1,14 +1,17 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
 use core::fmt;
 use std::assert;
 use std::fs::File;
 use std::cmp::min;
 use std::io::Read;
 use std::path::Path;
-
-use log::{trace, debug};
 
 use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
@@ -176,12 +179,12 @@ impl<'a> DataBuf<'a> {
 		header = self.data[read_pos];
 		read_pos += 1;
 		header_count = 0;
-		trace!("-- decompressed-mask= {:02x}", header);
+		ptrace!("-- decompressed-mask= {:02x}", header);
 	    }
 	    let next_is_compressed = (header & 0x80) == 0;
 	    header_count += 1;
 	    header <<= 1;
-	    trace!("-- readpos {} writepos {}", read_pos, write_pos);
+	    ptrace!("-- readpos {} writepos {}", read_pos, write_pos);
 	    if next_is_compressed {
 		let hi = self.data[read_pos];
 		let lo = self.data[read_pos + 1] as usize;
@@ -189,7 +192,7 @@ impl<'a> DataBuf<'a> {
 		let copy_length_requested = ((hi & 0xf) + 3) as usize;
 		let copy_length = min(copy_length_requested, size - write_pos);
 		let copy_offset : usize = (((hi & 0xf0) as usize) << 4) | lo;
-		trace!("-- hilo={:02x} {:02x}  -> offset={copy_offset}; len={copy_length}", hi, lo);
+		ptrace!("-- hilo={:02x} {:02x}  -> offset={copy_offset}; len={copy_length}", hi, lo);
 		let src_start = write_pos - copy_offset;
 		let src_end = src_start + copy_length;
 		for i in src_start..src_end { result[i + copy_offset] = result[i] }
@@ -351,7 +354,7 @@ impl DataFile {
 	    FileHeaderType::JH(k) => {
 		let mut buf = self.as_buf(4);
 		if DEBUG {
-		    debug!("  JH({k}) -> decoding {}", buf.len());
+		    pdebug!("  JH({k}) -> decoding {}", buf.len());
 		}
 		buf.decode_jh(0, k);
 		self.filetype = buf.header_type(0);
@@ -363,7 +366,7 @@ impl DataFile {
 		let size = self.as_buf(self.header_offset).u32(4) & 0xffffff;
 		if DEBUG {
 		    let marker = self.as_buf(self.header_offset).u32(4) >> 24;
-		    debug!("   LOB -> decompressing to {}, marker {}", size, marker);
+		    pdebug!("   LOB -> decompressing to {}, marker {}", size, marker);
 		}
 		return self.as_buf(self.header_offset).decompress_lob(12, size as usize);
 	    }
@@ -378,14 +381,14 @@ impl DataFile {
 			let decompressed_size = (buf.u32(4) as usize) & 0xffffff;
 			if DEBUG {
 			    let marker = (buf.u32(4) as usize) >> 24;
-			    debug!("   AMPC.LOB -> decompressing to {}, marker {}", decompressed_size, marker);
+			    pdebug!("   AMPC.LOB -> decompressing to {}, marker {}", decompressed_size, marker);
 			}
 			return buf.decompress_lob(12, decompressed_size);
 		    }
 		    // Raw?
 		    _ => {
 			if DEBUG {
-			    debug!("   AMPC.RAW");
+			    pdebug!("   AMPC.RAW");
 			}
 			return buf.as_vec(0);
 		    }
@@ -394,7 +397,7 @@ impl DataFile {
 	    // AMBR: uncompressed, no header
 	    FileHeaderType::AMBR  => {
 		if DEBUG {
-		    debug!("   AMBR.RAW");
+		    pdebug!("   AMBR.RAW");
 		}
 		let buf = self._entry_buf(index);
 		return buf.as_vec(0);
@@ -404,7 +407,7 @@ impl DataFile {
 		// Not encoded in any way?
 		let mut vec = vec![0; self.data.len() - self.header_offset];
 		if DEBUG {
-		    debug!("   RAW -> getting {}", vec.len());
+		    pdebug!("   RAW -> getting {}", vec.len());
 		}
 		vec.copy_from_slice(&self.data[self.header_offset..]);
 		return vec;

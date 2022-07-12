@@ -3,10 +3,11 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-use sdl2::{pixels::Color, render::{TextureCreator, Texture, BlendMode, Canvas, RenderTarget}, rect::Rect};
-use crate::datafiles::{palette, decode, pixmap};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
+use sdl2::{pixels::Color, render::{TextureCreator, Texture, BlendMode, Canvas, RenderTarget}, rect::Rect};
+use crate::datafiles::{palette, decode, pixmap};
 
 use super::pixmap::Pixmap;
 
@@ -49,17 +50,14 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 	let mut frame_pos = 0;
 	while frame_pos + 6 < frame_base.len() {
 	    let image_len = pixmap::icon_len(&frame_base[frame_pos..]);
-	    println!("Frame {} @ {:x}", frame_start.len(), 2 + palette_offset + PALETTE_SIZE + frame_pos);
 	    frame_start.push(frame_pos);
 	    frame_pos += image_len;
 	}
 
 	for i in 0..num_icons {
-	    println!("Icon {i} of {num_icons}");
 	    let num_frames = base[i] as usize;
 	    let anim_start = decode::u16(&anim_start_base, i * 2) as usize;
 	    let anim_end = anim_start + num_frames;
-	    println!("  {anim_start}..{anim_end}");
 	    let magic_flags = decode::u32(&magic_flags1_base, i * 4);
 	    let map_color_index = magic_flags2_base[i];
 
@@ -67,7 +65,6 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 	    for image_index in anim_start..anim_end {
 		// if Some(img) = images.
 		let pos = frame_start[image_index];
-		println!("  +{image_index}@{:x}", 2 + pos + palette_offset + PALETTE_SIZE);
 		let frame = pixmap::new_icon_frame(&frame_base[pos..]);
 		let frame = frame.with_palette(&palette);
 		frames.push(frame);

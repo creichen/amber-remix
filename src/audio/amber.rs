@@ -1,17 +1,20 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
-use core::fmt;
 /// (Most of) the amber music specific bits
+
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
+use core::fmt;
 
 extern crate lazy_static;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
-
-#[allow(unused)]
-use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use crate::datafiles::music::BasicSample;
 use crate::datafiles::music::Division;
@@ -257,9 +260,9 @@ impl InstrumentIterator {
 	    Some(InstrumentOp::FixedNote(nnote)) => {
 		self.base_note = InstrumentNote::Absolute(nnote as usize);
 	    },
-	    Some(op) => { warn!("Ignoring {op}") },
+	    Some(op) => { pwarn!("Ignoring {op}") },
 	    None     => {
-		debug!("Finished playing instrument");
+		pdebug!("Finished playing instrument");
 		self.remaining_ticks = None;
 	    },
 	}
@@ -529,7 +532,7 @@ impl MonopatternIterator {
 			 return MPStep::OK; }
 	}
 	if let Some(n) = self.ops.front() {
-	    debug!("  Monopattern: play {n}");
+	    pdebug!("  Monopattern: play {n}");
 	}
 
 	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
@@ -541,12 +544,12 @@ impl MonopatternIterator {
 		    match portando {
 			None        => {
 			    if self.portando.current != 0 {
-				debug!{"  MP: portando completed"};
+				pdebug!{"  MP: portando completed"};
 			    }
 			    self.portando = PortandoState::empty();
 			},
 			Some(delta) => {
-			    debug!{"  MP: portando~{delta}"};
+			    pdebug!{"  MP: portando~{delta}"};
 			    self.portando = PortandoState { current : 0, delta };
 			},
 		    }
@@ -575,14 +578,14 @@ impl MonopatternIterator {
     pub fn tick_note(&mut self, state : &mut ChannelState) {
 	let old = state.note.clone();
 	state.note.modify(self.channel_note);
-	trace!("    MP: note update: {:?} -> {:?}", old, state.note);
+	ptrace!("    MP: note update: {:?} -> {:?}", old, state.note);
     }
 
     /// May update state.period
     pub fn tick_portando(&mut self, state : &mut ChannelState) {
 	self.portando.tick();
 	let p2 = self.portando.portando(state.period);
-	trace!("    MP: portando: {}, hence {} -> {p2}", self.portando.current, state.period);
+	ptrace!("    MP: portando: {}, hence {} -> {p2}", self.portando.current, state.period);
 	state.period = p2;
     }
 }
@@ -719,18 +722,18 @@ impl<SDB> ChannelIterator<SDB> where SDB : SongDataBank {
 impl<SDB> AudioIterator for ChannelIterator<SDB> where SDB : SongDataBank {
     fn next(&mut self, out_queue : &mut VecDeque<AQOp>) {
 	// One full song iterator iteration
-	debug!("===== Tick #{}", self.state.num_ticks);
+	pdebug!("===== Tick #{}", self.state.num_ticks);
 	self.state.note = InstrumentNote::Relative(self.state.base_note as isize);
-	trace!("  : initial note {:?}", self.state.note);
+	ptrace!("  : initial note {:?}", self.state.note);
 	let last_period = self.state.period;
 
 	match self.monopattern.tick(&mut self.state, &self.songdb) {
 	    MPStep::OK              => {},
 	    MPStep::Stop            => (
-		debug!("  : Finished Monopattern")
+		pdebug!("  : Finished Monopattern")
 	    ),
 	    MPStep::SetTimbre(ti, instr_opt) => {
-		debug!("  : Timbre/Instrument switch");
+		pdebug!("  : Timbre/Instrument switch");
 		self.timbre = ti;
 		if let Some(instr) = instr_opt {
 		    self.instrument = instr;
@@ -759,8 +762,8 @@ impl<SDB> AudioIterator for ChannelIterator<SDB> where SDB : SongDataBank {
 	out_queue.push_back(AQOp::SetVolume(volume(avolume)));
 	out_queue.push_back(AQOp::WaitMillis(TICK_DURATION_MILLIS));
 	out_queue.push_back(AQOp::Timeslice(self.state.num_ticks));
-	debug!("   : note={:?}, period={}", note, self.state.period);
-	debug!("   :: {:?}", out_queue);
+	pdebug!("   : note={:?}, period={}", note, self.state.period);
+	pdebug!("   :: {:?}", out_queue);
 	self.state.num_ticks += 1;
     }
 }
@@ -850,7 +853,7 @@ impl SongIterator {
     pub fn set_division(&mut self, div : usize) {
 	self.division_index = div;
 	let division = self.divisions[div];
-	info!("Division #{div:02x}: {division}");
+	pinfo!("Division #{div:02x}: {division}");
 	let mut speed = self.song_speed;
 
 	for (index, ch) in self.channels.iter_mut().enumerate() {
@@ -876,7 +879,7 @@ impl SongIterator {
 	    let mut mono_it = MonopatternIterator::new(&self.monopatterns[div_chan.monopat].ops);
 	    let s = format!("{monopat}");
 	    let count = mono_it.count_length(ch.state.clone(), &self.songdb.clone());
-	    info!("ch #{index:x}, P#{:02x}: [len {count}] {s}", div_chan.monopat);
+	    pinfo!("ch #{index:x}, P#{:02x}: [len {count}] {s}", div_chan.monopat);
 	    ch.set_monopattern(&self.monopatterns[div_chan.monopat], timbre_tune);
 	}
 	for ch in self.channels.iter_mut() {
@@ -890,11 +893,11 @@ impl SongIterator {
 	}
 	for (index, ch) in self.channels.iter_mut().enumerate() {
 	    if !ch.is_done() {
-		warn!("Moving to next division even though channel {index} is not done yet");
+		pwarn!("Moving to next division even though channel {index} is not done yet");
 	    }
 	}
 	if self.division_index == self.division_last {
-	    info!("---- Finished playing song ---");
+	    pinfo!("---- Finished playing song ---");
 	    self.stopped = true;
 	    return;
 	}

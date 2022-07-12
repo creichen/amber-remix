@@ -3,6 +3,8 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{rc::Rc, cell::RefCell};
 
@@ -90,7 +92,7 @@ impl BasicWriterState {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
 		self.buf.reset();
-		debug!("---- This was source #{index}, reporting _Flush_");
+		pdebug!("---- This was source #{index}, reporting _Flush_");
 		return false;
 	    },
 	    SyncPCMResult::Wrote(written, None)            => {
@@ -100,7 +102,7 @@ impl BasicWriterState {
 		    panic!("Unexpectedly received fewer bytes than requested {}/{}", written, samples_offered_by_our_buffer);
 		}
 		self.written += written;
-		debug!("---- This was source #{index}, reporting {} writes but no timeslice", self.written);
+		pdebug!("---- This was source #{index}, reporting {} writes but no timeslice", self.written);
 		return true;
 	    },
 	    SyncPCMResult::Wrote(written, Some(timeslice)) => {
@@ -112,7 +114,7 @@ impl BasicWriterState {
 		self.written += written;
 		self.buf_pos_at_which_timeslice_could_start = self.written;
 		self.next_timeslice = Some(timeslice);
-		debug!("---- This was source #{index}, reporting {} writes and a timeslice", self.written);
+		pdebug!("---- This was source #{index}, reporting {} writes and a timeslice", self.written);
 		return true;
 	    },
 	}
@@ -124,9 +126,9 @@ impl BasicWriterState {
 	wr.advance_sync(timeslice);
 	self.next_timeslice = None;
 	if self.written < write_pos {
-	    error!("While advancing source #{index} to timeslice {timeslice}: unexpectedly fewer written bytes than desired-- actual:{} expected:{write_pos}", self.written);
+	    perror!("While advancing source #{index} to timeslice {timeslice}: unexpectedly fewer written bytes than desired-- actual:{} expected:{write_pos}", self.written);
 	} else {
-	    info!("BEFORE-dropattempt({write_pos})(#{index}, avg_offset) {:p} {} (written={})", &self.buf, self.buf.internal(), self.written);
+	    pinfo!("BEFORE-dropattempt({write_pos})(#{index}, avg_offset) {:p} {} (written={})", &self.buf, self.buf.internal(), self.written);
 	    self.buf.drop_back(self.written - write_pos).unwrap();
 	}
 	self.written = 0;
@@ -145,11 +147,11 @@ impl BasicWriterState {
     fn fill_timeslice(&mut self, index : usize) -> bool {
 	if let None = self.next_timeslice {
 	    let result = self.read_pcm(index, self.buf.remaining_capacity());
-	    debug!("source[#{index}].fill_timeslice(): now timeslice={:?}", self.next_timeslice);
-	    debug!("  written = {}", self.written);
+	    pdebug!("source[#{index}].fill_timeslice(): now timeslice={:?}", self.next_timeslice);
+	    pdebug!("  written = {}", self.written);
 	    return result;
 	}
-	debug!("source[#{index}].fill_timeslice(): already at timeslice {:?}", self.next_timeslice);
+	pdebug!("source[#{index}].fill_timeslice(): already at timeslice {:?}", self.next_timeslice);
 	return true;
     }
 
@@ -208,16 +210,16 @@ impl BasicWriterSyncImpl {
 		oks += 1;
 	    }
 	}
-	trace!("[BWSI]   prefill check -> {oks}");
+	ptrace!("[BWSI]   prefill check -> {oks}");
 	if oks == 0 {
-	    trace!("All sources flushed");
+	    ptrace!("All sources flushed");
 	} else if oks == num_sources {
-	    trace!("All sources reported success");
+	    ptrace!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
 	    if None==timeslice {
-		error!("Buffers have not reached timeslice yet:");
+		perror!("Buffers have not reached timeslice yet:");
 		for (index, state) in self.sources.iter_mut().enumerate() {
-		    error!("  #!{index}: {:?} size={}/{}", state.next_timeslice, state.buf.len(), state.buf.capacity());
+		    perror!("  #!{index}: {:?} size={}/{}", state.next_timeslice, state.buf.len(), state.buf.capacity());
 		}
 	    }
 	    let mut sum_offset = 0;
@@ -229,7 +231,7 @@ impl BasicWriterSyncImpl {
 		sum_offset += offset;
 		max_offset = usize::max(max_offset, offset);
 		if timeslice != state.next_timeslice {
-		    warn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
+		    pwarn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
 		    disagreement = true;
 		}
 	    }
@@ -241,19 +243,19 @@ impl BasicWriterSyncImpl {
 		// arithmetic mean offset
 		sum_offset / num_sources
 	    };
-	    trace!("  Setting slice length to {sync_offset}");
+	    ptrace!("  Setting slice length to {sync_offset}");
 
 	    for (index, state) in self.sources.iter_mut().enumerate() {
-		info!("BEFORE-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
+		pinfo!("BEFORE-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
 		if !state.fill_until(index, sync_offset) {
 		    panic!("Unexpected granular flush");
 		}
-		info!("AFTER-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
+		pinfo!("AFTER-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
 		if let Some(timeslice) = timeslice {
 		    state.advance(index, sync_offset, timeslice);
 		}
 	    }
-	    debug!("  Completed timeslice {timeslice:?}");
+	    pdebug!("  Completed timeslice {timeslice:?}");
 
 	} else {
 	    panic!("Inconsistent flush: {}/{} sources flushed", num_sources - oks, num_sources);
@@ -261,12 +263,12 @@ impl BasicWriterSyncImpl {
     }
 
     fn print_status(&self) {
-	info!("[PCMSYNC] Status:");
+	pinfo!("[PCMSYNC] Status:");
 	for (index, state) in self.sources.iter().enumerate() {
-	    info!("[PCMSYNC] #{index} : timeslice {:?} starting @{}",
+	    pinfo!("[PCMSYNC] #{index} : timeslice {:?} starting @{}",
 		  state.next_timeslice, state.buf_pos_at_which_timeslice_could_start);
-	    info!("[PCMSYNC]     written : {}", state.written);
-	    info!("[PCMSYNC]     buf : {} / {}", state.buf.len(), state.buf.capacity());
+	    pinfo!("[PCMSYNC]     written : {}", state.written);
+	    pinfo!("[PCMSYNC]     buf : {} / {}", state.buf.len(), state.buf.capacity());
 	}
     }
 
@@ -274,19 +276,19 @@ impl BasicWriterSyncImpl {
     fn write_for(&mut self, writer_nr : usize, output : &mut [f32]) {
 	let mut write_pos = 0;
 	let mut last_write_pos = output.len() + 1; // something different to avoid triggering the sanity check
-	trace!("[BWSI] writer {writer_nr} wants {} samples", output.len());
+	ptrace!("[BWSI] writer {writer_nr} wants {} samples", output.len());
 	while write_pos < output.len() {
 	    let source = &mut self.sources[writer_nr];
 	    let source_buflen_before_write = source.buf.len();
 	    let source_bufcapacity = source.buf.capacity();
 	    let num_written = source.write_pcm(&mut output[write_pos..]);
-	    trace!("[BWSI]  wrote {num_written}");
+	    ptrace!("[BWSI]  wrote {num_written}");
 
 	    let source_buflen_after_write = source.buf.len();
 	    if write_pos < output.len() {
 		// Ran out of buffer?
 		//source.reset_buf_readwrite_pos();
-		info!("[BWSI]   ran out of buffer, must prefill");
+		pinfo!("[BWSI]   ran out of buffer, must prefill");
 		self.prefill_buffers();
 	    }
 	    let source_buflen_after_prefill = self.sources[writer_nr].buf.len();
@@ -324,7 +326,7 @@ impl FrequencyTrait for WriterSyncFwd {
 
 impl PCMWriter for WriterSyncFwd {
     fn write_pcm(&mut self, output : &mut [f32]) {
-	trace!("[WSF:{}] Forwarding write request of size {}", self.writer_nr, output.len());
+	ptrace!("[WSF:{}] Forwarding write request of size {}", self.writer_nr, output.len());
 	self.wsync.borrow_mut().write_for(self.writer_nr, output);
     }
 }

@@ -3,15 +3,19 @@
 
 // General utilities
 
+pub const LOGGING : bool = false;
+pub const WARNING : bool = true;
 pub const CARGO_TEST : bool = cfg!(test);
 
 #[macro_export]
 macro_rules! ptrace {
     ($($a:tt)*) => {
-	if crate::util::CARGO_TEST {
-	    println!($($a)*)
-	} else {
-	    trace!($($a)*)
+	if crate::util::LOGGING {
+	    if crate::util::CARGO_TEST {
+		println!($($a)*)
+	    } else {
+		trace!($($a)*)
+	    }
 	}
     }
 }
@@ -19,10 +23,12 @@ macro_rules! ptrace {
 #[macro_export]
 macro_rules! pdebug {
     ($($a:tt)*) => {
-	if crate::util::CARGO_TEST {
-	    println!($($a)*)
-	} else {
-	    debug!($($a)*)
+	if crate::util::LOGGING {
+	    if crate::util::CARGO_TEST {
+		println!($($a)*)
+	    } else {
+		debug!($($a)*)
+	    }
 	}
     }
 }
@@ -30,10 +36,12 @@ macro_rules! pdebug {
 #[macro_export]
 macro_rules! pinfo {
     ($($a:tt)*) => {
-	if crate::util::CARGO_TEST {
-	    println!($($a)*)
-	} else {
-	    info!($($a)*)
+	if crate::util::LOGGING {
+	    if crate::util::CARGO_TEST {
+		println!($($a)*)
+	    } else {
+		info!($($a)*)
+	    }
 	}
     }
 }
@@ -41,10 +49,12 @@ macro_rules! pinfo {
 #[macro_export]
 macro_rules! pwarn {
     ($($a:tt)*) => {
-	if crate::util::CARGO_TEST {
-	    println!($($a)*)
-	} else {
-	    warn!($($a)*)
+	if crate::util::WARNING {
+	    if crate::util::CARGO_TEST {
+		println!($($a)*)
+	    } else {
+		warn!($($a)*)
+	    }
 	}
     }
 }
