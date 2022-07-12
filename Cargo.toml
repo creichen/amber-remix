@@ -12,3 +12,4 @@ sdl2 = "0.35.2"               # SDL2 bindings for Rust
 lazy_static = "1.4.0"
 log = "0.4.17"
 env_logger = "0.9.0"
+rubato = "0.11.0"

@@ -48,15 +48,19 @@ pub fn new(src : &[u8], width : usize, height : usize, bitplanes : usize) -> Ind
     return result;
 }
 
+fn icon_header(src : &[u8]) -> (usize, usize, usize, usize) {
+    let width = 1 + decode::u16(src, 0) as usize;
+    let height = 1 + decode::u16(src, 2) as usize;
+    let bitplanes = decode::u16(src, 4) as usize;
+    let width_words = ((width + 15) >> 4) * 2;
+    return (width, height, bitplanes, width_words);
+}
+
 /// Image with width, height, #bitplanes header.  Also returns # of bytes used.
 pub fn new_icon_frame(src : &[u8]) -> IndexedPixmap {
     const HEADER_SIZE : usize = 6;
 
-    let width = decode::u16(src, 0) as usize;
-    let height = decode::u16(src, 2) as usize;
-    let bitplanes = decode::u16(src, 4) as usize;
-
-    let width_words = ((width + 15) >> 4) * 2;
+    let (width, height, bitplanes, width_words) = icon_header(&src);
 
     return new(&src[HEADER_SIZE..], width, height, bitplanes);
 }
@@ -64,12 +68,12 @@ pub fn new_icon_frame(src : &[u8]) -> IndexedPixmap {
 pub fn icon_len(src : &[u8]) -> usize {
     const HEADER_SIZE : usize = 6;
 
-    let width = decode::u16(src, 0) as usize;
-    let height = decode::u16(src, 2) as usize;
-    let bitplanes = decode::u16(src, 4) as usize;
+    let (width, height, bitplanes, width_words) = icon_header(&src);
 
-    let width_words = ((width + 15) >> 4) * 2;
+    print!("  -> {:x}, {:x}, {:x}", width, height, bitplanes);
+
     let size = HEADER_SIZE + (width_words * height * bitplanes);
+    println!("  => {size:x}");
 
     return size;
 }

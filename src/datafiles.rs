@@ -14,6 +14,7 @@ use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
 
 use self::music::Song;
+use self::tile::Tileset;
 
 const DEBUG : bool = true;
 
@@ -432,6 +433,7 @@ pub struct AmberStarFiles {
     pub palettes : Vec<Palette>,
     pub sample_data : sampledata::SampleData,
     pub songs : Vec<Song>,
+    pub tiles : Vec<Tileset<Pixmap>>,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -459,6 +461,15 @@ fn load_palettes(dfile : &mut DataFile) -> Vec<Palette> {
 	let dat = dfile.decode(i);
 	let pal = palette::new_with_header(&dat[..], 42);
 	result.push(pal);
+    }
+    return result;
+}
+
+fn load_tiles(dfile : &mut DataFile) -> Vec<Tileset<Pixmap>> {
+    let mut result = vec![];
+    for e in 0..dfile.num_entries {
+	let dat = dfile.decode(e);
+	result.push(tile::new(&dat));
     }
     return result;
 }
@@ -498,6 +509,9 @@ impl AmberStarFiles {
 	let mut sampledata_f = load_relative(path, "SAMPLEDA.IMG");
 	let sample_data = sampledata::SampleData::new(sampledata_f.decode(0));
 
+	let mut tiles_f = load_relative(path, "ICON_DAT.AMB");
+	let tiles = load_tiles(&mut tiles_f);
+
 	let path : String = format!("{}", path);
 
 	return AmberStarFiles {
@@ -511,6 +525,7 @@ impl AmberStarFiles {
 	    palettes,
 	    sample_data,
 	    songs,
+	    tiles,
 	}
     }
 }
