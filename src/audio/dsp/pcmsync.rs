@@ -23,7 +23,7 @@ pub fn new_basic() -> RcSyncBarrier {
 // Basic Sync barrier implementation
 // Assumes that we never have more than MAX_BUFFER_SIZE output samples to produce per timeslices
 
-const MAX_BUFFER_SIZE : usize = 32768;
+const MAX_BUFFER_SIZE : usize = 8192;
 
 pub struct PCMBasicSyncBarrier {
     sync : Rc<RefCell<BasicWriterSyncImpl>>,
@@ -275,7 +275,7 @@ impl BasicWriterSyncImpl {
     /// Handle a write request for the specified writer
     fn write_for(&mut self, writer_nr : usize, output : &mut [f32]) {
 	let mut write_pos = 0;
-	let mut last_write_pos = output.len() + 1; // something different to avoid triggering the sanity check
+	let mut last_write_pos = 0;
 	ptrace!("[BWSI] writer {writer_nr} wants {} samples", output.len());
 	while write_pos < output.len() {
 	    let source = &mut self.sources[writer_nr];
@@ -285,7 +285,7 @@ impl BasicWriterSyncImpl {
 	    ptrace!("[BWSI]  wrote {num_written}");
 
 	    let source_buflen_after_write = source.buf.len();
-	    if write_pos < output.len() {
+	    if  source_buflen_before_write < output.len() {
 		// Ran out of buffer?
 		//source.reset_buf_readwrite_pos();
 		pinfo!("[BWSI]   ran out of buffer, must prefill");
@@ -293,7 +293,7 @@ impl BasicWriterSyncImpl {
 	    }
 	    let source_buflen_after_prefill = self.sources[writer_nr].buf.len();
 
-	    if num_written == 0 && last_write_pos == write_pos {
+	    if num_written == 0 && last_write_pos == write_pos && source_buflen_after_prefill == source_buflen_after_write {
 		self.print_status();
 		panic!("No progress: lastwritepos:{}/writepos:{}/outlen:{}; buf_capacity={}, buflens=(start:{}/post-write:{}/post-prefill:{}).  Is the source really producing ticks?  Is our buffer big enough?",
 		       last_write_pos, write_pos, output.len(), source_bufcapacity,
