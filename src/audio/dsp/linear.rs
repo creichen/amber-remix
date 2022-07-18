@@ -971,6 +971,7 @@ fn test_linear_filter_boundary_crash() {
 // ----------------------------------------
 // Syonchronisation integration tests
 
+#[ignore]
 #[cfg(test)]
 #[test]
 #[ignore]

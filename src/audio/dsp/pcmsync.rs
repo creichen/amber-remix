@@ -54,6 +54,7 @@ struct BasicWriterState {
     source : RcSyncWriter,
 
     buf : RingBuf,
+    flushed : bool,
 }
 
 
@@ -71,6 +72,7 @@ impl BasicWriterState {
 	if count == 0 {
 	    return true;
 	}
+	ptrace!("Requesting : {count}");
 	let mut written1 = 0;
 	let mut samples_offered_by_our_buffer;
 	let result = {
@@ -78,12 +80,14 @@ impl BasicWriterState {
 	    // let wr = guard.deref_mut();
 	    let mut wr = self.source.borrow_mut();
 	    let wrbuf = self.buf.wrbuf(count);
+	    ptrace!("  wrbuf1 : {}/{count}", wrbuf.len());
 	    samples_offered_by_our_buffer = wrbuf.len();
 	    let result = wr.write_sync_pcm(wrbuf);
-	    if let SyncPCMResult::Wrote(actual_count, None) = result {
+	    if let SyncPCMResult::Wrote(actual_count, _) = result {
 		if samples_offered_by_our_buffer < count {
 		    written1 = actual_count;
 		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
+		    ptrace!("  wrbuf2 : {}", wrbuf2.len());
 		    samples_offered_by_our_buffer += wrbuf2.len();
 		    wr.write_sync_pcm(wrbuf2)
 		} else { result }
@@ -92,6 +96,7 @@ impl BasicWriterState {
 	    SyncPCMResult::Flush                           => {
 		self.next_timeslice = None;
 		self.buf.reset();
+		self.flushed = true;
 		pdebug!("---- This was source #{index}, reporting _Flush_");
 		return false;
 	    },
@@ -188,6 +193,7 @@ impl BasicWriterSyncImpl {
 		buf_pos_at_which_timeslice_could_start : 0,
 		written : 0,
 		buf : RingBuf::new(MAX_BUFFER_SIZE),
+		flushed : false,
 
 		source : writer.clone(),
 	    });
@@ -230,6 +236,7 @@ impl BasicWriterSyncImpl {
 		let offset = state.buf_pos_at_which_timeslice_could_start;
 		sum_offset += offset;
 		max_offset = usize::max(max_offset, offset);
+		ptrace!("  Source #{index}: timeslice {:?}", state.next_timeslice);
 		if timeslice != state.next_timeslice {
 		    pwarn!("Source #{index} disagrees about timeslice: {:?} vs. {timeslice:?}", state.next_timeslice);
 		    disagreement = true;
@@ -293,7 +300,9 @@ impl BasicWriterSyncImpl {
 	    }
 	    let source_buflen_after_prefill = self.sources[writer_nr].buf.len();
 
-	    if num_written == 0 && last_write_pos == write_pos && source_buflen_after_prefill == source_buflen_after_write {
+	    if self.sources[writer_nr].flushed {
+		self.sources[writer_nr].flushed = false;
+	    } else if num_written == 0 && last_write_pos == write_pos && source_buflen_after_prefill == source_buflen_after_write {
 		self.print_status();
 		panic!("No progress: lastwritepos:{}/writepos:{}/outlen:{}; buf_capacity={}, buflens=(start:{}/post-write:{}/post-prefill:{}).  Is the source really producing ticks?  Is our buffer big enough?",
 		       last_write_pos, write_pos, output.len(), source_bufcapacity,
@@ -464,6 +473,7 @@ fn test_unary_passthrough_cross_boundary() {
 	       data0[..]);
 }
 
+#[ignore]
 #[cfg(test)]
 #[test]
 #[ignore]
