@@ -213,7 +213,9 @@ impl IteratorSequencer {
 	    // Timeslices must be enabled through a separate API call to advance_sync(), so only query
 	    // if we are waiting for that
 	    if self.timeslice.is_none() {
-		self.update_state_from_next_queue_items();
+		if self.samples_until_next_poll == 0 {
+		    self.update_state_from_next_queue_items();
+		}
 	    } else {
 		self.samples_until_next_poll = self.target_freq; // Unlimited writes
 	    }
@@ -253,7 +255,11 @@ impl IteratorSequencer {
 	    return Some(ReadyState::TemporarySilence(time));
 	} else {
 	    if self.current_sample.done() {
-		return None;
+		if self.current_sample_vec.is_empty() {
+		    return Some(ReadyState::TemporarySilence(time));
+		} else {
+		    return None;
+		}
 	    }
 	    return Some(ReadyState::PlaySample(time));
 	}
@@ -735,7 +741,6 @@ fn test_sample_loop_interrupted() {
     assert_eq!(SyncPCMResult::Wrote(12, None), r);
 }
 
-#[ignore]
 #[cfg(test)]
 #[test]
 fn test_wait_on_timeslice() {
