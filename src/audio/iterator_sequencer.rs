@@ -187,8 +187,8 @@ impl IteratorSequencer {
 		ptrace!("[ISeq] Requesting sample {range:?} at freq {}", self.play_freq);
 		self.current_sample = self.sample_source.borrow_mut().get_sample(range, self.play_freq);
 		match offset {
-		    Some(off) => self.current_sample.forward_to_offset(off, range.len),
-		    _         => {},
+		    Some((off_nom, off_denom)) => self.current_sample.forward_to_offset(off_nom, off_denom),
+		    _                          => {},
 		}
 		if self.current_sample.len() == 0 {
 		    panic!("New sample has length 0 -> cannot progress!");
@@ -275,7 +275,7 @@ impl IteratorSequencer {
 		if restart_sample {
 		    self.current_sample_vec.push_front(AQSample::Once(samplerange));
 		} else {
-		    self.current_sample_vec.push_front(AQSample::OnceAtOffset(samplerange, Some(self.current_sample.get_offset())));
+		    self.current_sample_vec.push_front(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), self.current_sample.len()))));
 		}
 		self.stop_sample();
 	    },
@@ -286,7 +286,7 @@ impl IteratorSequencer {
 	self.current_sample_vec.clear();
 	for x in svec {
 	    if let AQSample::OnceAtOffset(samplerange, None) = x {
-		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some(self.current_sample.get_offset())));
+		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), self.current_sample.len()))));
 	    } else {
 		self.current_sample_vec.push_back(x);
 	    }
