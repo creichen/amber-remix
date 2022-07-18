@@ -209,17 +209,25 @@ impl SincSampleSource {
 	let mut resampler_map = HashMap::new();
 
 	for size in [64, 366, 2310, 3072, 7168, 10366, 12226] {
-	    let mut sinc_len = 256;
+	    // let mut sinc_len = 256;
+	    let mut sinc_len = 32;
 	    while sinc_len > size {
 		sinc_len >>= 1;
 	    }
 	    let params = InterpolationParameters {
 		sinc_len,
 		f_cutoff: 0.95,
-		interpolation: InterpolationType::Cubic,
-		oversampling_factor: 256,
+		interpolation: InterpolationType::Linear,
+		oversampling_factor: 16,
 		window: WindowFunction::BlackmanHarris2,
 	    };
+	    // let params = InterpolationParameters {
+	    // 	sinc_len,
+	    // 	f_cutoff: 0.95,
+	    // 	interpolation: InterpolationType::Cubic,
+	    // 	oversampling_factor: 256,
+	    // 	window: WindowFunction::BlackmanHarris2,
+	    // };
 	    let resampler = SincFixedIn::<f64>::new(
 		1.0 / (middle_freq as f64 / out_freq as f64),
 		xfact * 1.5, // should leave plenty of room

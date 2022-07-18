@@ -155,7 +155,7 @@ impl IteratorSequencer {
 	pinfo!("[ISeq]  ::update: {action:?}");
 	match action {
 	    Some(AQOp::WaitMillis(0))      => { },
-	    Some(AQOp::WaitMillis(millis)) => { self.samples_until_next_poll = (millis * self.play_freq + 500) / 1000 },
+	    Some(AQOp::WaitMillis(millis)) => { self.samples_until_next_poll = (millis * self.target_freq + 500) / 1000 },
 	    Some(AQOp::Timeslice(tslice))  => { self.timeslice = TimesliceUpdate::new(tslice); },
 	    Some(AQOp::SetSamples(svec))   => { self.set_sample_vec(svec); },
 	    Some(AQOp::SetFreq(freq))      => { self.play_freq = freq;

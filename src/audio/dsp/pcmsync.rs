@@ -262,6 +262,7 @@ impl BasicWriterSyncImpl {
 		    state.advance(index, sync_offset, timeslice);
 		}
 	    }
+	    self.print_status();
 	    pdebug!("  Completed timeslice {timeslice:?}");
 
 	} else {
