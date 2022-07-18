@@ -46,6 +46,7 @@ impl TimesliceUpdate {
 }
 
 /// Sequencer state that indicates progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReadyState {
     Flush,                      // Flush requested
     ContinuingSilence,          // No iterator, nothing to play
@@ -147,8 +148,6 @@ impl IteratorSequencer {
 
     /// Returns whether there was progress
     fn update_state_from_next_queue_items(&mut self) {
-	// Timeslices must be enabled through a separate API call to advance_sync(), so don't query
-	// if we are waiting for that
 	if self.queue.len() == 0 {
 	    self.poll_iterator_into_queue();
 	}
@@ -210,7 +209,9 @@ impl IteratorSequencer {
 		Some(s) => { return s; },
 		None    => {},
 	    }
-	    // Must not update state while timeslice-locked
+
+	    // Timeslices must be enabled through a separate API call to advance_sync(), so only query
+	    // if we are waiting for that
 	    if self.timeslice.is_none() {
 		self.update_state_from_next_queue_items();
 	    } else {
@@ -365,16 +366,21 @@ impl PCMSyncWriter for IteratorSequencer {
 	    let mut out = &mut outbuf[outbuf_pos..];
 	    let outlen = out.len();
 
-	    let completed = match self.ensure_ready_state() {
+	    let ready_state = self.ensure_ready_state();
+	    pdebug!("[ISeq] {ready_state:?} for {} samples", self.samples_until_next_poll);
+	    let completed = match ready_state {
 		ReadyState::Flush               => { self.flush_requested = false;
 						     pdebug!("[ISeq] => Flush");
 						     return SyncPCMResult::Flush; },
-		ReadyState::ContinuingSilence   => self.write_silence(&mut out),
+		ReadyState::ContinuingSilence   => { self.samples_until_next_poll = 0;
+						     self.write_silence(&mut out) },
 		ReadyState::TemporarySilence(t) => self.write_silence(&mut out[..usize::min(t, outlen)]),
 		ReadyState::PlaySample(t)       => self.write_sample(&mut out[..usize::min(t, outlen)]),
 		ReadyState::ReportTimeslice(_)  => { break; },
 	    };
-	    self.record_completed_samples(completed);
+	    if ready_state != ReadyState::ContinuingSilence {
+		self.record_completed_samples(completed);
+	    }
 	    outbuf_pos += completed;
 	}
 	pdebug!("[ISeq] => Success with {outbuf_pos} samples");
@@ -614,169 +620,211 @@ fn test_volume() {
 	       &outbuf[..]);
 }
 
-// #[cfg(test)]
-// #[test]
-// fn test_run_out() {
-//     let mut outbuf0 = [-1.0; 8];
-//     let mut outbuf1 = [-1.0; 8];
-//     let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
-// 				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
-// 				       AQOp::WaitMillis(5),
-//     ]]);
-//     let ssrc = setup_samplesource();
-//     let mut aq = IteratorSequencer::nw(ait, ssrc);
-//     let mut freqrange = FreqRange::new();
-//     let r = aq.write_flex_pcm(&mut outbuf0, &mut freqrange);
-//     assert_eq!(SyncPCMResult::Wrote(8, None), r);
-//     assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-// 	       &outbuf0[..]);
-//     let r = aq.write_flex_pcm(&mut outbuf1, &mut freqrange);
-//     assert_eq!(SyncPCMResult::Wrote(8, None), r);
-//     assert_eq!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-// 	       &outbuf1[..]);
-// }
+#[cfg(test)]
+#[test]
+fn test_run_out() {
+    let mut outbuf0 = [-1.0; 8];
+    let mut outbuf1 = [-1.0; 8];
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(5),
+				       AQOp::End,
+    ]]);
 
-// #[cfg(test)]
-// #[test]
-// fn test_replace_iterator() {
-//     let mut outbuf = [-1.0; 8];
-//     let ait = iterator::mock(vec![vec![AQOp::SetFreq(2000),
-// 				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
-// 				       AQOp::WaitMillis(1000)]]);
-//     let ssrc = setup_samplesource();
-//     let mut aq = IteratorSequencer::nw(ait, ssrc);
-//     let mut freqrange = FreqRange::new();
+    let ssrc = setup_samplesource(vec![
+	(0, 3, 1000, 1.0, 3),
+    ]);
+    let mut iseq = IteratorSequencer::nw(ait, ssrc);
+    assert_eq!(SyncPCMResult::Flush, iseq.write_sync_pcm(&mut outbuf0));
+    let r = iseq.write_sync_pcm(&mut outbuf0);
 
-//     let r = aq.write_flex_pcm(&mut outbuf[0..2], &mut freqrange);
-//     assert_eq!(SyncPCMResult::Wrote(2, None), r);
-//     assert_eq!((2000, None),
-// 	       freqrange.get(0));
-//     assert_eq!([11.0, 12.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
-// 	       &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
+    assert_eq!([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+	       &outbuf0[..]);
+    let r = iseq.write_sync_pcm(&mut outbuf1);
+    assert_eq!(SyncPCMResult::Wrote(8, None), r);
+    assert_eq!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+	       &outbuf1[..]);
+}
 
-//     let ait2 = iterator::mock(vec![vec![AQOp::SetFreq(1000),
-// 					AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
-// 					AQOp::WaitMillis(1000)]]);
-//     aq.set_source(ait2);
-//     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2));
-//     assert_eq!(SyncPCMResult::Flush, r);
-//     let r = aq.write_flex_pcm(&mut outbuf[2..], &mut freqrange.at_offset(2));
+#[cfg(test)]
+#[test]
+fn test_replace_iterator() {
+    let mut outbuf = [-1.0; 8];
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(10,4))]),
+				       AQOp::WaitMillis(1000)]]);
+    let ssrc = setup_samplesource(vec![
+	(0, 10, 1000, 1.0, 10),
+	(10, 4, 2000, 11.0, 4),
+    ]);
+    let mut iseq = IteratorSequencer::nw(ait, ssrc);
+    assert_eq!(SyncPCMResult::Flush, iseq.write_sync_pcm(&mut outbuf));
+    let r = iseq.write_sync_pcm(&mut outbuf[0..2]);
 
-//     assert_eq!([11.0, 12.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-// 	       &outbuf[..]);
-//     assert_eq!(SyncPCMResult::Wrote(6, None), r);
-// }
+    assert_eq!(SyncPCMResult::Wrote(2, None), r);
+    assert_eq!([11.0, 12.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
+	       &outbuf[..]);
 
-// #[cfg(test)]
-// #[test]
-// fn test_sample_loop_interrupted() {
-//     let mut outbuf = [-1.0; 12];
+    let ait2 = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+					AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,10))]),
+					AQOp::WaitMillis(1000)]]);
+    iseq.set_source(ait2);
+    let r = iseq.write_sync_pcm(&mut outbuf[2..]);
+    assert_eq!(SyncPCMResult::Flush, r);
+    let r = iseq.write_sync_pcm(&mut outbuf[2..]);
 
-//     let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
-// 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
-// 				       AQOp::WaitMillis(2),
-// 				       AQOp::SetVolume(100.0),
-// 				       AQOp::WaitMillis(2),
-// 				       AQOp::SetFreq(2000),
-// 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
-// 				       AQOp::WaitMillis(4),
-//     ]]);
-//     let ssrc = setup_samplesource();
-//     let mut aq = IteratorSequencer::nw(ait, ssrc);
-//     let mut freqrange = FreqRange::new();
-//     let r = aq.write_flex_pcm(&mut outbuf, &mut freqrange);
-//     assert_eq!([1.0, 2.0, 300.0, 100.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0],
-// 	       &outbuf[..]);
-//     assert_eq!(SyncPCMResult::Wrote(12, None), r);
-// }
+    assert_eq!([11.0, 12.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+	       &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(6, None), r);
+}
 
-// #[cfg(test)]
-// #[test]
-// fn test_wait_on_timeslice() {
-//     let mut outbuf = [-1.0; 20];
+#[cfg(test)]
+#[test]
+fn test_sample_silence_in_between() {
+    let mut outbuf = [-1.0; 12];
 
-//     let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
-// 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
-// 				       AQOp::WaitMillis(2),
-// 				       AQOp::SetVolume(100.0),
-// 				       AQOp::Timeslice(1),
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Once(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(100.0),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
+				       AQOp::WaitMillis(4),
+    ]]);
+    let ssrc = setup_samplesource(vec![
+	(0, 3, 1000, 1.0, 3),
+	(0, 3, 2000, 111111.0, 3),
+	(10, 3, 2000, 11.0, 3),
+    ]);
+    let mut iseq = IteratorSequencer::nw(ait, ssrc);
+    assert_eq!(SyncPCMResult::Flush, iseq.write_sync_pcm(&mut outbuf));
+    let r = iseq.write_sync_pcm(&mut outbuf);
 
-// 				       AQOp::SetVolume(1000.0),
-// 				       AQOp::WaitMillis(1),
-// 				       AQOp::SetVolume(1.0),
-// 				       AQOp::SetFreq(2000),
-// 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
-// 				       AQOp::WaitMillis(1),
-// 				       AQOp::Timeslice(2),
-// 				       AQOp::SetVolume(0.5),
+    assert_eq!([1.0, 2.0, 300.0, 0.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0],
+	       &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(12, None), r);
+}
 
-// 				       AQOp::WaitMillis(3),
-// 				       AQOp::Timeslice(3),
-//     ]]);
-//     let ssrc = setup_samplesource();
-//     let mut aq = IteratorSequencer::nw(ait, ssrc);
-//     let mut freqrange = FreqRange::new();
+#[cfg(test)]
+#[test]
+fn test_sample_loop_interrupted() {
+    let mut outbuf = [-1.0; 12];
 
-//     let r = aq.write_flex_pcm(&mut outbuf[0..1], &mut freqrange);
-//     assert_eq!(SyncPCMResult::Wrote(1, None), r);
-//     let r = aq.write_flex_pcm(&mut outbuf[1..5], &mut freqrange.at_offset(1));
-//     assert_eq!(SyncPCMResult::Wrote(1, Some(1)), r);
-//     let r = aq.write_flex_pcm(&mut outbuf[2..5], &mut freqrange.at_offset(2));
-//     assert_eq!(SyncPCMResult::Wrote(3, Some(1)), r);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(100.0),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
+				       AQOp::WaitMillis(4),
+    ]]);
+    let ssrc = setup_samplesource(vec![
+	(0, 3, 1000, 1.0, 3),
+	(0, 3, 2000, 111111.0, 3),
+	(10, 3, 2000, 11.0, 3),
+    ]);
+    let mut iseq = IteratorSequencer::nw(ait, ssrc);
+    assert_eq!(SyncPCMResult::Flush, iseq.write_sync_pcm(&mut outbuf));
+    let r = iseq.write_sync_pcm(&mut outbuf);
 
-//     assert_eq!([1.0, 2.0,
-// 		// ts-1 available
-// 		300.0, 100.0, 200.0,
-// 		// ts-1 active
-// 		-1.0, -1.0, -1.0, -1.0, -1.0],
-// 	       &outbuf[..10]);
+    assert_eq!([1.0, 2.0, 300.0, 100.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0, 1300.0, 1100.0, 1200.0],
+	       &outbuf[..]);
+    assert_eq!(SyncPCMResult::Wrote(12, None), r);
+}
 
-//     aq.advance_sync(1);
+#[ignore]
+#[cfg(test)]
+#[test]
+fn test_wait_on_timeslice() {
+    let mut outbuf = [-1.0; 20];
 
-//     let r = aq.write_flex_pcm(&mut outbuf[5..], &mut freqrange.at_offset(5));
-//     assert_eq!(SyncPCMResult::Wrote(3, Some(2)), r);
+    let ait = iterator::mock(vec![vec![AQOp::SetFreq(1000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(0,3))]),
+				       AQOp::WaitMillis(2),
+				       AQOp::SetVolume(100.0),
+				       AQOp::Timeslice(1),
 
-//     assert_eq!([1.0, 2.0,
-// 		// ts-1 available
-// 		300.0, 100.0, 200.0,
-// 		// ts-1 active
-// 		3000.0, 11.0, 12.0,
-// 		// ts-2 available
-// 		-1.0, -1.0],
-// 	       &outbuf[..10]);
+				       AQOp::SetVolume(1000.0),
+				       AQOp::WaitMillis(1),
+				       AQOp::SetVolume(1.0),
+				       AQOp::SetFreq(2000),
+				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
+				       AQOp::WaitMillis(1),
+				       AQOp::Timeslice(2),
+				       AQOp::SetVolume(0.5),
 
-//     let r = aq.write_flex_pcm(&mut outbuf[8..10], &mut freqrange.at_offset(8));
-//     assert_eq!(SyncPCMResult::Wrote(2, Some(2)), r);
+				       AQOp::WaitMillis(3),
+				       AQOp::Timeslice(3),
+    ]]);
+    let ssrc = setup_samplesource(vec![
+	(0, 3, 1000, 1.0, 3),
+	(10, 3, 2000, 11.0, 3),
+    ]);
+    let mut iseq = IteratorSequencer::nw(ait, ssrc);
+    assert_eq!(SyncPCMResult::Flush, iseq.write_sync_pcm(&mut outbuf));
+    let r = iseq.write_sync_pcm(&mut outbuf[0..1]);
+    assert_eq!(SyncPCMResult::Wrote(1, None), r);
+    let r = iseq.write_sync_pcm(&mut outbuf[1..5]);
+    assert_eq!(SyncPCMResult::Wrote(1, Some(1)), r);
+    let r = iseq.write_sync_pcm(&mut outbuf[2..5]);
+    assert_eq!(SyncPCMResult::Wrote(3, Some(1)), r);
 
-//     assert_eq!([1.0, 2.0,
-// 		// ts-1 available
-// 		300.0, 100.0, 200.0,
-// 		// ts-1 active
-// 		3000.0, 11.0, 12.0,
-// 		// ts-2 available
-// 		13.0, 11.0,
-// 		-1.0],
-// 	       &outbuf[..11]);
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		-1.0, -1.0, -1.0, -1.0, -1.0],
+	       &outbuf[..10]);
 
-//     aq.advance_sync(2);
+    iseq.advance_sync(1);
 
-//     let r = aq.write_flex_pcm(&mut outbuf[10..], &mut freqrange.at_offset(10));
-//     assert_eq!(SyncPCMResult::Wrote(6, Some(3)), r);
+    let r = iseq.write_sync_pcm(&mut outbuf[5..]);
+    assert_eq!(SyncPCMResult::Wrote(3, Some(2)), r);
 
-//     assert_eq!([1.0, 2.0,
-// 		// ts-1 available
-// 		300.0, 100.0, 200.0,
-// 		// ts-1 active
-// 		3000.0, 11.0, 12.0,
-// 		// ts-2 available
-// 		13.0, 11.0,
-// 		// ts-2 active
-// 		6.0, 6.5, 5.5, 6.0, 6.5, 5.5,
-// 		// ts-3 available
-// 		-1.0,
-// 		-1.0,
-// 		-1.0,
-// 		-1.0,    ],
-// 	       &outbuf[..]);
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		3000.0, 11.0, 12.0,
+		// ts-2 available
+		-1.0, -1.0],
+	       &outbuf[..10]);
 
-// }
+    let r = iseq.write_sync_pcm(&mut outbuf[8..10]);
+    assert_eq!(SyncPCMResult::Wrote(2, Some(2)), r);
+
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		3000.0, 11.0, 12.0,
+		// ts-2 available
+		13.0, 11.0,
+		-1.0],
+	       &outbuf[..11]);
+
+    iseq.advance_sync(2);
+
+    let r = iseq.write_sync_pcm(&mut outbuf[10..]);
+    assert_eq!(SyncPCMResult::Wrote(6, Some(3)), r);
+
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		3000.0, 11.0, 12.0,
+		// ts-2 available
+		13.0, 11.0,
+		// ts-2 active
+		6.0, 6.5, 5.5, 6.0, 6.5, 5.5,
+		// ts-3 available
+		-1.0,
+		-1.0,
+		-1.0,
+		-1.0,    ],
+	       &outbuf[..]);
+
+}
