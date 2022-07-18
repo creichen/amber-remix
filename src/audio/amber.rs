@@ -63,6 +63,19 @@ pub const PERIODS : [APeriod; 7 * 12] = [
     3424 , 3232 , 3048 , 2880 , 2712 , 2560 , 2416 , 2280 , 2152 , 2032 ,  1920 ,  1812,
     6848 , 6464 , 6096 , 5760 , 5424 , 5120 , 4832 , 4560 , 4304 , 4064 ,  3840 ,  3624];
 
+/// Returns the (minimum, maximum) frequencies that we can see on notes.
+/// The actual min/max frequencies may vary due to vibrato, theoretically by up to 1/8th.
+pub fn get_min_max_freq() -> (Freq, Freq) {
+    let mut minfreq = period_to_freq(PERIODS[0]);
+    let mut maxfreq = period_to_freq(PERIODS[0]);
+    for p in PERIODS {
+	let freq = period_to_freq(p);
+	minfreq = Freq::min(minfreq, freq);
+	maxfreq = Freq::max(maxfreq, freq);
+    }
+    return (minfreq, maxfreq);
+}
+
 pub fn period_to_freq(period : APeriod) -> Freq {
     return (2.0 * 3546894.6 / period as f32) as Freq;
 }
@@ -905,16 +918,14 @@ impl SongIterator {
 	pwarn!("-- division: {}/{}", self.division_index, self.division_last);
     }
 
-    pub fn send_silence(&self, queue : &mut VecDeque<AQOp>) {
-	queue.push_back(AQOp::SetVolume(0.0));
-	queue.push_back(AQOp::SetFreq(50));
-	queue.push_back(AQOp::WaitMillis(1000));
+    pub fn end(&self, queue : &mut VecDeque<AQOp>) {
+	queue.push_back(AQOp::End);
     }
 
     /// Callback from the song iterator for each channel
     pub fn play_channel(&mut self, chan_index : usize, queue : &mut VecDeque<AQOp>) {
 	if self.stopped {
-	    self.send_silence(queue);
+	    self.end(queue);
 	}
 
 	if self.channels[chan_index].is_done() {

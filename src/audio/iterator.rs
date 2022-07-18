@@ -29,6 +29,7 @@ pub enum AQOp {
     SetFreq(Freq),
     /// Set audio volume as fraction (applies immediately)
     SetVolume(f32),
+    End,
 }
 
 #[derive(Clone, Copy, Debug)]

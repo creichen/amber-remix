@@ -10,9 +10,9 @@ use std::panic;
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
-use self::{queue::AudioIteratorProcessor, samplesource::SampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}, writer::RcSyncBarrier, pcmsync}, iterator::ArcPoly};
+use self::{queue::AudioIteratorProcessor, samplesource::RcSampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}, writer::RcSyncBarrier, pcmsync}, iterator::ArcPoly, iterator_sequencer::IteratorSequencer};
 #[allow(unused)]
-use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::PCMFlexWriter}, queue::AudioQueue, samplesource::SimpleSampleSource};
+use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::PCMFlexWriter}, queue::AudioQueue, samplesource::SimpleSampleSource, samplesource::SincSampleSource};
 pub use self::iterator::AudioIterator;
 pub use self::iterator::MockAudioIterator;
 pub use self::iterator::AQOp;
@@ -24,13 +24,24 @@ pub use self::iterator::ArcIt;
 mod dsp;
 mod queue;
 mod iterator;
+mod iterator_sequencer;
 mod samplesource;
 pub mod amber;
 
 const AUDIO_BUF_MAX_SIZE : usize = 16384;
 
 // ================================================================================
-// Filter
+// Filtering Pipeline
+
+trait AudioPipeline {
+    // Update audio iterator
+    fn set_iterator(&mut self, it : ArcIt);
+    fn fill_stereo_output(&mut self, out : &mut [f32]);
+}
+
+type RcAudioPipeline = Rc<RefCell<dyn AudioPipeline>>;
+
+// ----------------------------------------
 
 struct LinearFilteringPipeline {
     it_proc : Rc<RefCell<dyn AudioIteratorProcessor>>,
@@ -41,25 +52,65 @@ struct LinearFilteringPipeline {
 
 impl LinearFilteringPipeline {
     fn new(it : ArcIt, vol_left : f32, vol_right : f32,
-	   sample_source : Rc<dyn SampleSource>, output_freq : Freq,
+	   sample_source : RcSampleSource, output_freq : Freq,
 	   sync : RcSyncBarrier,
-	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> LinearFilteringPipeline {
-	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue, output_freq)));
+	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> RcAudioPipeline {
+	let aqueue = Rc::new(RefCell::new(AudioQueue::new(it, sample_source, sen_queue)));
 	let unsynced_linear_filter = Rc::new(RefCell::new(LinearFilter::new(40000, output_freq, aqueue.clone(), sen_linear)));
 	let linear_filter = sync.borrow_mut().sync(unsynced_linear_filter);
 	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, linear_filter.clone(), sen_stereo);
 						  s.set_volume(vol_left, vol_right);
 						  s}));
-	return LinearFilteringPipeline {
+	return Rc::new(RefCell::new(LinearFilteringPipeline {
 	    it_proc : aqueue.clone(),
 	    // aqueue,
 	    // linear_filter,
 	    stereo_mapper,
-	}
+	}));
     }
+}
 
+impl AudioPipeline for LinearFilteringPipeline {
     fn set_iterator(&mut self, it : ArcIt) {
 	self.it_proc.borrow_mut().set_source(it);
+    }
+
+    fn fill_stereo_output(&mut self, out : &mut [f32]) {
+        self.stereo_mapper.borrow_mut().write_stereo_pcm(out);
+    }
+}
+// ----------------------------------------
+
+struct SincPipeline {
+    it_proc : Rc<RefCell<dyn AudioIteratorProcessor>>,
+    stereo_mapper : Rc<RefCell<StereoMapper>>,
+}
+
+impl SincPipeline {
+    fn new(it : ArcIt, vol_left : f32, vol_right : f32,
+	   samples : Rc<RefCell<SincSampleSource>>,
+	   target_freq : Freq,
+	   sync : RcSyncBarrier,
+	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> RcAudioPipeline {
+	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, samples.clone(), sen_queue)));
+	let itseq = sync.borrow_mut().sync(itseq_base.clone());
+	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
+						  s.set_volume(vol_left, vol_right);
+						  s}));
+	return Rc::new(RefCell::new(SincPipeline {
+	    it_proc : itseq_base.clone(),
+	    stereo_mapper,
+	}));
+    }
+}
+
+impl AudioPipeline for SincPipeline {
+    fn set_iterator(&mut self, it : ArcIt) {
+	self.it_proc.borrow_mut().set_source(it);
+    }
+
+    fn fill_stereo_output(&mut self, out : &mut [f32]) {
+        self.stereo_mapper.borrow_mut().write_stereo_pcm(out);
     }
 }
 
@@ -232,7 +283,7 @@ impl Mixer {
 // MixerThread
 
 struct MixerThread {
-    amiga_pipelines : [LinearFilteringPipeline; 4],
+    amiga_pipelines : [RcAudioPipeline; 4],
     // aux_pipeline : LinearFilteringPipeline,
     control_channel : Receiver<MixerOp>,
     buf : Arc<Mutex<RingBuf>>,
@@ -240,13 +291,13 @@ struct MixerThread {
     trackers : Vec<RefCell<Tracker>>,
 }
 
-fn make_pipeline(name : &str,
+fn make_linear_pipeline(name : &str,
 		 left : f32, right : f32,
-		 sample_source : Rc<dyn SampleSource>,
+		 sample_source : RcSampleSource,
 		 freq : Freq,
 		 sync : RcSyncBarrier,
 		 trackers : &mut Vec<RefCell<Tracker>>
-                 ) -> LinearFilteringPipeline {
+                 ) -> RcAudioPipeline {
     let tracker_aqueue = Tracker::new(format!("{name}:AQueue"));
     let tracker_linear = Tracker::new(format!("{name}:LFiltr"));
     let tracker_stereo = Tracker::new(format!("{name}:Stereo"));
@@ -263,17 +314,60 @@ fn make_pipeline(name : &str,
     return pipeline;
 }
 
+fn make_sinc_pipeline(name : &str,
+		 left : f32, right : f32,
+		 sample_source : Rc<RefCell<SincSampleSource>>,
+		 freq : Freq,
+		 sync : RcSyncBarrier,
+		 trackers : &mut Vec<RefCell<Tracker>>
+                 ) -> RcAudioPipeline {
+    let tracker_aqueue = Tracker::new(format!("{name}:AQueue"));
+    let tracker_linear = Tracker::new(format!("{name}:LFiltr"));
+    let tracker_stereo = Tracker::new(format!("{name}:Stereo"));
+
+    let pipeline = SincPipeline::new(iterator::silent(),
+				     left, right,
+				     sample_source, freq,
+				     sync,
+				     tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
+
+    trackers.push(RefCell::new(tracker_aqueue));
+    trackers.push(RefCell::new(tracker_linear));
+    trackers.push(RefCell::new(tracker_stereo));
+    return pipeline;
+}
+
 fn run_mixer_thread(freq : Freq,
 		    samples : Arc<Vec<i8>>,
 		    buf : Arc<Mutex<RingBuf>>,
 		    control_channel : Receiver<MixerOp>,
-		    callback_vtsensor : TrackerSensor)
-{
-    let sample_source = Rc::new(SimpleSampleSource::from_iter(samples.iter()));
-
+		    callback_vtsensor : TrackerSensor) {
     let tracker_stereo = Tracker::new("Stereo".to_string());
     let tracker_aqueue = Tracker::new("AudioQueue".to_string());
     let tracker_linear = Tracker::new("LinearFilter".to_string());
+
+    let sync_amiga = pcmsync::new_basic();
+    let mut trackers = vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo)];
+
+    let amiga_pipelines : [RcAudioPipeline; 4] = if false {
+	let sample_source = Rc::new(RefCell::new(SimpleSampleSource::from_iter(samples.iter())));
+	[
+	    make_linear_pipeline("A0L", 0.5, 0.0, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_linear_pipeline("A1R", 0.0, 0.5, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_linear_pipeline("A2R", 0.0, 0.5, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_linear_pipeline("A3L", 0.5, 0.0, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
+	]
+    } else {
+	let samples = Rc::new(RefCell::new(SincSampleSource::from_i8(freq, samples.as_ref())));
+	[
+	    make_sinc_pipeline("A0L", 0.5, 0.0, samples.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_sinc_pipeline("A1R", 0.0, 0.5, samples.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_sinc_pipeline("A2R", 0.0, 0.5, samples.clone(), freq, sync_amiga.clone(), &mut trackers),
+	    make_sinc_pipeline("A3L", 0.5, 0.0, samples.clone(), freq, sync_amiga.clone(), &mut trackers),
+	]
+    };
+
+    //
 
     // let sync_pipeline = pcmsync::new_basic();
 
@@ -283,15 +377,9 @@ fn run_mixer_thread(freq : Freq,
     // 						sync_pipeline,
     // 						tracker_aqueue.sensor(), tracker_linear.sensor(), tracker_stereo.sensor());
 
-    let sync_amiga = pcmsync::new_basic();
 
-    let mut trackers = vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo)];
-    let amiga_pipelines = [
-	make_pipeline("A0L", 0.5, 0.0, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
-	make_pipeline("A1R", 0.0, 0.5, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
-	make_pipeline("A2R", 0.0, 0.5, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
-	make_pipeline("A3L", 0.5, 0.0, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),
-    ];
+    // let amiga_pipelines = [
+    // ];
 
     let mut tracker_callback = Tracker::new("Callback".to_string());
     tracker_callback.replace_tracker(callback_vtsensor);
@@ -373,7 +461,7 @@ impl MixerThread {
 		    }
 		    let mut i = 0;
 		    for p in &mut self.amiga_pipelines {
-			p.set_iterator(its[i].clone());
+			p.borrow_mut().set_iterator(its[i].clone());
 			i += 1;
 		    }
 		}
@@ -422,7 +510,7 @@ impl MixerThread {
 	    // self.aux_pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
 	    // Run the four Amiga pipelines
 	    for pipeline in &self.amiga_pipelines {
-		pipeline.stereo_mapper.borrow_mut().write_stereo_pcm(&mut inner_buf);
+		pipeline.borrow_mut().fill_stereo_output(&mut inner_buf);
 	    }
 	    samples_transferred += FILL_BUFFER_SIZE;
 	    self.tmp_buf.read_from(&inner_buf);
