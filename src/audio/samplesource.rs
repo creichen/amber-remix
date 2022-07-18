@@ -82,6 +82,11 @@ impl SampleWriter {
 	return self.count;
     }
 
+    /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR
+    pub fn forward_to_offset(&mut self, off_nominator : usize, off_denominator : usize) {
+	self.count = (off_nominator * self.data.len()) / off_denominator;
+    }
+
     pub fn len(&self) -> usize {
 	return self.range.len
     }
@@ -165,6 +170,22 @@ pub struct SincSampleSource {
 }
 
 impl SincSampleSource {
+    /// For testig: nw(freq, [((start, len, targetfreq), samples)])
+    #[cfg(test)]
+    pub fn nw<'a>(out_freq : Freq, data : Vec<((usize, usize, usize), Vec<f32>)>) -> SincSampleSource {
+	let mut cache = HashMap::new();
+	for (k, v) in data.iter() {
+	    cache.insert(*k, Rc::new(v[..].to_vec()));
+	}
+	return SincSampleSource {
+	    cache,
+	    base_freq : out_freq,
+	    base_target_freq : out_freq as f64,
+	    resampler_map : HashMap::new(),
+	    data : Rc::new(vec![]),
+	}
+    }
+
     pub fn new<'a>(out_freq : Freq, data : Rc<Vec<f64>>) -> SincSampleSource {
 	let (min_out_freq, max_out_freq) = amber::get_min_max_freq();
 	// These frequencies are for regular notes.  For vibrato, they may be different.

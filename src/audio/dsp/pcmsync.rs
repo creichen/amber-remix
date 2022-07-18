@@ -83,7 +83,7 @@ impl BasicWriterState {
 	    ptrace!("  wrbuf1 : {}/{count}", wrbuf.len());
 	    samples_offered_by_our_buffer = wrbuf.len();
 	    let result = wr.write_sync_pcm(wrbuf);
-	    if let SyncPCMResult::Wrote(actual_count, _) = result {
+	    if let SyncPCMResult::Wrote(actual_count, None) = result {
 		if samples_offered_by_our_buffer < count {
 		    written1 = actual_count;
 		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
