@@ -41,7 +41,7 @@ pub enum AQSample {
     /// Play specified sample once, but carry over the previous sample's offset.
     /// The optional value is filled in by the audio queue processor.
     /// This is useful for "slider" samples that have closely aligned waveforms and switch out frequently.
-    OnceAtOffset(SampleRange, Option<usize>),
+    OnceAtOffset(SampleRange, Option<(usize, usize)>),
 }
 
 impl From<BasicSample> for AQOp {

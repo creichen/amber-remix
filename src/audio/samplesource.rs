@@ -84,7 +84,13 @@ impl SampleWriter {
 
     /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR
     pub fn forward_to_offset(&mut self, off_nominator : usize, off_denominator : usize) {
-	self.count = (off_nominator * self.data.len()) / off_denominator;
+	if off_denominator != 0 {
+	    let count = (off_nominator * self.data.len()) / off_denominator;
+	    if count > self.range.len {
+		panic!("Asked to move to location {off_nominator}/{off_denominator}");
+	    }
+	    self.count = usize::min(count, self.range.len);
+	}
     }
 
     pub fn len(&self) -> usize {
@@ -202,7 +208,7 @@ impl SincSampleSource {
 
 	let mut resampler_map = HashMap::new();
 
-	for size in [64, 2310, 3072, 7168, 10366, 12226] {
+	for size in [64, 366, 2310, 3072, 7168, 10366, 12226] {
 	    let mut sinc_len = 256;
 	    while sinc_len > size {
 		sinc_len >>= 1;

@@ -128,7 +128,7 @@ impl AudioQueue {
 	self.current_sample_vec.clear();
 	for x in svec {
 	    if let AQSample::OnceAtOffset(samplerange, None) = x {
-		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some(self.current_sample.get_offset())));
+		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), 0))));
 	    } else {
 		self.current_sample_vec.push_back(x);
 	    }
@@ -211,7 +211,7 @@ impl PCMFlexWriter for AudioQueue {
 
 		    let opt_range = match self.current_sample_vec.pop_front() {
 			Some(AQSample::Once(range)) => Some(range),
-			Some(AQSample::OnceAtOffset(range, Some(off)))
+			Some(AQSample::OnceAtOffset(range, Some((off, _))))
 			                            => Some(range.at_offset(off)),
 			Some(AQSample::OnceAtOffset(_, None))
 			                            => panic!("Unexpected"),
