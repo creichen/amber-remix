@@ -3,7 +3,7 @@
 
 // General utilities
 
-pub const LOGGING : bool = false;
+pub const LOGGING : bool = true;
 pub const WARNING : bool = true;
 pub const CARGO_TEST : bool = cfg!(test);
 

@@ -596,7 +596,7 @@ fn test_freq_switch_sample_boundary() {
     let r = iseq.write_sync_pcm(&mut outbuf);
 
     // expect hard switches
-    assert_eq!([1.0, 2.0, 11.0, 12.0, 113.0, 21.0, 22.0, 23.0, 24.0, 25.0],
+    assert_eq!([1.0, 2.0, 11.0, 112.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0],
 	       &outbuf[..]);
     assert_eq!(SyncPCMResult::Wrote(10, None), r);
 }
@@ -697,7 +697,7 @@ fn test_sample_silence_in_between() {
 				       AQOp::WaitMillis(2),
 				       AQOp::SetFreq(2000),
 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
-				       AQOp::WaitMillis(4),
+				       AQOp::WaitMillis(10),
     ]]);
     let ssrc = setup_samplesource(vec![
 	(0, 3, 1000, 1.0, 3),
@@ -725,7 +725,7 @@ fn test_sample_loop_interrupted() {
 				       AQOp::WaitMillis(2),
 				       AQOp::SetFreq(2000),
 				       AQOp::SetSamples(vec![AQSample::Loop(SampleRange::new(10,3))]),
-				       AQOp::WaitMillis(4),
+				       AQOp::WaitMillis(10),
     ]]);
     let ssrc = setup_samplesource(vec![
 	(0, 3, 1000, 1.0, 3),
@@ -762,6 +762,9 @@ fn test_wait_on_timeslice() {
 				       AQOp::SetVolume(0.5),
 
 				       AQOp::WaitMillis(3),
+				       AQOp::WaitMillis(1),
+				       AQOp::WaitMillis(1),
+				       AQOp::WaitMillis(1),
 				       AQOp::Timeslice(3),
     ]]);
     let ssrc = setup_samplesource(vec![
@@ -787,27 +790,27 @@ fn test_wait_on_timeslice() {
     iseq.advance_sync(1);
 
     let r = iseq.write_sync_pcm(&mut outbuf[5..]);
-    assert_eq!(SyncPCMResult::Wrote(3, Some(2)), r);
-
-    assert_eq!([1.0, 2.0,
-		// ts-1 available
-		300.0, 100.0, 200.0,
-		// ts-1 active
-		3000.0, 11.0, 12.0,
-		// ts-2 available
-		-1.0, -1.0],
-	       &outbuf[..10]);
-
-    let r = iseq.write_sync_pcm(&mut outbuf[8..10]);
     assert_eq!(SyncPCMResult::Wrote(2, Some(2)), r);
 
     assert_eq!([1.0, 2.0,
 		// ts-1 available
 		300.0, 100.0, 200.0,
 		// ts-1 active
-		3000.0, 11.0, 12.0,
+		3000.0, 11.0,
 		// ts-2 available
-		13.0, 11.0,
+		-1.0, -1.0, -1.0],
+	       &outbuf[..10]);
+
+    let r = iseq.write_sync_pcm(&mut outbuf[7..10]);
+    assert_eq!(SyncPCMResult::Wrote(3, Some(2)), r);
+
+    assert_eq!([1.0, 2.0,
+		// ts-1 available
+		300.0, 100.0, 200.0,
+		// ts-1 active
+		3000.0, 11.0,
+		// ts-2 available
+		12.0, 13.0, 11.0,
 		-1.0],
 	       &outbuf[..11]);
 
