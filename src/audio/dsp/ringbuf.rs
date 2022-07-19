@@ -147,7 +147,6 @@ impl RingBuf {
 	return Ok(to_remove);
     }
 
-    /// pop_front()
     pub fn read_from(&mut self, src : &[f32]) -> usize {
 	if self.is_full() {
 	    return 0;
