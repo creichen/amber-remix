@@ -91,6 +91,7 @@ impl PCMSyncWriter for DW {
 // ----------------------------------------
 // Tests
 
+#[ignore]
 #[cfg(test)]
 #[test]
 pub fn test_simple_1() {
@@ -108,3 +109,43 @@ pub fn test_simple_1() {
     assert_eq!([1.0, 2.0, 3.0, 9.0, 8.0, 8.0],
 	       &outbuf[..]);
 }
+
+
+#[ignore]
+#[cfg(test)]
+#[test]
+pub fn test_simple_4() {
+    // let mut outbuf = [0.0; 6];
+    // let mut testdw = DW::new(vec![
+    // 	(vec![1.0, 2.0, 3.0], vec![10.0]),
+    // 	(vec![8.0, 8.0, 8.0], vec![]),
+    // ]);
+    // let mut lcf = LinearCrossfade::new(1, testdw);
+    // assert_eq!(SyncPCMResult::Wrote(4, Some(0)),
+    // 	       lcf.write_sync_pcm(&mut outbuf));
+    // lcf.advance_sync(0);
+    // assert_eq!(SyncPCMResult::Wrote(2, None),
+    // 	       lcf.write_sync_pcm(&mut outbuf[4..]));
+    // assert_eq!([1.0, 2.0, 3.0, 9.0, 8.0, 8.0],
+    // 	       &outbuf[..]);
+}
+
+#[ignore]
+#[cfg(test)]
+#[test]
+pub fn test_4_interrupted() {
+    // let mut outbuf = [0.0; 6];
+    // let mut testdw = DW::new(vec![
+    // 	(vec![1.0, 2.0, 3.0], vec![10.0]),
+    // 	(vec![8.0, 8.0, 8.0], vec![]),
+    // ]);
+    // let mut lcf = LinearCrossfade::new(1, testdw);
+    // assert_eq!(SyncPCMResult::Wrote(4, Some(0)),
+    // 	       lcf.write_sync_pcm(&mut outbuf));
+    // lcf.advance_sync(0);
+    // assert_eq!(SyncPCMResult::Wrote(2, None),
+    // 	       lcf.write_sync_pcm(&mut outbuf[4..]));
+    // assert_eq!([1.0, 2.0, 3.0, 9.0, 8.0, 8.0],
+    // 	       &outbuf[..]);
+}
+
