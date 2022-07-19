@@ -10,4 +10,4 @@ pub mod linear;
 pub mod stereo_mapper;
 pub mod vtracker;
 pub mod pcmsync;
-// pub mod crossfade;
+pub mod crossfade_linear;
