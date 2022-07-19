@@ -7,37 +7,37 @@ use crate::util::IndexLen;
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use super::{writer::{PCMSyncWriter, Timeslice, SyncPCMResult, FrequencyTrait}, ringbuf::RingBuf};
-use std::{sync::{Mutex, Arc}, ops::DerefMut};
+use super::{writer::{PCMSyncWriter, Timeslice, SyncPCMResult, FrequencyTrait, RcSyncWriter}, ringbuf::RingBuf};
+use std::{ops::DerefMut, rc::Rc, cell::RefCell};
 
 
 pub struct LinearCrossfade {
-    writer : Arc<Mutex<dyn PCMSyncWriter>>,
+    writer : RcSyncWriter,
     buf : RingBuf,
-    transition_mode : bool,
 }
 
 impl LinearCrossfade {
-    pub fn new(fade_window_size : usize, writer : Arc<Mutex<dyn PCMSyncWriter>>) -> LinearCrossfade {
+    pub fn new(fade_window_size : usize, writer : RcSyncWriter) -> LinearCrossfade {
 	LinearCrossfade {
 	    writer,
 	    buf : RingBuf::new(fade_window_size),
-	    transition_mode : false,
 	}
+    }
+
+    pub fn new_rc(fade_window_size : usize, writer : RcSyncWriter) -> RcSyncWriter {
+	return Rc::new(RefCell::new(LinearCrossfade::new(fade_window_size, writer)));
     }
 }
 
 impl FrequencyTrait for LinearCrossfade {
     fn frequency(&self) -> crate::audio::Freq {
-	let guard = self.writer.lock().unwrap();
-	return guard.frequency();
+	return self.writer.borrow().frequency();
     }
 }
 
 impl PCMSyncWriter for LinearCrossfade {
     fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
-	let mut guard = self.writer.lock().unwrap();
-	let result = guard.deref_mut().write_sync_pcm(output);
+	let result = self.writer.borrow_mut().write_sync_pcm(output);
 
 	if self.buf.len() > 0 {
 	    // We are currently cross-fading?
@@ -62,16 +62,15 @@ impl PCMSyncWriter for LinearCrossfade {
     }
 
     fn advance_sync(&mut self, timeslice : Timeslice) {
-	let mut guard = self.writer.lock().unwrap();
 	while !self.buf.is_full() {
 	    let wrbuf = self.buf.wrbuf(self.buf.remaining_capacity());
-	    match guard.write_sync_pcm(wrbuf) {
+	    match self.writer.borrow_mut().write_sync_pcm(wrbuf) {
 		SyncPCMResult::Wrote(amount, _) => { assert_eq!(amount, wrbuf.len()); },
 		SyncPCMResult::Flush            => { self.buf.reset();
 						     break; },
 	    }
 	}
-	guard.deref_mut().advance_sync(timeslice);
+	self.writer.borrow_mut().deref_mut().advance_sync(timeslice);
     }
 }
 
@@ -97,8 +96,8 @@ struct DW {
 
 #[cfg(test)]
 impl DW {
-    pub fn new(slices : Vec<(Vec<f32>, Vec<f32>)>) -> Arc<Mutex<DW>> {
-	Arc::new(Mutex::new(DW {
+    pub fn new(slices : Vec<(Vec<f32>, Vec<f32>)>) -> Rc<RefCell<DW>> {
+	Rc::new(RefCell::new(DW {
 	    slices : slices.iter().map(|(before, after)| DWSlice { before : VecDeque::from(before[..].to_vec()), after : VecDeque::from(after[..].to_vec()) }).collect(),
 	    slice_index : 0,
 	}))

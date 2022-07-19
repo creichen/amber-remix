@@ -10,6 +10,8 @@ use std::panic;
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
+use crate::audio::dsp::{crossfade_linear::LinearCrossfade, writer::RcSyncWriter};
+
 use self::{queue::AudioIteratorProcessor, samplesource::RcSampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}, writer::RcSyncBarrier, pcmsync}, iterator::ArcPoly, iterator_sequencer::IteratorSequencer};
 #[allow(unused)]
 use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::PCMFlexWriter}, queue::AudioQueue, samplesource::SimpleSampleSource, samplesource::SincSampleSource};
@@ -92,8 +94,12 @@ impl SincPipeline {
 	   target_freq : Freq,
 	   sync : RcSyncBarrier,
 	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> RcAudioPipeline {
+	const LINEAR_FILTER : usize = 4;
 	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, samples.clone(), sen_queue)));
-	let itseq = sync.borrow_mut().sync(itseq_base.clone());
+	let itseq : RcSyncWriter = if LINEAR_FILTER == 0 { itseq_base.clone() } else {
+	    LinearCrossfade::new_rc(LINEAR_FILTER, itseq_base.clone())
+	};
+	let itseq = sync.borrow_mut().sync(itseq.clone());
 	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
 						  s.set_volume(vol_left, vol_right);
 						  s}));
