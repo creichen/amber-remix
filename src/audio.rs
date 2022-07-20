@@ -53,6 +53,7 @@ struct LinearFilteringPipeline {
 }
 
 impl LinearFilteringPipeline {
+    #[allow(unused)]
     fn new(it : ArcIt, vol_left : f32, vol_right : f32,
 	   sample_source : RcSampleSource, output_freq : Freq,
 	   sync : RcSyncBarrier,
@@ -89,6 +90,7 @@ struct SincPipeline {
 }
 
 impl SincPipeline {
+    #[allow(unused)]
     fn new_linear(linear_crossfade_samples: usize, it : ArcIt, vol_left : f32, vol_right : f32,
 	   samples : Rc<RefCell<SincSampleSource>>,
 	   target_freq : Freq,
@@ -108,6 +110,7 @@ impl SincPipeline {
 	}));
     }
 
+    #[allow(unused)]
     fn new(it : ArcIt, vol_left : f32, vol_right : f32,
 	   samples : Rc<RefCell<SincSampleSource>>,
 	   target_freq : Freq,

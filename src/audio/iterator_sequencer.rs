@@ -20,7 +20,7 @@ use crate::audio::SampleRange;
 // use std::rc::Rc;
 use super::{samplesource::{SincSampleSource, SampleWriter}, dsp::{writer::Timeslice, vtracker::TrackerSensor}, AQSample, ArcIt, AQOp, Freq};
 
-const DEBUG : bool = true;
+//const DEBUG : bool = true;
 
 // pub trait AudioIteratorProcessor {
 //     fn flush(&mut self);
@@ -74,7 +74,7 @@ pub struct IteratorSequencer {
     target_freq : Freq,        // output frequency target
     upsampling_lshift : usize, // target_freq is upsampled by factor 2^upsampling_lshift
 
-    tracker : TrackerSensor,
+//    tracker : TrackerSensor,
 }
 
 impl IteratorSequencer {
@@ -83,7 +83,7 @@ impl IteratorSequencer {
 	return IteratorSequencer::new_with_source(audio_source, 1000, 0, sample_source, TrackerSensor::new());
     }
 
-    pub fn new<'a>(out_freq : Freq, sample_source : Rc<RefCell<SincSampleSource>>, tracker : TrackerSensor) -> IteratorSequencer {
+    pub fn new<'a>(out_freq : Freq, sample_source : Rc<RefCell<SincSampleSource>>, _tracker : TrackerSensor) -> IteratorSequencer {
 	return IteratorSequencer {
 	    sample_source,
 	    current_sample : SampleWriter::empty(),
@@ -102,7 +102,7 @@ impl IteratorSequencer {
 	    target_freq : out_freq,
 	    upsampling_lshift : 0,
 
-	    tracker,
+//	    tracker,
 	}
     }
 
@@ -124,6 +124,7 @@ impl IteratorSequencer {
 	self.samples_until_next_poll = 0;
     }
 
+    #[allow(unused)]
     pub fn samples_remaining(&self) -> usize {
 	//return self.current_sample.remaining() * self.current_sample.get_freq() / self.target_freq;
 	return self.current_sample.remaining() * self.target_freq / self.current_sample.get_freq();
@@ -305,23 +306,11 @@ impl IteratorSequencer {
 	return self.current_sample.is_empty();
     }
 
-    fn waiting_for_next_timeslice(&self) -> bool {
-	return self.timeslice.is_some();
-    }
-
     fn success(&mut self, written : usize) -> SyncPCMResult {
 	self.timeslice.as_mut().map(|x| x.mark_propagated() );
 	ptrace!("-------> Wrote(({written}, {:?})); now: must report={} (should be false)", self.timeslice.as_ref().map(|x| x.timeslice),
 		self.must_report_timeslice());
 	return SyncPCMResult::Wrote(written, self.timeslice.as_ref().map(|x| x.timeslice));
-    }
-
-    fn have_reported_timeslice_update(&self) -> bool {
-	return self.timeslice.as_ref().map_or_else(|| false, |x| x.update_propagated);
-    }
-
-    fn newly_at_timeslice_boundary(&self) -> bool {
-	return self.waiting_for_next_timeslice() && !self.have_reported_timeslice_update();
     }
 
     // fn have_bounded_time(&self) -> bool {

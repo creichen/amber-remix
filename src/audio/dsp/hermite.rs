@@ -12,7 +12,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use super::{writer::{PCMWriter, SyncPCMResult, FrequencyTrait, RcPCMWriter}, ringbuf::WindowedBuf};
+use super::{writer::{PCMWriter, FrequencyTrait, RcPCMWriter}, ringbuf::WindowedBuf};
 //use std::{ops::DerefMut, rc::Rc, cell::RefCell};
 
 pub trait HermiteDownsamplerTrait {
