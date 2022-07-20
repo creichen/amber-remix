@@ -832,18 +832,6 @@ impl AudioIterator for ChannelIterator {
 	self.state.num_ticks += 1;
     }
 
-    fn get_samples(&self) -> Arc<Vec<i8>> {
-	{
-	    assert!(self.samples.len() > 0);
-	}
-
-        return self.samples.clone();
-    }
-
-    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
-	self.samples = samples;
-    }
-
     fn clone_it(&self) -> ArcIt {
 	return Arc::new(Mutex::new((*self).clone()));
     }
@@ -893,7 +881,6 @@ struct SongIterator {
     division_first : usize,
     division_last : usize,
 
-    samples : Arc<Vec<i8>>,
     channels : Vec<ChannelIterator>,
 
     song_speed : usize,
@@ -909,7 +896,6 @@ impl SongIterator {
 	    division_index : 0,
 	    division_first : 0,
 	    division_last : 0,
-	    samples : Arc::new(vec![]),
 	    channels : vec![],
 	    song_speed : 5,
 	    stopped : false,
@@ -1004,17 +990,6 @@ impl SongIterator {
 	return self.channels[chan_index].next(queue);
     }
 
-    fn get_samples(&self) -> Arc<Vec<i8>> {
-	assert!(self.samples.len() > 0);
-	return self.samples.clone();
-    }
-
-    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
-	self.samples = samples.clone();
-	for chan in self.channels.iter_mut() {
-	    chan.set_default_samples(samples.clone());
-	}
-    }
 }
 
 #[derive(Clone)]
@@ -1029,16 +1004,6 @@ impl AudioIterator for SongChannelProxy {
 	guard.play_channel(self.index, queue);
     }
 
-    fn get_samples(&self) -> Arc<Vec<i8>> {
-        let guard = self.songit.lock().unwrap();
-	return guard.get_samples();
-    }
-
-    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
-        let mut guard = self.songit.lock().unwrap();
-	guard.set_default_samples(samples);
-    }
-
     fn clone_it(&self) -> ArcIt {
         return Arc::new(Mutex::new(self.clone()));
     }
@@ -1048,10 +1013,20 @@ impl PolyIterator for SongPolyIterator {
     fn get(&mut self) -> Vec<ArcIt> {
 	return self.ports.clone();
     }
+
+    fn get_samples(&self) -> Arc<Vec<i8>> {
+	assert!(self.samples.len() > 0);
+	return self.samples.clone();
+    }
+
+    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
+	self.samples = samples.clone();
+    }
 }
 
 struct SongPolyIterator {
     ports : Vec<ArcIt>,
+    samples : Arc<Vec<i8>>,
 }
 
 impl SongPolyIterator {
@@ -1064,6 +1039,7 @@ impl SongPolyIterator {
 	}
 	return SongPolyIterator {
 	    ports,
+	    samples : Arc::new(vec![]),
 	};
     }
 }

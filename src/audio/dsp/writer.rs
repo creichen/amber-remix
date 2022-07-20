@@ -94,7 +94,7 @@ pub struct PCMSyncTee {
     observer : RcSyncObserver,
 }
 
-pub fn rc_sync_tee(source : RcSyncWriter, observer : &RcSyncObserver) -> RcSyncWriter {
+pub fn rc_sync_observe(source : RcSyncWriter, observer : &RcSyncObserver) -> RcSyncWriter {
     return Rc::new(RefCell::new(PCMSyncTee {
 	source,
 	observer : observer.clone(),
