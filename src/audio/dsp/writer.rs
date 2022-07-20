@@ -78,3 +78,48 @@ pub trait PCMSyncBarrier {
 }
 
 pub type RcSyncBarrier = Rc<RefCell<dyn PCMSyncBarrier>>;
+
+// ================================================================================
+// Tee Adapters
+
+pub trait PCMSyncObserver {
+    fn observe_write(&mut self, result : SyncPCMResult, written : &[f32]);
+    fn observe_sync(&mut self, timeslice : Timeslice);
+}
+
+type RcSyncObserver = Rc<RefCell<dyn PCMSyncObserver>>;
+
+pub struct PCMSyncTee {
+    pub source : RcSyncWriter,
+    observer : RcSyncObserver,
+}
+
+pub fn rc_sync_tee(source : RcSyncWriter, observer : &RcSyncObserver) -> RcSyncWriter {
+    return Rc::new(RefCell::new(PCMSyncTee {
+	source,
+	observer : observer.clone(),
+    }));
+}
+
+impl FrequencyTrait for PCMSyncTee {
+    fn frequency(&self) -> Freq {
+	self.source.borrow().frequency()
+    }
+}
+
+impl PCMSyncWriter for PCMSyncTee {
+    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
+	let result = self.source.borrow_mut().write_sync_pcm(output);
+	let data_len = match result {
+	    SyncPCMResult::Wrote(n, _) => n,
+	    _                          => 0,
+	};
+	self.observer.borrow_mut().observe_write(result, &output[..data_len]);
+	return result;
+    }
+
+    fn advance_sync(&mut self, timeslice : Timeslice) {
+	self.source.borrow_mut().advance_sync(timeslice);
+	self.observer.borrow_mut().observe_sync(timeslice);
+    }
+}

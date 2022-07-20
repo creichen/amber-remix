@@ -13,3 +13,4 @@ pub mod pcmsync;
 pub mod crossfade_linear;
 pub mod hermite;
 pub mod mock_syncwriter;
+pub mod channel_sequencer;

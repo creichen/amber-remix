@@ -89,15 +89,14 @@ struct SincPipeline {
 }
 
 impl SincPipeline {
-    fn new_linear(it : ArcIt, vol_left : f32, vol_right : f32,
+    fn new_linear(linear_crossfade_samples: usize, it : ArcIt, vol_left : f32, vol_right : f32,
 	   samples : Rc<RefCell<SincSampleSource>>,
 	   target_freq : Freq,
 	   sync : RcSyncBarrier,
 	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> RcAudioPipeline {
-	const LINEAR_FILTER : usize = 4;
 	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, 1, samples.clone(), sen_queue)));
-	let itseq : RcSyncWriter = if LINEAR_FILTER == 0 { itseq_base.clone() } else {
-	    LinearCrossfade::new_rc(LINEAR_FILTER, itseq_base.clone())
+	let itseq : RcSyncWriter = if linear_crossfade_samples == 0 { itseq_base.clone() } else {
+	    LinearCrossfade::new_rc(linear_crossfade_samples, itseq_base.clone())
 	};
 	let itseq = sync.borrow_mut().sync(itseq.clone());
 	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
@@ -315,6 +314,7 @@ struct MixerThread {
     control_channel : Receiver<MixerOp>,
     buf : Arc<Mutex<RingBuf>>,
     tmp_buf : RingBuf,
+    default_samples : Arc<Vec<i8>>,
     trackers : Vec<RefCell<Tracker>>,
 }
 
@@ -418,6 +418,7 @@ fn run_mixer_thread(freq : Freq,
 	control_channel,
 	buf,
 	tmp_buf : RingBuf::new(AUDIO_BUF_MAX_SIZE),
+	default_samples : samples,
 	trackers,
     };
     mt.run();
@@ -479,7 +480,7 @@ impl MixerThread {
 		MixerOp::ShutDown        => { return true },
 		/* mono pipeline temporarily disabled: */
 		MixerOp::SetIterator(_it) => { /*self.aux_pipeline.set_iterator(it) */},
-		MixerOp::SetPoly(polyit) => {
+		MixerOp::SetPoly(polyit)  => {
 		    let its : Vec<ArcIt>;
 		    {
 			let mut guard = polyit.lock().unwrap();
@@ -488,7 +489,12 @@ impl MixerThread {
 		    }
 		    let mut i = 0;
 		    for p in &mut self.amiga_pipelines {
-			p.borrow_mut().set_iterator(its[i].clone());
+			let sit = its[i].clone();
+			{
+			    let mut guard = sit.lock().unwrap();
+			    guard.set_default_samples(self.default_samples.clone());
+			}
+			p.borrow_mut().set_iterator(sit);
 			i += 1;
 		    }
 		}
