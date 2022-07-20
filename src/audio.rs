@@ -488,15 +488,12 @@ impl MixerThread {
 		    {
 			let mut guard = polyit.lock().unwrap();
 			let p = guard.deref_mut();
+			p.set_default_samples(self.default_samples.clone());
 			its = p.get();
 		    }
 		    let mut i = 0;
 		    for p in &mut self.amiga_pipelines {
 			let sit = its[i].clone();
-			{
-			    let mut guard = sit.lock().unwrap();
-			    guard.set_default_samples(self.default_samples.clone());
-			}
 			p.borrow_mut().set_iterator(sit);
 			i += 1;
 		    }
