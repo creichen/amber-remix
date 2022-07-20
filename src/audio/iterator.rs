@@ -58,6 +58,15 @@ pub type ArcIt = Arc<Mutex<dyn AudioIterator>>;
 
 pub trait AudioIterator : Send + Sync {
     fn next(&mut self, queue : &mut VecDeque<AQOp>);
+
+    /// Retrieves the audio samples that are indexed by AQSample
+    fn get_samples(&self) -> Arc<Vec<i8>>;
+
+    /// This is a no-op if the sapmles for this song are included in the song itself
+    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>);
+
+    /// Duplicates the song in its current state
+    fn clone_it(&self) -> ArcIt;
 }
 // ----------------------------------------
 
@@ -117,6 +126,24 @@ impl AudioIterator for MockAudioIterator {
 			  //self.ops.push_back((&vv[..]).to_vec());
 	    },
 	}
+    }
+
+    fn get_samples(&self) -> Arc<Vec<i8>> {
+	panic!("Unsupported");
+    }
+
+    fn set_default_samples(&mut self, _samples : Arc<Vec<i8>>) {
+	panic!("Unsupported");
+    }
+
+    fn clone_it(&self) -> ArcIt {
+	let mut ops = VecDeque::new();
+	for op in &self.ops {
+	    ops.push_back((op[..]).to_vec());
+	}
+	return Arc::new(Mutex::new(MockAudioIterator {
+	    ops,
+	}));
     }
 }
 

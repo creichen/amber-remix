@@ -100,6 +100,7 @@ pub fn volume(avol : AVolume) -> f32 {
 // ================================================================================
 // Instrument iterator
 
+#[derive(Clone)]
 struct InstrumentIterator {
     base_note : InstrumentNote,
 
@@ -181,7 +182,7 @@ impl From<SlidingSample> for Slider {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 enum IISample {
     None,
     Basic(BasicSample),
@@ -332,6 +333,7 @@ impl InstrumentIterator {
 // ================================================================================
 // Timbre Iterator
 
+#[derive(Clone)]
 struct VibratoState {
     delay : Ticks,
 
@@ -364,6 +366,7 @@ impl VibratoState {
     }
 }
 
+#[derive(Clone)]
 struct TimbreIterator {
     volume_queue    : VecDeque<VolumeSpec>,
     volume_attack   : Vec<VolumeSpec>,
@@ -470,6 +473,7 @@ enum MPStep {
     SetTimbre(TimbreIterator, Option<InstrumentIterator>),
 }
 
+#[derive(Clone)]
 struct PortandoState {
     delta : isize,
     current : isize,
@@ -489,6 +493,7 @@ impl PortandoState {
     }
 }
 
+#[derive(Clone)]
 struct MonopatternIterator {
     portando : PortandoState,
     ops : VecDeque<MPOp>,
@@ -512,11 +517,11 @@ impl MonopatternIterator {
     }
 
     // run to completion, count ticks
-    pub fn count_length(&mut self, cstate : ChannelState, songdb : &dyn SongDataBank) -> usize {
+    pub fn count_length(&mut self, cstate : ChannelState, songdb : &Arc<dyn SongDataBank>) -> usize {
 	let mut ticks = 0;
 	let mut state = cstate;
 	while !self.is_done() {
-	    self.tick(&mut state, songdb);
+	    self.tick(&mut state, &songdb);
 	    ticks += 1;
 	}
 	return ticks;
@@ -537,7 +542,7 @@ impl MonopatternIterator {
 
     pub fn tick(&mut self,
 		state : &mut ChannelState,
-		songdb : &dyn SongDataBank) -> MPStep {
+		songdb : &Arc<dyn SongDataBank>) -> MPStep {
 	match self.delay {
 	    None    => return MPStep::Stop, // indefinite hiatus
 	    Some(0) => {},
@@ -587,6 +592,60 @@ impl MonopatternIterator {
 	}
     }
 
+    // pub fn tick<SDB>(&mut self,
+    // 		     state : &mut ChannelState,
+    // 		     songdb : SDB) -> MPStep where SDB : SongDataBank {
+    // 	return self.tick_dyn(state, songdb);
+    // }
+    // 	match self.delay {
+    // 	    None    => return MPStep::Stop, // indefinite hiatus
+    // 	    Some(0) => {},
+    // 	    Some(n) => { self.delay = Some(n-1);
+    // 			 return MPStep::OK; }
+    // 	}
+    // 	if let Some(n) = self.ops.front() {
+    // 	    pdebug!("  Monopattern: play {n}");
+    // 	}
+
+    // 	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
+    // 	    self.delay = Some((pticks * state.channel_speed) - 1);
+    // 	    match note {
+    // 		None => return MPStep::OK,
+    // 		Some(MPNote { note, timbre, portando }) => {
+    // 		    self.channel_note = note;
+    // 		    match portando {
+    // 			None        => {
+    // 			    if self.portando.current != 0 {
+    // 				pdebug!{"  MP: portando completed"};
+    // 			    }
+    // 			    self.portando = PortandoState::empty();
+    // 			},
+    // 			Some(delta) => {
+    // 			    pdebug!{"  MP: portando~{delta}"};
+    // 			    self.portando = PortandoState { current : 0, delta };
+    // 			},
+    // 		    }
+    // 		    match timbre {
+    // 			None => { return MPStep::OK; },
+    // 			Some (MPTimbre { timbre, instrument }) => {
+    // 			    let timbre = songdb.get_timbre(timbre + self.timbre_adjust);
+    // 			    let instrument = if let Some(instrument_index) = instrument {
+    // 				Some(&songdb.get_instrument(instrument_index).ops)
+    // 			    } else {
+    // 				timbre.instrument.map(|index| &songdb.get_instrument(index as usize).ops)
+    // 			    };
+    // 			    return MPStep::SetTimbre(TimbreIterator::new(&timbre),
+    // 						     instrument.map(|instrop| InstrumentIterator::simple(&instrop)));
+    // 			},
+    // 		    }
+    // 		}
+    // 	    }
+    // 	} else {
+    // 	    self.delay = None;
+    // 	    return MPStep::Stop;
+    // 	}
+    // }
+
     /// May update state.note
     pub fn tick_note(&mut self, state : &mut ChannelState) {
 	let old = state.note.clone();
@@ -613,12 +672,14 @@ trait SongDataBank : Send + Sync {
     fn get_timbre(&self, nr : usize) -> &Timbre;
 }
 
+trait CloneSDB : SongDataBank + Clone { }
+
 struct InlineSDB {
     instrument_bank : Vec<Instrument>,
     timbre_bank : Vec<Timbre>,
 }
 
-type ArcSDB = Arc<InlineSDB>;
+type ArcSDB = Arc<dyn SongDataBank>;
 
 impl InlineSDB {
     pub fn new(song : &Song) -> ArcSDB {
@@ -633,16 +694,6 @@ impl InlineSDB {
 }
 
 impl SongDataBank for InlineSDB {
-    fn get_instrument(&self, nr : usize) -> &Instrument {
-	return &self.instrument_bank[nr];
-    }
-
-    fn get_timbre(&self, nr : usize) -> &Timbre {
-	return &self.timbre_bank[nr];
-    }
-}
-
-impl SongDataBank for ArcSDB {
     fn get_instrument(&self, nr : usize) -> &Instrument {
 	return &self.instrument_bank[nr];
     }
@@ -670,25 +721,25 @@ struct ChannelState {
     num_ticks : Ticks, // Aggregate ticks
 }
 
-struct ChannelIterator<SDB> where SDB : SongDataBank {
+#[derive(Clone)]
+struct ChannelIterator {
     state : ChannelState,
 
-    songdb : SDB, // Information about the current song
-    // instrument_bank : Vec<Instrument>,
-    // timbre_bank : Vec<Timbre>,
+    songdb : Arc<dyn SongDataBank>, // Information about the current song
+    samples : Arc<Vec<i8>>,
 
     channel_avolume : AVolume,
     instrument : InstrumentIterator,
     timbre : TimbreIterator,
     monopattern : MonopatternIterator,
 }
-//
-impl<SDB> ChannelIterator<SDB> where SDB : SongDataBank {
-    fn new<T>(base_note : Note,
-	      songdb : T,
-	      instrument : InstrumentIterator,
-	      timbre : TimbreIterator,
-	      monopattern : MonopatternIterator) -> ChannelIterator<T> where T : SongDataBank {
+
+impl ChannelIterator {
+    fn new(base_note : Note,
+	   songdb : Arc<dyn SongDataBank>,
+	   instrument : InstrumentIterator,
+	   timbre : TimbreIterator,
+	   monopattern : MonopatternIterator) -> ChannelIterator {
 	ChannelIterator {
 	    state : ChannelState {
 		base_note,
@@ -701,6 +752,7 @@ impl<SDB> ChannelIterator<SDB> where SDB : SongDataBank {
 	    },
 	    channel_avolume : 64,
 	    songdb,
+	    samples : Arc::new(vec![]),
 	    instrument,
 	    timbre,
 	    monopattern,
@@ -732,7 +784,7 @@ impl<SDB> ChannelIterator<SDB> where SDB : SongDataBank {
     }
 }
 
-impl<SDB> AudioIterator for ChannelIterator<SDB> where SDB : SongDataBank {
+impl AudioIterator for ChannelIterator {
     fn next(&mut self, out_queue : &mut VecDeque<AQOp>) {
 	// One full song iterator iteration
 	pdebug!("===== Tick #{}", self.state.num_ticks);
@@ -779,6 +831,22 @@ impl<SDB> AudioIterator for ChannelIterator<SDB> where SDB : SongDataBank {
 	pdebug!("   :: {:?}", out_queue);
 	self.state.num_ticks += 1;
     }
+
+    fn get_samples(&self) -> Arc<Vec<i8>> {
+	{
+	    assert!(self.samples.len() > 0);
+	}
+
+        return self.samples.clone();
+    }
+
+    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
+	self.samples = samples;
+    }
+
+    fn clone_it(&self) -> ArcIt {
+	return Arc::new(Mutex::new((*self).clone()));
+    }
 }
 
 
@@ -787,27 +855,27 @@ pub fn play_timbre(song : &Song, instr : &Instrument, timbre : &Timbre, note : N
 	None    => instr,
 	Some(n) => &song.instruments[n as usize],
     };
-    return Arc::new(Mutex::new(ChannelIterator::<InlineSDB>::new(note,
-								 InlineSDB::new(&song),
-								 InstrumentIterator::new(&instrument.ops, note),
-								 TimbreIterator::new(&timbre),
-								 MonopatternIterator::default())));
+    return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    InlineSDB::new(&song),
+						    InstrumentIterator::new(&instrument.ops, note),
+						    TimbreIterator::new(&timbre),
+						    MonopatternIterator::default())));
 }
 
 pub fn play_instrument(instr : &Instrument, note : Note) -> ArcIt {
-    return Arc::new(Mutex::new(ChannelIterator::<InlineSDB>::new(note,
-								 InlineSDB::empty(),
-								 InstrumentIterator::new(&instr.ops, note),
-								 TimbreIterator::default(),
-								 MonopatternIterator::default())));
+    return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    Arc::new(InlineSDB::empty()),
+						    InstrumentIterator::new(&instr.ops, note),
+						    TimbreIterator::default(),
+						    MonopatternIterator::default())));
 }
 
 pub fn play_monopattern(song : &Song, pat : &Monopattern, note : Note) -> ArcIt {
-    return Arc::new(Mutex::new(ChannelIterator::<InlineSDB>::new(note,
-								 InlineSDB::new(&song),
-								 InstrumentIterator::default(),
-								 TimbreIterator::default(),
-								 MonopatternIterator::new(&pat.ops))));
+    return Arc::new(Mutex::new(ChannelIterator::new(note,
+						    InlineSDB::new(&song),
+						    InstrumentIterator::default(),
+						    TimbreIterator::default(),
+						    MonopatternIterator::new(&pat.ops))));
 }
 
 // ================================================================================
@@ -825,7 +893,8 @@ struct SongIterator {
     division_first : usize,
     division_last : usize,
 
-    channels : Vec<ChannelIterator<ArcSDB>>,
+    samples : Arc<Vec<i8>>,
+    channels : Vec<ChannelIterator>,
 
     song_speed : usize,
     stopped : bool,
@@ -840,6 +909,7 @@ impl SongIterator {
 	    division_index : 0,
 	    division_first : 0,
 	    division_last : 0,
+	    samples : Arc::new(vec![]),
 	    channels : vec![],
 	    song_speed : 5,
 	    stopped : false,
@@ -852,11 +922,11 @@ impl SongIterator {
 	songit.division_last = div_last;
 	songit.song_speed = song.songinfo.speed;
 	for _c in 0..4 {
-	    let chan_it = ChannelIterator::<ArcSDB>::new(0,
-							 songit.songdb.clone(),
-							 InstrumentIterator::default(),
-							 TimbreIterator::default(),
-							 MonopatternIterator::default());
+	    let chan_it = ChannelIterator::new(0,
+					       songit.songdb.clone(),
+					       InstrumentIterator::default(),
+					       TimbreIterator::default(),
+					       MonopatternIterator::default());
 	    songit.channels.push(chan_it);
 	}
 	songit.set_division(div_first);
@@ -891,7 +961,7 @@ impl SongIterator {
 	    let monopat = &self.monopatterns[div_chan.monopat];
 	    let mut mono_it = MonopatternIterator::new(&self.monopatterns[div_chan.monopat].ops);
 	    let s = format!("{monopat}");
-	    let count = mono_it.count_length(ch.state.clone(), &self.songdb.clone());
+	    let count = mono_it.count_length(ch.state.clone(), &self.songdb);
 	    pinfo!("ch #{index:x}, P#{:02x}: [len {count}] {s}", div_chan.monopat);
 	    ch.set_monopattern(&self.monopatterns[div_chan.monopat], timbre_tune);
 	}
@@ -933,6 +1003,18 @@ impl SongIterator {
 	}
 	return self.channels[chan_index].next(queue);
     }
+
+    fn get_samples(&self) -> Arc<Vec<i8>> {
+	assert!(self.samples.len() > 0);
+	return self.samples.clone();
+    }
+
+    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
+	self.samples = samples.clone();
+	for chan in self.channels.iter_mut() {
+	    chan.set_default_samples(samples.clone());
+	}
+    }
 }
 
 #[derive(Clone)]
@@ -945,6 +1027,20 @@ impl AudioIterator for SongChannelProxy {
     fn next(&mut self, queue : &mut VecDeque<AQOp>) {
         let mut guard = self.songit.lock().unwrap();
 	guard.play_channel(self.index, queue);
+    }
+
+    fn get_samples(&self) -> Arc<Vec<i8>> {
+        let guard = self.songit.lock().unwrap();
+	return guard.get_samples();
+    }
+
+    fn set_default_samples(&mut self, samples : Arc<Vec<i8>>) {
+        let mut guard = self.songit.lock().unwrap();
+	guard.set_default_samples(samples);
+    }
+
+    fn clone_it(&self) -> ArcIt {
+        return Arc::new(Mutex::new(self.clone()));
     }
 }
 
