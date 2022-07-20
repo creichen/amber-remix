@@ -86,6 +86,7 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 // ----------------------------------------
 // TileTextures
 
+#[allow(unused)]
 impl Tileset<Pixmap> {
     pub fn as_textures<'a, T>(&self, tc: &'a TextureCreator<T>) -> Tileset<Texture<'a>> {
 	let mut icons = vec![];
@@ -109,8 +110,10 @@ impl Tileset<Pixmap> {
     }
 }
 
+#[allow(unused)]
 const TILE_SIZE : u32 = 16;
 
+#[allow(unused)]
 impl<'a> Tileset<Texture<'a>> {
     pub fn draw<T>(&self, canvas : &mut Canvas<T>, tile_index : usize,
 		   x : isize, y : isize, tick : usize) where T : RenderTarget {

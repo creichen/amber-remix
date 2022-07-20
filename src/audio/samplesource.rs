@@ -170,7 +170,7 @@ pub struct SincSampleSource {
     // sample length as index
     cache : HashMap<(usize, usize, usize), Rc<Vec<f32>>>,
     resampler_map : HashMap<usize, RefCell<SincFixedIn<f64>>>,
-    base_freq : Freq,
+    // base_freq : Freq,
     base_target_freq : f64,
     data : Rc<Vec<f64>>,
 }
@@ -185,7 +185,7 @@ impl SincSampleSource {
 	}
 	return SincSampleSource {
 	    cache,
-	    base_freq : out_freq,
+	    // base_freq : out_freq,
 	    base_target_freq : out_freq as f64,
 	    resampler_map : HashMap::new(),
 	    data : Rc::new(vec![]),
@@ -240,7 +240,7 @@ impl SincSampleSource {
 
 	return SincSampleSource {
 	    cache : HashMap::new(),
-	    base_freq : out_freq,
+	    // base_freq : out_freq,
 	    base_target_freq : middle_freq,
 	    resampler_map,
 	    data,
@@ -260,6 +260,7 @@ impl SincSampleSource {
 	return SincSampleSource::new(out_freq, Rc::new(data.as_ref().iter().map(|x| (*x as f64) * ONE_128TH_F64).collect()));
     }
 
+    #[allow(unused)]
     pub fn from_iter<'a>(out_freq : Freq, data : std::slice::Iter<'a, i8>) -> SincSampleSource {
 	let data = Rc::new(data.map(|x| { *x as f64 * (1.0/128.0) }).collect());
 	return SincSampleSource::new(out_freq, data);
