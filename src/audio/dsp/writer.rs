@@ -3,8 +3,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 use crate::audio::dsp::frequency_range::Freq;
 use crate::audio::dsp::frequency_range::FreqRange;
