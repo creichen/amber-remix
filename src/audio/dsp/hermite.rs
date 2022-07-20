@@ -12,7 +12,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use super::{writer::{PCMSyncWriter, Timeslice, SyncPCMResult, FrequencyTrait, RcSyncWriter}, ringbuf::WindowedBuf};
+use super::{writer::{PCMWriter, SyncPCMResult, FrequencyTrait, RcPCMWriter}, ringbuf::WindowedBuf};
 //use std::{ops::DerefMut, rc::Rc, cell::RefCell};
 
 pub trait HermiteDownsamplerTrait {
@@ -28,25 +28,6 @@ pub trait HermiteDownsamplerTrait {
 }
 
 struct Hermite4Pt3rdOrder {}
-impl HermiteDownsamplerTrait for &Hermite4Pt3rdOrder {
-    fn factor(&self) -> usize      { 2 }
-    fn window_size(&self) -> usize { 1 }
-
-    fn interpolate(&self, buf : &WindowedBuf, offset : usize) -> f32 {
-	const X : f32  = 0.5;
-	let y_m1 = buf.get(offset - 1);
-	let y_0 = buf.get(offset);
-	let y_p1 = buf.get(offset + 1);
-	let y_p2 = buf.get(offset + 2);
-
-	let c0 = y_0;
-	let c1 = 0.5 * (y_p1 - y_m1);
-	let c2 = y_m1 - 2.5 * y_0 + 2.0 * y_p1 - 0.5 * y_p2;
-	let c3 = 0.5 * (y_p2 - y_m1) + 1.5 * (y_0 - y_p1);
-	return ((c3 * X + c2) * X + c1) * X + c0;
-    }
-}
-
 impl HermiteDownsamplerTrait for Hermite4Pt3rdOrder {
     fn factor(&self) -> usize      { 2 }
     fn window_size(&self) -> usize { 1 }
@@ -71,14 +52,14 @@ impl HermiteDownsamplerTrait for Hermite4Pt3rdOrder {
 pub struct HermiteDownsampler<T : 'static> where T : HermiteDownsamplerTrait {
     downsampler : &'static T,
     partial : usize, // last read was partial
-    source : RcSyncWriter,
+    source : RcPCMWriter,
     buf : WindowedBuf,
 }
 
 impl<T> HermiteDownsampler<T>
 where T : HermiteDownsamplerTrait
 {
-    fn new(downsampler : &'static T, source : RcSyncWriter) -> HermiteDownsampler<T> {
+    fn new(downsampler : &'static T, source : RcPCMWriter) -> HermiteDownsampler<T> {
 	return HermiteDownsampler {
 	    downsampler,
 	    partial : 0,
@@ -87,7 +68,7 @@ where T : HermiteDownsamplerTrait
 	};
     }
 
-    fn new_rc(downsampler : &'static T, source : RcSyncWriter) -> RcSyncWriter {
+    fn new_rc(downsampler : &'static T, source : RcPCMWriter) -> RcPCMWriter {
 	return Rc::new(RefCell::new(HermiteDownsampler::new(downsampler, source)));
     }
 
@@ -98,28 +79,17 @@ where T : HermiteDownsamplerTrait
 
 const HERMITE4PT3RDORDER : Hermite4Pt3rdOrder = Hermite4Pt3rdOrder{};
 
-pub fn down2x(source : RcSyncWriter) -> RcSyncWriter {
+pub fn down2x(source : RcPCMWriter) -> RcPCMWriter {
     return HermiteDownsampler::new_rc(&HERMITE4PT3RDORDER, source.clone());
 }
 
-impl<T> PCMSyncWriter for HermiteDownsampler<T> where T : HermiteDownsamplerTrait {
-    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
+impl<T> PCMWriter for HermiteDownsampler<T> where T : HermiteDownsamplerTrait {
+    fn write_pcm(&mut self, output : &mut [f32]) {
 	let downsample_factor = self.downsampler.factor();
-	match self.buf.read_sync_pcm(&self.source, downsample_factor - self.partial) {
-	    SyncPCMResult::Wrote(n, ts) => { if n + self.partial == downsample_factor {
-		                               self.partial = 0;
-		                               output[0] = self.downsampler.interpolate(&self.buf, self.prebuf_len());
-		                               return SyncPCMResult::Wrote(1, ts);
-	                                     } else {
-		                               return SyncPCMResult::Wrote(0, ts);
-	                                     } }
-	    SyncPCMResult::Flush        => { self.partial = 0;
-					     return SyncPCMResult::Flush; },
+	for o in output.iter_mut() {
+	    self.buf.read_pcm(&self.source, downsample_factor - self.partial);
+	    *o = self.downsampler.interpolate(&self.buf, self.prebuf_len());
 	}
-    }
-
-    fn advance_sync(&mut self, timeslice : Timeslice) {
-	self.source.borrow_mut().advance_sync(timeslice);
     }
 }
 

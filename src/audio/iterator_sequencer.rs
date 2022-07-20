@@ -71,7 +71,8 @@ pub struct IteratorSequencer {
     play_freq : Freq,
     play_volume : f32,
 
-    target_freq : Freq,
+    target_freq : Freq,        // output frequency target
+    upsampling_lshift : usize, // target_freq is upsampled by factor 2^upsampling_lshift
 
     tracker : TrackerSensor,
 }
@@ -79,7 +80,7 @@ pub struct IteratorSequencer {
 impl IteratorSequencer {
     #[cfg(test)]
     fn nw(audio_source : ArcIt, sample_source : Rc<RefCell<SincSampleSource>>) -> IteratorSequencer {
-	return IteratorSequencer::new_with_source(audio_source, 1000, sample_source, TrackerSensor::new());
+	return IteratorSequencer::new_with_source(audio_source, 1000, 0, sample_source, TrackerSensor::new());
     }
 
     pub fn new<'a>(out_freq : Freq, sample_source : Rc<RefCell<SincSampleSource>>, tracker : TrackerSensor) -> IteratorSequencer {
@@ -99,13 +100,15 @@ impl IteratorSequencer {
 	    play_freq : out_freq,
 
 	    target_freq : out_freq,
+	    upsampling_lshift : 0,
 
 	    tracker,
 	}
     }
 
-    pub fn new_with_source<'a>(songit : ArcIt, out_freq : Freq, sample_source : Rc<RefCell<SincSampleSource>>, tracker : TrackerSensor) -> IteratorSequencer {
-	let mut iseq = IteratorSequencer::new(out_freq, sample_source, tracker);
+    pub fn new_with_source<'a>(songit : ArcIt, out_freq : Freq, upsampling_lshift : usize, sample_source : Rc<RefCell<SincSampleSource>>, tracker : TrackerSensor) -> IteratorSequencer {
+	let mut iseq = IteratorSequencer::new(out_freq << upsampling_lshift, sample_source, tracker);
+	iseq.upsampling_lshift = upsampling_lshift;
 	iseq.set_source(songit);
 	return iseq;
     }
@@ -185,7 +188,7 @@ impl IteratorSequencer {
 	    };
 	    if let Some(range) = self.current_sample_range {
 		ptrace!("[ISeq] Requesting sample {range:?} at freq {}", self.play_freq);
-		self.current_sample = self.sample_source.borrow_mut().get_sample(range, self.play_freq);
+		self.current_sample = self.sample_source.borrow_mut().get_sample(range, self.play_freq >> self.upsampling_lshift);
 		match offset {
 		    Some((off_nom, off_denom)) => self.current_sample.forward_to_offset(off_nom, off_denom),
 		    _                          => {},

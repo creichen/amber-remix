@@ -6,7 +6,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use crate::util::IndexLen;
 
-use super::writer::{RcSyncWriter, SyncPCMResult};
+use super::writer::{RcSyncWriter, SyncPCMResult, RcPCMWriter};
 
 // ========================================
 // RingBuf
@@ -296,7 +296,7 @@ impl WindowedBuf {
 	    SyncPCMResult::Wrote(n, None) => n,
 	    _                             => return result,
 	};
-	println!(" ... Must read more ... {:?}", result);
+	//println!(" ... Must read more ... {:?}", result);
 	if written == size {
 	    return result;
 	}
@@ -308,11 +308,28 @@ impl WindowedBuf {
 	}
     }
 
+    fn _read_pcm(&mut self, source : &RcPCMWriter, size : usize) -> usize {
+	let maxlen = self.buf.capacity() - self.buf.read_pos;
+	let size = usize::min(size, maxlen);
+	let rpos = self.buf.read_pos;
+	source.borrow_mut().write_pcm(&mut self.buf.data[rpos..rpos+size]);
+	return size;
+    }
+
+    /// Update (up to) the oldest SIZE entries in the ring buffer from the PCM source
+    pub fn read_pcm(&mut self, source : &RcPCMWriter, size : usize) {
+	let written = self._read_pcm(&source, size);
+	if written == size {
+	    return;
+	}
+	self._read_pcm(&source, size - written);
+    }
+
     /// Read an entry; get(0) is the most recent, get(1) the second-most recent etc.
     pub fn get(&self, offset : usize) -> f32 {
 	let mask = self.mask;
 	let pos = (self.buf.read_pos + mask - offset) & mask;
-	println!(" data[{pos}] from {:?}", self.buf.data);
+	//println!(" data[{pos}] from {:?}", self.buf.data);
 	return self.buf.data[pos];
     }
 }
