@@ -6,6 +6,11 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use crate::util::IndexLen;
 
+use super::writer::{RcSyncWriter, SyncPCMResult};
+
+// ========================================
+// RingBuf
+
 const OUTPUT_BUFFER_IS_FULL : usize = 0xffffffff;
 
 /// Ring buffer
@@ -244,7 +249,80 @@ impl<'a> IndexLen<f32> for RingBufIndex<'a> {
 }
 
 // ========================================
+// WindowedBuf: random access to the most recent elements
+pub struct WindowedBuf {
+    buf : RingBuf,
+    mask : usize,
+}
+
+impl WindowedBuf {
+    /// Creates a windowed buffer that is at least as long as specified here.
+    pub fn new(size : usize) -> WindowedBuf {
+	let l = if size == 0 { 0 } else { (size - 1)  as u64 };
+	let size = 1 << (64 - l.leading_zeros());
+	let mut result = WindowedBuf {
+	    buf : RingBuf::new(size),
+	    mask : size - 1,
+	};
+	result.buf.write_pos = OUTPUT_BUFFER_IS_FULL; // Fill with zeroes
+
+	return result;
+    }
+
+    pub fn clear(&mut self) {
+	self.buf.data.fill(0.0);
+    }
+
+    pub fn len(&self) -> usize {
+	return self.buf.len();
+    }
+
+    fn _read_sync_pcm(&mut self, source : &RcSyncWriter, size : usize) -> SyncPCMResult {
+	let maxlen = self.buf.capacity() - self.buf.read_pos;
+	let size = usize::min(size, maxlen);
+	let rpos = self.buf.read_pos;
+	let result = source.borrow_mut().write_sync_pcm(&mut self.buf.data[rpos..rpos+size]);
+	match result {
+	    SyncPCMResult::Wrote(n, _) => { self.buf.read_pos = (rpos + n) & self.mask; },
+	    SyncPCMResult::Flush       => { self.clear(); },
+	}
+	return result;
+    }
+
+    /// Update (up to) the oldest SIZE entries in the ring buffer from the PCM source
+    pub fn read_sync_pcm(&mut self, source : &RcSyncWriter, size : usize) -> SyncPCMResult {
+	let mut result = self._read_sync_pcm(&source, size);
+	let written = match result {
+	    SyncPCMResult::Wrote(n, None) => n,
+	    _                             => return result,
+	};
+	println!(" ... Must read more ... {:?}", result);
+	if written == size {
+	    return result;
+	}
+	result = self._read_sync_pcm(&source, size - written);
+
+	return match result {
+	    SyncPCMResult::Wrote(written2, ts) => SyncPCMResult::Wrote(written + written2, ts),
+	    _                                  => result,
+	}
+    }
+
+    /// Read an entry; get(0) is the most recent, get(1) the second-most recent etc.
+    pub fn get(&self, offset : usize) -> f32 {
+	let mask = self.mask;
+	let pos = (self.buf.read_pos + mask - offset) & mask;
+	println!(" data[{pos}] from {:?}", self.buf.data);
+	return self.buf.data[pos];
+    }
+}
+
+
+// ========================================
 // Testing
+
+#[cfg(test)]
+use super::mock_syncwriter::{mock_rsw, T};
 
 // ----------------------------------------
 // Helpers
@@ -294,7 +372,7 @@ fn assert_partially_filled(b : &mut RingBuf, size : usize) {
 }
 
 // ----------------------------------------
-// Tests begin here
+// Tests (RingBuf)
 
 #[cfg(test)]
 #[test]
@@ -468,7 +546,7 @@ fn test_overfull_cross_boundary_write_read() {
 
 
 // ----------------------------------------
-// windowed writes
+// RingBuf: windowed writes
 
 #[cfg(test)]
 fn assert_windowed_write(b : &mut RingBuf, src : &[f32], len_expected : usize) {
@@ -648,7 +726,7 @@ fn test_windowed_overfull_cross_boundary_write_read() {
 }
 
 // --------------------
-// reset
+// RingBuf: reset
 
 #[cfg(test)]
 #[test]
@@ -700,7 +778,7 @@ fn test_reset_overlap_full() {
 }
 
 // --------------------
-// drop_back
+// RingBuf: drop_back
 
 #[cfg(test)]
 #[test]
@@ -831,7 +909,7 @@ fn test_drop_back_full_overlap_cross_boundaries() {
 }
 
 // --------------------
-// drop_front
+// RingBuf: drop_front
 
 #[cfg(test)]
 #[test]
@@ -962,7 +1040,7 @@ fn test_drop_front_full_overlap_cross_boundaries() {
 }
 
 // ----------------------------------------
-// peek_front
+// RingBuf: peek_front
 
 #[cfg(test)]
 #[test]
@@ -1009,7 +1087,7 @@ fn test_cross_boundary_peek_front() {
 }
 
 // ----------------------------------------
-// Special checks
+// RingBuf: Special checks
 
 #[cfg(test)]
 struct AS {
@@ -1059,3 +1137,124 @@ fn test_bad_size_after_full_read() {
     assert_eq!(OUTPUT_BUFFER_IS_FULL, b.write_pos);
     b.drop_back(15).unwrap();
 }
+
+// ----------------------------------------
+// Tests (WindowedBuf)
+
+#[cfg(test)]
+#[test]
+pub fn test_windowedbuf_size() {
+    for (requested, actual) in [(1, 1), (2, 2), (3, 4), (4, 4), (5, 8), (6, 8), (7, 8), (8, 8)] {
+	let b = WindowedBuf::new(requested);
+	println!("Requesting: {requested}");
+	assert_eq!(actual, b.len());
+    }
+}
+
+#[cfg(test)]
+#[test]
+pub fn test_windowedbuf_initial_zeroes() {
+    let b = WindowedBuf::new(4);
+    for i in 0..4 {
+	assert_eq!(0.0, b.get(i));
+    }
+}
+
+#[cfg(test)]
+#[test]
+pub fn test_windowedbuf_update() {
+    let mut b = WindowedBuf::new(4);
+    let wr = mock_rsw("".to_string(), vec![
+	T::S(vec![1.0, 2.0, 3.0, 4.0]),
+	T::TS(-1.0, 0),
+    ]);
+
+    assert_eq!(SyncPCMResult::Wrote(2, None),
+	       b.read_sync_pcm(&wr, 2));
+    assert_eq!(2.0, b.get(0));
+    assert_eq!(1.0, b.get(1));
+    assert_eq!(0.0, b.get(2));
+    assert_eq!(0.0, b.get(3));
+
+    assert_eq!(SyncPCMResult::Wrote(1, None),
+	       b.read_sync_pcm(&wr, 1));
+    assert_eq!(3.0, b.get(0));
+    assert_eq!(2.0, b.get(1));
+    assert_eq!(1.0, b.get(2));
+    assert_eq!(0.0, b.get(3));
+
+    assert_eq!(SyncPCMResult::Wrote(1, Some(0)),
+	       b.read_sync_pcm(&wr, 3));
+    assert_eq!(4.0, b.get(0));
+    assert_eq!(3.0, b.get(1));
+    assert_eq!(2.0, b.get(2));
+    assert_eq!(1.0, b.get(3));
+}
+
+#[cfg(test)]
+#[test]
+pub fn test_windowedbuf_update_overwrite() {
+    let mut b = WindowedBuf::new(4);
+    let wr = mock_rsw("".to_string(), vec![
+	T::S(vec![1.0, 2.0, 3.0]),
+	T::TS(-1.0, 0),
+	T::S(vec![4.0, 5.0, 6.0]),
+	T::TS(-1.0, 1),
+    ]);
+
+    assert_eq!(SyncPCMResult::Wrote(3, Some(0)),
+	       b.read_sync_pcm(&wr, 4));
+    assert_eq!(3.0, b.get(0));
+    assert_eq!(2.0, b.get(1));
+    assert_eq!(1.0, b.get(2));
+    assert_eq!(0.0, b.get(3));
+
+    wr.borrow_mut().advance_sync(0);
+
+    assert_eq!(SyncPCMResult::Wrote(3, Some(1)),
+	       b.read_sync_pcm(&wr, 4));
+    assert_eq!(6.0, b.get(0));
+    assert_eq!(5.0, b.get(1));
+    assert_eq!(4.0, b.get(2));
+    assert_eq!(3.0, b.get(3));
+}
+
+#[cfg(test)]
+#[test]
+pub fn test_windowedbuf_update_overwrite_boundary() {
+    let mut b = WindowedBuf::new(4);
+    let wr = mock_rsw("".to_string(), vec![
+	T::S(vec![10.0, 11.0]),
+	T::TS(-1.0, 0),
+	T::S(vec![1.0, 2.0, 3.0]),
+	T::TS(-1.0, 1),
+	T::S(vec![4.0, 5.0, 6.0]),
+	T::TS(-1.0, 2),
+    ]);
+
+    assert_eq!(SyncPCMResult::Wrote(2, Some(0)),
+	       b.read_sync_pcm(&wr, 3));
+    assert_eq!(11.0, b.get(0));
+    assert_eq!(10.0, b.get(1));
+    assert_eq!(0.0, b.get(2));
+    assert_eq!(0.0, b.get(3));
+
+    wr.borrow_mut().advance_sync(0);
+
+    assert_eq!(SyncPCMResult::Wrote(3, Some(1)),
+	       b.read_sync_pcm(&wr, 4));
+    assert_eq!(3.0, b.get(0));
+    assert_eq!(2.0, b.get(1));
+    assert_eq!(1.0, b.get(2));
+    assert_eq!(11.0, b.get(3));
+
+    wr.borrow_mut().advance_sync(1);
+
+    assert_eq!(SyncPCMResult::Wrote(3, Some(2)),
+	       b.read_sync_pcm(&wr, 4));
+    assert_eq!(6.0, b.get(0));
+    assert_eq!(5.0, b.get(1));
+    assert_eq!(4.0, b.get(2));
+    assert_eq!(3.0, b.get(3));
+}
+

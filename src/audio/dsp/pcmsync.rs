@@ -345,89 +345,12 @@ impl PCMWriter for WriterSyncFwd {
 // Testing
 
 #[cfg(test)]
-use std::collections::VecDeque;
-#[cfg(test)]
-use super::writer::PCMSyncWriter;
-#[cfg(test)]
 use crate::audio::dsp::pcmsync;
+#[cfg(test)]
+use crate::audio::dsp::mock_syncwriter::{mock_rsw, T};
 
 // ----------------------------------------
 // Helpers
-
-#[cfg(test)]
-pub enum T {
-    S(Vec<f32>),
-    TS(f32, Timeslice), // repeat the first f32 until the timeslice is advanced to
-}
-
-#[cfg(test)]
-struct MockASW {
-    name : String,
-    ops : VecDeque<T>,
-    repeat_me_if_stuck : f32,
-    stuck : Option<Timeslice>,
-}
-
-#[cfg(test)]
-impl FrequencyTrait for MockASW {
-    fn frequency(&self) -> Freq {
-	return 42;
-    }
-}
-
-#[cfg(test)]
-impl PCMSyncWriter for MockASW {
-    fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
-	let mut write_pos = 0;
-	let write_end = output.len();
-	while write_pos < write_end {
-	    if let Some(_) = self.stuck {
-		println!("MockASW:{}] Stuck, writing {} x {}", self.name, self.repeat_me_if_stuck, write_end-write_pos);
-		// Waiting for time slice
-		output[write_pos..].fill(self.repeat_me_if_stuck);
-		write_pos = write_end;
-	    } else {
-		match self.ops.pop_front() {
-		    None => {
-			let dummydata = vec![1000.01, 1001.01, 1002.01, 1003.01];
-			self.ops.push_front(T::S(dummydata));
-		    }
-		    Some(T::S(opvec))        => {
-			let len = usize::min(write_end - write_pos,
-					     opvec.len());
-			println!("MockASW:{}] Writing {:?}", self.name, &opvec[..len]);
-			output[write_pos..write_pos+len].copy_from_slice(&opvec[..len]);
-			write_pos += len;
-			if len < opvec.len() {
-			    self.ops.push_front(T::S(Vec::from(&opvec[len..])));
-			}
-		    }
-		    Some(T::TS(fill, slice)) => {
-			println!("MockASW:{}] Hit TS {:?} with {write_pos} written", self.name, slice);
-			self.repeat_me_if_stuck = fill;
-			self.stuck = Some(slice);
-			return SyncPCMResult::Wrote(write_pos, Some(slice));
-		    }
-		}}
-	};
-	return SyncPCMResult::Wrote(write_pos, None);
-    }
-
-    fn advance_sync(&mut self, timeslice : Timeslice) {
-	assert_eq!(Some(timeslice), self.stuck);
-	self.stuck = None;
-    }
-}
-
-#[cfg(test)]
-pub fn mock_asw(name : String, ops : Vec<T>) -> RcSyncWriter {
-    return Rc::new(RefCell::new(MockASW {
-	name,
-	ops : VecDeque::from(ops),
-	repeat_me_if_stuck : -1.11111,
-	stuck : None,
-    }));
-}
 
 #[cfg(test)]
 pub fn cread(writer : RcPCMWriter, dest : &mut [f32]) {
@@ -443,9 +366,11 @@ pub fn cread(writer : RcPCMWriter, dest : &mut [f32]) {
 #[cfg(test)]
 #[test]
 fn test_unary_passthrough_boundary() {
+
+
     let mut data0 = [0.0; 6];
     let mut sbar = PCMBasicSyncBarrier::new();
-    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+    let c0 = sbar.sync(mock_rsw("0".to_string(), vec![
 	T::S(vec![1.0, 2.0, 3.0, 4.0, 5.0]),
 	T::TS(-1.0, 1),
 	T::S(vec![6.0, 7.0]),
@@ -462,7 +387,7 @@ fn test_unary_passthrough_boundary() {
 fn test_unary_passthrough_cross_boundary() {
     let mut data0 = [0.0; 6];
     let mut sbar = PCMBasicSyncBarrier::new();
-    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+    let c0 = sbar.sync(mock_rsw("0".to_string(), vec![
 	T::S(vec![1.0, 2.0, 3.0, 4.0, 5.0]),
 	T::TS(-1.0, 1),
 	T::S(vec![6.0, 7.0]),
@@ -481,7 +406,7 @@ fn test_binary() {
     let mut data0 = [0.0; 10];
     let mut data1 = [0.0; 10];
     let mut sbar = PCMBasicSyncBarrier::new();
-    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+    let c0 = sbar.sync(mock_rsw("0".to_string(), vec![
 	T::S(vec![10.0, 11.0]),
 	T::TS(-11.0, 1),
 	T::S(vec![12.0, 13.0]),
@@ -489,7 +414,7 @@ fn test_binary() {
 	T::S(vec![14.0, 15.0, 16.0, 17.0]),
 	T::TS(-13.0, 3),
     ]));
-    let c1 = sbar.sync(mock_asw("1".to_string(), vec![
+    let c1 = sbar.sync(mock_rsw("1".to_string(), vec![
 	T::S(vec![20.0, 21.0, 22.0, 23.0]),
 	T::TS(-21.0, 1),
 	T::S(vec![24.0, 25.0]),

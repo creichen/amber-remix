@@ -498,14 +498,17 @@ impl From<SampleState> for f32 {
 // Testing
 
 #[cfg(test)]
-use crate::audio::dsp::pcmsync::{PCMBasicSyncBarrier, T, mock_asw, cread};
+use crate::audio::dsp::pcmsync::{PCMBasicSyncBarrier, cread};
 #[cfg(test)]
 use crate::audio::dsp::writer::PCMSyncBarrier;
 #[cfg(test)]
 use std::collections::VecDeque;
 #[cfg(test)]
 use super::pcmsync;
-
+#[cfg(test)]
+use crate::audio::dsp::mock_syncwriter::T;
+#[cfg(test)]
+use super::mock_syncwriter::mock_rsw;
 
 // ----------------------------------------
 // Helpers
@@ -980,7 +983,7 @@ fn integrate_test_binary_sync() {
     let mut data1 = [0.0; 20];
     let mut sbar = PCMBasicSyncBarrier::new();
 
-    let c0 = sbar.sync(mock_asw("0".to_string(), vec![
+    let c0 = sbar.sync(mock_rsw("0".to_string(), vec![
 	T::S(vec![10.0, 11.0]),
 	T::TS(-11.0, 1),
 	T::S(vec![80.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 07.0, 88.0, 09.0]),
