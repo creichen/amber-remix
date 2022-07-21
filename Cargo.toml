@@ -17,3 +17,5 @@ rubato = "0.11.0"
 [dependencies.sdl2]
 version = "0.35.2"
 features = ["ttf"]
+atomic-option = "0.1.2"
+
