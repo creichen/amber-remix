@@ -561,7 +561,7 @@ fn show_images(data : &datafiles::AmberstarFiles) {
         // The rest of the game loop goes here...
 
         canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 50));
     }
     mixer.shutdown();
 }
@@ -586,8 +586,8 @@ fn play_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
 
     info!("Playing song {song_nr}");
 
-     loop {
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    for i in 1..5000 {
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 50));
     }
     //mixer.shutdown();
 }
