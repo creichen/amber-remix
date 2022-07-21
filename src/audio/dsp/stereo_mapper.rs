@@ -4,7 +4,7 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use super::{writer::RcPCMWriter, vtracker::TrackerSensor};
+use super::{writer::{RcPCMWriter, PCMStereoWriter}, vtracker::TrackerSensor};
 
 const BUF_SIZE : usize = 32;
 
@@ -31,8 +31,10 @@ impl<'a> StereoMapper {
 	self.left = left;
 	self.right = right;
     }
+}
 
-    pub fn write_stereo_pcm(&mut self, out : &mut [f32]) {
+impl PCMStereoWriter for StereoMapper {
+    fn write_stereo_pcm(&mut self, out : &mut [f32]) {
 	let mono_samples_requested = out.len() / 2;
 	let mut mono_samples_processed = 0;
 	let mut out_pos = 0;

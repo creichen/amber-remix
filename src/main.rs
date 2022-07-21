@@ -17,6 +17,7 @@ use crate::{audio::amber, datafiles::pixmap};
 
 mod datafiles;
 mod audio;
+mod debug_audio;
 pub mod util;
 
 fn print_strings(data : &datafiles::AmberStarFiles) {
@@ -541,7 +542,7 @@ fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
 
     info!("Playing song {song_nr}");
 
-     loop {
+    loop {
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
     //mixer.shutdown();
@@ -559,6 +560,8 @@ fn main() -> io::Result<()> {
 	} else if args[1] == "song" {
 	    let source = &args[2];
 	    play_song(&data, str::parse::<usize>(source).unwrap());
+	} else if args[1] == "debug-audio" {
+	    debug_audio::debug_audio(&data);
 	} else if args[1] == "extract" {
 	    let source = &args[2];
 	    let mut df = datafiles::DataFile::load(Path::new(source));

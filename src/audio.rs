@@ -5,14 +5,14 @@
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
 use core::time;
-use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, rc::Rc, cell::RefCell, process};
+use std::{sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}, atomic::AtomicBool}, thread, rc::Rc, cell::RefCell, process};
 use std::panic;
 use std::ops::DerefMut;
 use sdl2::audio::{AudioSpec, AudioCallback, AudioFormat};
 
 use crate::audio::dsp::{crossfade_linear::LinearCrossfade, writer::RcSyncWriter};
 
-use self::{queue::AudioIteratorProcessor, samplesource::RcSampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}, writer::RcSyncBarrier, pcmsync, hermite}, iterator::ArcPoly, iterator_sequencer::IteratorSequencer};
+use self::{queue::AudioIteratorProcessor, samplesource::RcSampleSource, dsp::{ringbuf::RingBuf, vtracker::{TrackerSensor, Tracker}, writer::{RcSyncBarrier, PCMStereoWriter}, pcmsync, hermite}, iterator::ArcPoly, iterator_sequencer::IteratorSequencer, pcmplay::{StereoPCM, PCMPlayer}};
 #[allow(unused)]
 use self::{dsp::{linear::LinearFilter, stereo_mapper::StereoMapper, writer::PCMFlexWriter}, queue::AudioQueue, samplesource::SimpleSampleSource, samplesource::SincSampleSource};
 pub use self::iterator::AudioIterator;
@@ -28,6 +28,7 @@ mod queue;
 mod iterator;
 mod iterator_sequencer;
 mod samplesource;
+mod pcmplay;
 pub mod amber;
 
 const AUDIO_BUF_MAX_SIZE : usize = 16384;
@@ -149,6 +150,7 @@ impl AudioPipeline for SincPipeline {
 
 struct Callback {
     shared_buf : Arc<Mutex<RingBuf>>,
+    started_flag : AtomicBool,
     tracker : TrackerSensor,
 }
 
@@ -161,7 +163,9 @@ impl AudioCallback for Callback {
 	let num_written = buf.write_to(output);
 
 	if num_written < output.len() {
-	    println!("Buffer underrun {num_written}/{}", output.len());
+	    if self.started_flag.load(std::sync::atomic::Ordering::SeqCst) {
+		println!("Buffer underrun {num_written}/{}", output.len());
+	    }
 	    //warn!("Buffer underrun {num_written}/{}", output.len());
 	}
 	for x in output[num_written..].iter_mut() {
@@ -176,9 +180,9 @@ impl AudioCallback for Callback {
 }
 
 impl Callback {
-    fn new(shared_buf : Arc<Mutex<RingBuf>>, tracker : TrackerSensor) -> Callback {
+    fn new(shared_buf : Arc<Mutex<RingBuf>>, tracker : TrackerSensor, started_flag : AtomicBool) -> Callback {
 	return Callback {
-	    shared_buf, tracker,
+	    shared_buf, tracker, started_flag,
 	}
     }
 }
@@ -186,22 +190,25 @@ impl Callback {
 // ================================================================================
 // AudioCore
 
+const AUDIO_STARTED : AtomicBool = AtomicBool::new(false);
+
 pub struct AudioCore {
     spec : AudioSpec,
     shared_buf : Arc<Mutex<RingBuf>>,
+    started_flag : AtomicBool, // Have we started audio processing?
     device : Option<sdl2::audio::AudioDevice<Callback>>,
     callback_tracker_sensor : TrackerSensor,
 }
 
 impl AudioCore {
-    fn init(&mut self, spec : AudioSpec) -> Callback {
+    fn init(&mut self, spec : AudioSpec, started_flag : AtomicBool) -> Callback {
 	self.spec = spec;
-	return Callback::new(self.shared_buf.clone(), self.callback_tracker_sensor.clone());
+	return Callback::new(self.shared_buf.clone(), self.callback_tracker_sensor.clone(), started_flag);
     }
 
-    pub fn start_mixer<'a>(&mut self, sample_data : &'a [i8]) -> Mixer {
+    fn start_mixer<'a>(&mut self, sample_data : &'a [i8]) -> Mixer {
 	let freq = self.spec.freq as Freq;
-	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone(), self.callback_tracker_sensor.clone());
+	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone(), self.started_flag, self.callback_tracker_sensor.clone());
 	self.device.as_ref().unwrap().resume();
 	return mixer;
     }
@@ -230,6 +237,8 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	samples: None
     };
 
+    let started_flag = AtomicBool::new(false);
+
     let core = Arc::new(Mutex::new(AudioCore {
 	spec : AudioSpec {
 	    freq: 0,
@@ -240,6 +249,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	    size: 0,
 	},
 	shared_buf : Arc::new(Mutex::new(RingBuf::new(AUDIO_BUF_MAX_SIZE))),
+	started_flag,
 	device : None,
 	callback_tracker_sensor : TrackerSensor::new(),
     }));
@@ -248,7 +258,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
     let device = audio.open_playback(None, &requested_audio, |spec| {
 	let mut guard = core_clone.lock().unwrap();
 	let cc = guard.deref_mut();
-	return cc.init(spec);
+	return cc.init(spec, started_flag);
     }).unwrap();
 
     {
@@ -270,6 +280,7 @@ enum MixerOp {
     ShutDown,
     SetIterator(ArcIt),
     SetPoly(ArcPoly),
+    PlayPCM(StereoPCM),
 }
 
 pub struct Mixer {
@@ -277,7 +288,9 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<RingBuf>>, callback_vtsensor : TrackerSensor) -> Mixer {
+    fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<RingBuf>>,
+	   started_flag : AtomicBool,
+	   callback_vtsensor : TrackerSensor) -> Mixer {
 	let (tx, rx) = mpsc::channel();
 
 	let stacktrace_hook = panic::take_hook();
@@ -287,7 +300,7 @@ impl Mixer {
 		stacktrace_hook(panic_info);
 		process::exit(1);
 	    }));
-	    run_mixer_thread(freq, samples, out_buf.clone(), rx, callback_vtsensor);
+	    run_mixer_thread(freq, samples, out_buf.clone(), rx, started_flag, callback_vtsensor);
 	});
 
 	return Mixer {
@@ -297,6 +310,10 @@ impl Mixer {
 
     pub fn set_iterator(&mut self, it : ArcIt) {
 	self.control_channel.send(MixerOp::SetIterator(it)).unwrap();
+    }
+
+    pub fn play_pcm(&mut self, pcm : StereoPCM) {
+	self.control_channel.send(MixerOp::PlayPCM(pcm)).unwrap();
     }
 
     pub fn set_polyiterator(&mut self, it : ArcPoly) {
@@ -313,11 +330,13 @@ impl Mixer {
 
 struct MixerThread {
     amiga_pipelines : [RcAudioPipeline; 4],
+    pcmplayers : Vec<PCMPlayer>,
     // aux_pipeline : LinearFilteringPipeline,
     control_channel : Receiver<MixerOp>,
     buf : Arc<Mutex<RingBuf>>,
     tmp_buf : RingBuf,
     default_samples : Arc<Vec<i8>>,
+    started_flag : AtomicBool, // Have we started mixing?
     trackers : Vec<RefCell<Tracker>>,
 }
 
@@ -332,7 +351,7 @@ fn make_linear_pipeline(name : &str,
     let tracker_linear = Tracker::new(format!("{name}:LFiltr"));
     let tracker_stereo = Tracker::new(format!("{name}:Stereo"));
 
-    let pipeline = LinearFilteringPipeline::new(iterator::silent(),
+    let pipeline = LinearFilteringPipeline::new(iterator::empty(),
 						left, right,
 						sample_source, freq,
 						sync,
@@ -355,7 +374,7 @@ fn make_sinc_pipeline(name : &str,
     let tracker_linear = Tracker::new(format!("{name}:LFiltr"));
     let tracker_stereo = Tracker::new(format!("{name}:Stereo"));
 
-    let pipeline = SincPipeline::new(iterator::silent(),
+    let pipeline = SincPipeline::new(iterator::empty(),
 				     left, right,
 				     sample_source, freq,
 				     sync,
@@ -371,6 +390,7 @@ fn run_mixer_thread(freq : Freq,
 		    samples : Arc<Vec<i8>>,
 		    buf : Arc<Mutex<RingBuf>>,
 		    control_channel : Receiver<MixerOp>,
+		    started_flag : AtomicBool,
 		    callback_vtsensor : TrackerSensor) {
     let tracker_stereo = Tracker::new("Stereo".to_string());
     let tracker_aqueue = Tracker::new("AudioQueue".to_string());
@@ -401,7 +421,7 @@ fn run_mixer_thread(freq : Freq,
 
     // let sync_pipeline = pcmsync::new_basic();
 
-    // let pipeline = LinearFilteringPipeline::new(iterator::silent(),
+    // let pipeline = LinearFilteringPipeline::new(iterator::empty(),
     // 						1.0, 1.0,
     // 						sample_source.clone(), freq,
     // 						sync_pipeline,
@@ -417,19 +437,23 @@ fn run_mixer_thread(freq : Freq,
 
     let mut mt = MixerThread {
 	amiga_pipelines,
+	pcmplayers : vec![],
 	// aux_pipeline: pipeline,
 	control_channel,
 	buf,
 	tmp_buf : RingBuf::new(AUDIO_BUF_MAX_SIZE),
 	default_samples : samples,
+	started_flag,
 	trackers,
     };
     mt.run();
 }
 
 const MIXER_THREAD_FREQUENCY_MILLIS : u64 = 20;
+const MIXER_OVERPROVISION_FACTOR : f32 = 4.0; // increase prebuffering
+
+// debug info
 const MIXER_SCOPE_OUTPUT_FREQUENCY_MILLIS : u64 = 50; // once per this many milliseconds
-const MIXER_OVERPROVISION_FACTOR : f32 = 0.0; // increase prebuffering
 
 impl MixerThread {
     fn run(&mut self) {
@@ -471,7 +495,9 @@ impl MixerThread {
 	    }
 
 	    self.fill_buffer();
+	    self.retire_pcmplayers();
 
+	    self.started_flag.store(true, std::sync::atomic::Ordering::SeqCst);
 	    // Done for now, wait
 	    thread::sleep(time::Duration::from_millis(MIXER_THREAD_FREQUENCY_MILLIS));
 	}
@@ -497,6 +523,9 @@ impl MixerThread {
 			p.borrow_mut().set_iterator(sit);
 			i += 1;
 		    }
+		}
+		MixerOp::PlayPCM(pcmdata) => {
+		    self.pcmplayers.push(PCMPlayer::from(pcmdata));
 		}
 	    }
 	};
@@ -567,8 +596,19 @@ impl MixerThread {
 	    let max_transfer = usize::min(FILL_BUFFER_SIZE,
 					  outbuf.remaining_capacity());
 	    let read_samples = self.tmp_buf.write_to(&mut inner_buf[0..max_transfer]);
+
+	    // Play sound effects
+	    for p in self.pcmplayers.iter_mut() {
+		p.write_stereo_pcm(&mut inner_buf);
+	    }
+
+	    // Write
 	    samples_transferred += outbuf.read_from(&inner_buf[0..read_samples]);
 	}
+    }
+
+    fn retire_pcmplayers(&mut self) {
+	self.pcmplayers = self.pcmplayers.drain(..).filter(|x| !x.done()).collect();
     }
 }
 

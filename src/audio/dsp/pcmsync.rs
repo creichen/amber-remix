@@ -222,12 +222,12 @@ impl BasicWriterSyncImpl {
 	} else if oks == num_sources {
 	    ptrace!("All sources reported success");
 	    let timeslice = self.sources[0].next_timeslice;
-	    if None==timeslice {
-		perror!("Buffers have not reached timeslice yet:");
-		for (index, state) in self.sources.iter_mut().enumerate() {
-		    perror!("  #!{index}: {:?} size={}/{}", state.next_timeslice, state.buf.len(), state.buf.capacity());
-		}
-	    }
+	    // if None==timeslice {
+	    // 	perror!("Buffers have not reached timeslice yet:");
+	    // 	for (index, state) in self.sources.iter_mut().enumerate() {
+	    // 	    perror!("  #!{index}: {:?} size={}/{}", state.next_timeslice, state.buf.len(), state.buf.capacity());
+	    // 	}
+	    // }
 	    let mut sum_offset = 0;
 	    let mut max_offset = 0;
 	    let mut disagreement = false;

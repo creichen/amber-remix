@@ -54,6 +54,13 @@ pub trait PCMSyncWriter : FrequencyTrait {
 pub type RcSyncWriter = Rc<RefCell<dyn PCMSyncWriter>>;
 
 // ================================================================================
+// Stero Writer
+
+pub trait PCMStereoWriter {
+    fn write_stereo_pcm(&mut self, out : &mut [f32]);
+}
+
+// ================================================================================
 // Flexible-frequency writers that must synchronise on timeslice boundaries
 
 /// Writes variable-frequency PCM data
@@ -94,7 +101,7 @@ pub struct PCMSyncTee {
     observer : RcSyncObserver,
 }
 
-pub fn rc_sync_observe(source : RcSyncWriter, observer : &RcSyncObserver) -> RcSyncWriter {
+pub fn observe_rc_sync(source : RcSyncWriter, observer : RcSyncObserver) -> RcSyncWriter {
     return Rc::new(RefCell::new(PCMSyncTee {
 	source,
 	observer : observer.clone(),

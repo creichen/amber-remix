@@ -79,6 +79,12 @@ pub fn silent() -> ArcIt {
     ]);
 }
 
+pub fn empty() -> ArcIt {
+    return simple(vec![
+	AQOp::End,
+    ]);
+}
+
 /// MockAudioIterator For testing
 pub struct MockAudioIterator {
     pub ops : VecDeque<Vec<AQOp>>,
