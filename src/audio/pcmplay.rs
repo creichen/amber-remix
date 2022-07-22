@@ -107,8 +107,8 @@ impl PCMStereoWriter for PCMPlayer {
 	let mut pos = self.pos;
 	for sample_index in 0..to_write {
 	    let out_pos = sample_index << 1;
-	    output[out_pos + 0] = self.pcm.left[pos];
-	    output[out_pos + 1] = self.pcm.right[pos];
+	    output[out_pos + 0] += self.pcm.left[pos];
+	    output[out_pos + 1] += self.pcm.right[pos];
 	    pos += 1;
 	}
 	self.pos = pos;

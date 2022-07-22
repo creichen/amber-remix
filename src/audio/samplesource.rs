@@ -92,21 +92,23 @@ impl SampleWriter {
 
     pub fn forward_to_best_fit(&mut self, pcm_model : &PCMFit) {
 	let mut pos_best_fit = 0;
-	//let mut min_actual_distance = f32::MAX;
+	let mut min_actual_distance = f32::MAX;
 	let mut min_distance = f32::MAX;
 	let dat = &self.data;
+	// heuristic bias against high index:
+	let lenfact = 0.1 / (self.len() + 1) as f32;
 	for pos in 0..self.range.len >> 2 {
 	    let fitter = PCMFit::new(dat, pos);
 	    let actual_distance = fitter.distance(&pcm_model);
-	    let distance = actual_distance * ((pos + 100) as f32); // bias by index
+	    let distance = actual_distance + (pos as f32 * lenfact); // bias by index
 	    if distance < min_distance {
 		pos_best_fit = pos;
-		//min_actual_distance = actual_distance;
+		min_actual_distance = actual_distance;
 		min_distance = distance;
 	    }
 	}
 	self.count = pos_best_fit;
-	//println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
+	println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
     }
 
     /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR

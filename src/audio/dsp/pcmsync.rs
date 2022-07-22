@@ -263,7 +263,7 @@ impl BasicWriterSyncImpl {
 		    panic!("Unexpected granular flush");
 		}
 		pinfo!("AFTER-pcmfill(#{index}, avg_offset) {:p} {} (written={})", &state.buf, state.buf.internal(), state.written);
-		if let Some(timeslice) = timeslice {
+		if let Some(timeslice) = state.next_timeslice {
 		    state.advance(index, sync_offset, timeslice);
 		}
 	    }

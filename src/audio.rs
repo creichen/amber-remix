@@ -117,20 +117,35 @@ impl SincPipeline {
 	   target_freq : Freq,
 	   sync : RcSyncBarrier,
 	   sen_queue : TrackerSensor, sen_linear : TrackerSensor, sen_stereo : TrackerSensor) -> RcAudioPipeline {
-	// 4x oversampling
-	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, 2, samples.clone(), sen_queue)));
-	let itseq = sync.borrow_mut().sync(itseq_base.clone());
-	// 2x downsampling
-	let itseq = hermite::down2x(itseq.clone());
-	// 2x downsampling again
-	let itseq = hermite::down2x(itseq.clone());
-	let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
-						  s.set_volume(vol_left, vol_right);
-						  s}));
-	return Rc::new(RefCell::new(SincPipeline {
-	    it_proc : itseq_base.clone(),
-	    stereo_mapper,
-	}));
+
+	const OVERSAMPLE_4X : bool = false;
+
+	if OVERSAMPLE_4X {
+	    // 4x oversampling
+	    let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, 2, samples.clone(), sen_queue)));
+	    let itseq = sync.borrow_mut().sync(itseq_base.clone());
+	    // 2x downsampling
+	    let itseq = hermite::down2x(itseq.clone());
+	    // 2x downsampling again
+	    let itseq = hermite::down2x(itseq.clone());
+	    let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
+						      s.set_volume(vol_left, vol_right);
+						      s}));
+	    return Rc::new(RefCell::new(SincPipeline {
+		it_proc : itseq_base.clone(),
+		stereo_mapper,
+	    }));
+	} else {
+	    let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(it, target_freq, 0, samples.clone(), sen_queue)));
+	    let itseq = sync.borrow_mut().sync(itseq_base.clone());
+	    let stereo_mapper = Rc::new(RefCell::new({let mut s = StereoMapper::new(1.0, 1.0, itseq.clone(), sen_stereo);
+						      s.set_volume(vol_left, vol_right);
+						      s}));
+	    return Rc::new(RefCell::new(SincPipeline {
+		it_proc : itseq_base.clone(),
+		stereo_mapper,
+	    }));
+	}
     }
 }
 
@@ -491,7 +506,7 @@ impl MixerThread {
 	    }
 
 	    self.fill_buffer();
-	    //self.retire_pcmplayers();
+	    self.retire_pcmplayers();
 
 	    STARTED.store(true, std::sync::atomic::Ordering::SeqCst);
 	    // Done for now, wait

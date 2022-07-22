@@ -76,7 +76,7 @@ enum AA {
     Missing,
 }
 
-const COMMANDS : [CmdInfo; 10] = [
+const COMMANDS : [CmdInfo; 11] = [
     CmdInfo::Section("System commands"),
 
     CmdInfo::Cmd(Command {
@@ -115,6 +115,7 @@ const COMMANDS : [CmdInfo; 10] = [
 	a : &[("SONGNR", FA::U)],
 	oa : &[
 	    ("linear-crossfade", FA::U, "Number of samples to apply linear crossfade to between ticks (default: 0)"),
+	    ("oversample", FA::U, "Powers of two to oversample (compensated via hermite downsampling) (default: 0)"),
 	    ("maxtick", FA::U, "Maximum tick to track"),
 	],
 	d : "Sets the current song to debug" }),
@@ -146,6 +147,15 @@ const COMMANDS : [CmdInfo; 10] = [
 	    ("c", FA::O, "Left+right sides (can be specified more than once)"),
 	],
 	d : "Plays the specified channel / range" }),
+
+    CmdInfo::Cmd(Command {
+	n : "write",
+	f : cmd_write,
+	a : &[("OFFSET", FA::O),
+	      ("FILENAME", FA::S)],
+	oa : &[
+	],
+	d : "Writes the specified file / range into a WAV file" }),
 ];
 
 // ----------------------------------------
@@ -223,7 +233,9 @@ fn cmd_set_song(cli: &mut CLI, args : &Args) {
     cli.song_nr = Some(song_nr);
     let channels = audio::dsp::channel_sequencer::sequence_sinc_linear(songit, cli.mixer.get_freq(),
 								       maxtick,
-								       args.get_opt("linear-crossfade").default_u(0));
+								       args.get_opt("oversample").default_u(0),
+								       args.get_opt("linear-crossfade").default_u(0)
+    );
     cli.channels = vec![];
     for c in channels {
 	cli.channels.push(Rc::new(c));
@@ -238,7 +250,7 @@ fn cmd_show(_cli: &mut CLI, args : &Args) {
 
     let mut must_newline = true;
     let mut count = 0;
-    const MAX_COUNT : usize = 40;
+    const MAX_COUNT : usize = 50;
     let mut last_sample = None;
     for (pos, sample, meta) in it {
 	if count >= MAX_COUNT {
@@ -303,6 +315,29 @@ fn cmd_plays(cli: &mut CLI, args : &Args) {
     }
     for c in args.get_opts("c") {
 	cli.mixer.play_pcm(MonoPCM::from(c.offset()).to_stereo(1.0, 1.0));
+    }
+}
+
+// --------------------
+fn cmd_write(cli: &mut CLI, args : &Args) {
+    let offset = args[0].offset();
+    let filename = args[1].s();
+    let spec = hound::WavSpec {
+	channels: 1,
+	sample_rate: cli.mixer.get_freq() as u32,
+	bits_per_sample: 32,
+	sample_format : hound::SampleFormat::Float,
+    };
+    match hound::WavWriter::create(filename, spec) {
+	Err(s) => { println!("Error: {}", s); return; }
+	Ok(mut writer) => {
+	    for (_, s, _) in offset {
+		if let Err(e) = writer.write_sample(s) {
+		    println!("Error while writing: {e}");
+		    return;
+		}
+	    }
+	}
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{rc::Rc, cell::RefCell, sync::{Arc, Mutex}};
 use crate::audio::{Freq, iterator_sequencer::IteratorSequencer, iterator::{ArcPoly, AudioIteratorObserver, self}, samplesource::SincSampleSource, pcmplay::{MonoPCM, StereoPCM}};
-use super::{writer::{RcSyncWriter, self, PCMSyncObserver, Timeslice}, crossfade_linear::LinearCrossfade, vtracker::TrackerSensor, pcmsync, streamlog::{StreamLogger, StreamLogClient}};
+use super::{writer::{RcSyncWriter, self, PCMSyncObserver, Timeslice}, crossfade_linear::LinearCrossfade, vtracker::TrackerSensor, pcmsync, streamlog::{StreamLogger, StreamLogClient}, hermite};
 
 // ================================================================================
 // AudioStream
@@ -183,7 +183,7 @@ impl AudioIteratorObserver for AStreamCollector<()> {
 }
 
 impl PCMSyncObserver for AStreamPCMSyncObserver<ASMeta> {
-    fn observe_write(&mut self, wr_result : writer::SyncPCMResult, _written : &[f32]) {
+    fn observe_write(&mut self, wr_result : writer::SyncPCMResult, written : &[f32]) {
 	let mut guard = self.asc.lock().unwrap();
 	match wr_result {
 	    writer::SyncPCMResult::Wrote(n, None)     => guard.record_meta("pcms", "Wrote", format!("({n})")),
@@ -222,7 +222,7 @@ impl AudioIteratorObserver for AStreamCollector<ASMeta> {
 
 /// Sequences an audioiterator into its constitutent (mono) streams using a sinc pipeline with
 /// optional linear cross-fade
-pub fn sequence_sinc_linear(polyit : ArcPoly, freq : Freq, maxtick : Option<usize>, linear_crossfade : usize) -> Vec<AudioStream<ASMeta>> {
+pub fn sequence_sinc_linear(polyit : ArcPoly, freq : Freq, maxtick : Option<usize>, oversampling : usize, linear_crossfade : usize) -> Vec<AudioStream<ASMeta>> {
     let (samples, arcits) = {
 	let mut guard = polyit.lock().unwrap();
 	(guard.get_samples(), guard.get())
@@ -248,7 +248,7 @@ pub fn sequence_sinc_linear(polyit : ArcPoly, freq : Freq, maxtick : Option<usiz
 	// Log output:
 	let arcit = iterator::observe(arcit, arcit_observer.clone());
 
-	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(arcit, freq, 1, samplesource.clone(), TrackerSensor::new())));
+	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(arcit, freq, oversampling, samplesource.clone(), TrackerSensor::new())));
 	// Register as internal logger:
 	itseq_base.borrow_mut().set_logger(arcit_observer.clone());
 	let itseq : RcSyncWriter = if linear_crossfade == 0 { itseq_base.clone() } else {
@@ -256,7 +256,10 @@ pub fn sequence_sinc_linear(polyit : ArcPoly, freq : Freq, maxtick : Option<usiz
 	};
 	// Log output:
 	let itseq = writer::observe_rc_sync(itseq, pcm_observer.clone());
-	let itseq = sync.borrow_mut().sync(itseq.clone());
+	let mut itseq = sync.borrow_mut().sync(itseq.clone());
+	for _ in 0..oversampling {
+	    itseq = hermite::down2x(itseq.clone());
+	}
 	observers.push((itseq.clone(), pcm_observer));
     }
 

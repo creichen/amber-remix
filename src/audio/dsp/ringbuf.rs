@@ -269,10 +269,12 @@ impl WindowedBuf {
 	return result;
     }
 
+    #[allow(unused)]
     pub fn clear(&mut self) {
 	self.buf.data.fill(0.0);
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
 	return self.buf.len();
     }
@@ -313,6 +315,13 @@ impl WindowedBuf {
 	let size = usize::min(size, maxlen);
 	let rpos = self.buf.read_pos;
 	source.borrow_mut().write_pcm(&mut self.buf.data[rpos..rpos+size]);
+	let rpos = rpos + size;
+	if rpos == self.buf.capacity() {
+	    self.buf.read_pos = 0;
+	} else {
+	    self.buf.read_pos = rpos;
+	}
+
 	return size;
     }
 
@@ -330,7 +339,9 @@ impl WindowedBuf {
 	let mask = self.mask;
 	let pos = (self.buf.read_pos + mask - offset) & mask;
 	//println!(" data[{pos}] from {:?}", self.buf.data);
-	return self.buf.data[pos];
+	let d = self.buf.data[pos];
+	//println!(" data[{pos}] = {d} from {:?}", self.buf.data);
+	return d;
     }
 }
 
