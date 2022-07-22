@@ -76,7 +76,7 @@ enum AA {
     Missing,
 }
 
-const COMMANDS : [CmdInfo; 9] = [
+const COMMANDS : [CmdInfo; 10] = [
     CmdInfo::Section("System commands"),
 
     CmdInfo::Cmd(Command {
@@ -133,6 +133,17 @@ const COMMANDS : [CmdInfo; 9] = [
 	f : cmd_play,
 	a : &[("OFFSET", FA::O)],
 	oa : &[
+	],
+	d : "Plays the specified channel / range" }),
+
+    CmdInfo::Cmd(Command {
+	n : "plays",
+	f : cmd_plays,
+	a : &[],
+	oa : &[
+	    ("l", FA::O, "Left audio (can be specified more than once)"),
+	    ("r", FA::O, "Right audio (can be specified more than once)"),
+	    ("c", FA::O, "Left+right sides (can be specified more than once)"),
 	],
 	d : "Plays the specified channel / range" }),
 ];
@@ -280,6 +291,19 @@ fn cmd_show(_cli: &mut CLI, args : &Args) {
 fn cmd_play(cli: &mut CLI, args : &Args) {
     let offset = args[0].offset();
     cli.mixer.play_pcm(StereoPCM::from(MonoPCM::from(offset)));
+}
+
+// --------------------
+fn cmd_plays(cli: &mut CLI, args : &Args) {
+    for l in args.get_opts("l") {
+	cli.mixer.play_pcm(MonoPCM::from(l.offset()).to_stereo(1.0, 0.0));
+    }
+    for r in args.get_opts("r") {
+	cli.mixer.play_pcm(MonoPCM::from(r.offset()).to_stereo(0.0, 1.0));
+    }
+    for c in args.get_opts("c") {
+	cli.mixer.play_pcm(MonoPCM::from(c.offset()).to_stereo(1.0, 1.0));
+    }
 }
 
 // ================================================================================
@@ -703,6 +727,16 @@ impl Args {
 	}
 	return AA::Missing;
     }
+
+    pub fn get_opts<'a>(&self, argname : &'a str) -> Vec<AA> {
+	let mut results = vec![];
+	for (n, v) in &self.kwargs {
+	    if n == argname {
+		results.push(v.clone());
+	    }
+	}
+	return results;
+    }
 }
 
 impl Index<usize> for Args {
@@ -778,7 +812,6 @@ struct CLI<'a> {
 
 fn parse_colonpair<'a>(s : &'a str) -> Option<(&'a str, &'a str)> {
     let tokens : Vec<&'a str> = s.split(":").collect();
-    println!("parsy {s} -> {:?}", tokens);
     if tokens.len() == 2 {
 	return Some((tokens[0], tokens[1]));
     }

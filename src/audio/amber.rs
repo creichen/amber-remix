@@ -43,6 +43,8 @@ use super::iterator::ArcPoly;
 use super::iterator::AudioIterator;
 use super::iterator::PolyIterator;
 
+const DEBUG : bool = crate::util::LOGGING;
+
 // ================================================================================
 // Time
 
@@ -737,7 +739,9 @@ impl ChannelIterator {
     }
 
     pub fn streamlog(&mut self, topic : &'static str, message : String) {
-	streamlog::log(&mut self.logger, "chanit", topic, message);
+	if DEBUG {
+	    streamlog::log(&mut self.logger, "chanit", topic, message);
+	}
     }
 }
 

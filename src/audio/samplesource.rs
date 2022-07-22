@@ -83,24 +83,30 @@ impl SampleWriter {
     }
 
     /// Obtains a summary of the PCM wave at the current position
-    pub fn pcmfit(&self) -> PCMFit {
-	return PCMFit::new(&self.data, self.count);
+    pub fn get_samplefit(&self) -> PCMFit {
+	if self.count > 0 {
+	    return PCMFit::new(&self.data, self.count - 1);
+	}
+	return PCMFit::new(&self.data, 0);
     }
 
     pub fn forward_to_best_fit(&mut self, pcm_model : &PCMFit) {
 	let mut pos_best_fit = 0;
+	//let mut min_actual_distance = f32::MAX;
 	let mut min_distance = f32::MAX;
 	let dat = &self.data;
-	for pos in 0..self.range.len >> 1 {
+	for pos in 0..self.range.len >> 2 {
 	    let fitter = PCMFit::new(dat, pos);
-	    let distance = fitter.distance(&pcm_model);
+	    let actual_distance = fitter.distance(&pcm_model);
+	    let distance = actual_distance * ((pos + 100) as f32); // bias by index
 	    if distance < min_distance {
 		pos_best_fit = pos;
+		//min_actual_distance = actual_distance;
 		min_distance = distance;
 	    }
 	}
 	self.count = pos_best_fit;
-	println!("Forwarded via best fit {min_distance:.3} to {pos_best_fit} in {self}");
+	//println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
     }
 
     /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR

@@ -491,7 +491,7 @@ impl MixerThread {
 	    }
 
 	    self.fill_buffer();
-	    self.retire_pcmplayers();
+	    //self.retire_pcmplayers();
 
 	    STARTED.store(true, std::sync::atomic::Ordering::SeqCst);
 	    // Done for now, wait
