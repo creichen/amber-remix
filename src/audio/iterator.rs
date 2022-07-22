@@ -29,6 +29,8 @@ pub enum AQOp {
     SetFreq(Freq),
     /// Set audio volume as fraction (applies immediately)
     SetVolume(f32),
+    // /// Debug inforamtion (if enabled)
+    // Info(String),
     End,
 }
 
@@ -42,6 +44,16 @@ pub enum AQSample {
     /// The optional value is filled in by the audio queue processor.
     /// This is useful for "slider" samples that have closely aligned waveforms and switch out frequently.
     OnceAtOffset(SampleRange, Option<(usize, usize)>),
+}
+
+impl std::fmt::Display for AQSample {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AQSample::Loop(sr)              => write!(f, "Loop({sr})"),
+            AQSample::Once(sr)              => write!(f, "Once({sr})"),
+            AQSample::OnceAtOffset(sr, off) => write!(f, "OnceAtOffset({sr}, {off:?})"),
+        }
+    }
 }
 
 impl From<BasicSample> for AQOp {
@@ -62,6 +74,7 @@ pub trait AudioIterator : Send + Sync {
     /// Duplicates the song in its current state
     fn clone_it(&self) -> ArcIt;
 }
+
 // ----------------------------------------
 
 pub fn mock(v : Vec<Vec<AQOp>>) -> ArcIt {
@@ -154,4 +167,49 @@ pub trait PolyIterator : Send + Sync {
 
     /// Retrieves the audio samples that are indexed by AQSample
     fn get_samples(&self) -> Arc<Vec<i8>>;
+}
+
+// ================================================================================
+// Observers
+
+// ----------------------------------------
+// AudioIteratorObserver
+
+pub trait AudioIteratorObserver : Send + Sync {
+    fn observe_aqop(&mut self, result : &AQOp);
+}
+
+type ArcItObserver = Arc<Mutex<dyn AudioIteratorObserver>>;
+
+#[derive(Clone)]
+struct AudioIteratorObserverAdapter {
+    pub source : ArcIt,
+    observer : ArcItObserver,
+}
+
+pub fn observe(source : ArcIt, observer : ArcItObserver) -> ArcIt {
+    return Arc::new(Mutex::new(AudioIteratorObserverAdapter {
+	source,
+	observer : observer.clone(),
+    }));
+}
+
+impl AudioIterator for AudioIteratorObserverAdapter {
+    fn next(&mut self, queue : &mut VecDeque<AQOp>) {
+	let mut tmpqueue = {
+	    let mut q = VecDeque::new();
+	    let mut guard = self.source.lock().unwrap();
+	    guard.next(&mut q);
+	    q
+	};
+	for e in tmpqueue.drain(..) {
+	    let mut guard = self.observer.lock().unwrap();
+	    guard.observe_aqop(&e);
+	    queue.push_back(e);
+	}
+    }
+
+    fn clone_it(&self) -> ArcIt {
+	panic!("Obsever cloning would probably lead to unexpected results, therefore unimplemented for now");
+    }
 }

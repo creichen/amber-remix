@@ -561,7 +561,7 @@ fn main() -> io::Result<()> {
 	    let source = &args[2];
 	    play_song(&data, str::parse::<usize>(source).unwrap());
 	} else if args[1] == "debug-audio" {
-	    debug_audio::debug_audio(&data);
+	    debug_audio::debug_audio(&data).unwrap();
 	} else if args[1] == "extract" {
 	    let source = &args[2];
 	    let mut df = datafiles::DataFile::load(Path::new(source));

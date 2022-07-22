@@ -23,12 +23,12 @@ pub use self::queue::SampleRange;
 pub use self::dsp::frequency_range::Freq;
 pub use self::iterator::ArcIt;
 
-mod dsp;
+pub mod dsp;
 mod queue;
-mod iterator;
+pub mod iterator;
 mod iterator_sequencer;
 mod samplesource;
-mod pcmplay;
+pub mod pcmplay;
 pub mod amber;
 
 const AUDIO_BUF_MAX_SIZE : usize = 16384;
@@ -150,7 +150,6 @@ impl AudioPipeline for SincPipeline {
 
 struct Callback {
     shared_buf : Arc<Mutex<RingBuf>>,
-    started_flag : AtomicBool,
     tracker : TrackerSensor,
 }
 
@@ -163,7 +162,7 @@ impl AudioCallback for Callback {
 	let num_written = buf.write_to(output);
 
 	if num_written < output.len() {
-	    if self.started_flag.load(std::sync::atomic::Ordering::SeqCst) {
+	    if STARTED.load(std::sync::atomic::Ordering::SeqCst) {
 		println!("Buffer underrun {num_written}/{}", output.len());
 	    }
 	    //warn!("Buffer underrun {num_written}/{}", output.len());
@@ -180,9 +179,9 @@ impl AudioCallback for Callback {
 }
 
 impl Callback {
-    fn new(shared_buf : Arc<Mutex<RingBuf>>, tracker : TrackerSensor, started_flag : AtomicBool) -> Callback {
+    fn new(shared_buf : Arc<Mutex<RingBuf>>, tracker : TrackerSensor) -> Callback {
 	return Callback {
-	    shared_buf, tracker, started_flag,
+	    shared_buf, tracker,
 	}
     }
 }
@@ -190,25 +189,25 @@ impl Callback {
 // ================================================================================
 // AudioCore
 
-const AUDIO_STARTED : AtomicBool = AtomicBool::new(false);
+// Audio mixing has started
+const STARTED : AtomicBool = AtomicBool::new(false);
 
 pub struct AudioCore {
     spec : AudioSpec,
     shared_buf : Arc<Mutex<RingBuf>>,
-    started_flag : AtomicBool, // Have we started audio processing?
     device : Option<sdl2::audio::AudioDevice<Callback>>,
     callback_tracker_sensor : TrackerSensor,
 }
 
 impl AudioCore {
-    fn init(&mut self, spec : AudioSpec, started_flag : AtomicBool) -> Callback {
+    fn init(&mut self, spec : AudioSpec) -> Callback {
 	self.spec = spec;
-	return Callback::new(self.shared_buf.clone(), self.callback_tracker_sensor.clone(), started_flag);
+	return Callback::new(self.shared_buf.clone(), self.callback_tracker_sensor.clone());
     }
 
     fn start_mixer<'a>(&mut self, sample_data : &'a [i8]) -> Mixer {
 	let freq = self.spec.freq as Freq;
-	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone(), self.started_flag, self.callback_tracker_sensor.clone());
+	let mixer = Mixer::new(Arc::new(sample_data.to_vec()), freq, self.shared_buf.clone(), self.callback_tracker_sensor.clone());
 	self.device.as_ref().unwrap().resume();
 	return mixer;
     }
@@ -237,8 +236,6 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	samples: None
     };
 
-    let started_flag = AtomicBool::new(false);
-
     let core = Arc::new(Mutex::new(AudioCore {
 	spec : AudioSpec {
 	    freq: 0,
@@ -249,7 +246,6 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
 	    size: 0,
 	},
 	shared_buf : Arc::new(Mutex::new(RingBuf::new(AUDIO_BUF_MAX_SIZE))),
-	started_flag,
 	device : None,
 	callback_tracker_sensor : TrackerSensor::new(),
     }));
@@ -258,7 +254,7 @@ pub fn init<'a>(sdl_context : &sdl2::Sdl) -> ACore {
     let device = audio.open_playback(None, &requested_audio, |spec| {
 	let mut guard = core_clone.lock().unwrap();
 	let cc = guard.deref_mut();
-	return cc.init(spec, started_flag);
+	return cc.init(spec);
     }).unwrap();
 
     {
@@ -284,12 +280,12 @@ enum MixerOp {
 }
 
 pub struct Mixer {
+    freq : usize,
     control_channel : Sender<MixerOp>,
 }
 
 impl Mixer {
     fn new(samples : Arc<Vec<i8>>, freq : Freq, out_buf : Arc<Mutex<RingBuf>>,
-	   started_flag : AtomicBool,
 	   callback_vtsensor : TrackerSensor) -> Mixer {
 	let (tx, rx) = mpsc::channel();
 
@@ -300,13 +296,16 @@ impl Mixer {
 		stacktrace_hook(panic_info);
 		process::exit(1);
 	    }));
-	    run_mixer_thread(freq, samples, out_buf.clone(), rx, started_flag, callback_vtsensor);
+	    run_mixer_thread(freq, samples, out_buf.clone(), rx, callback_vtsensor);
 	});
 
 	return Mixer {
+	    freq,
 	    control_channel : tx,
 	}
     }
+
+    pub fn get_freq(&self) -> usize { self.freq }
 
     pub fn set_iterator(&mut self, it : ArcIt) {
 	self.control_channel.send(MixerOp::SetIterator(it)).unwrap();
@@ -336,7 +335,6 @@ struct MixerThread {
     buf : Arc<Mutex<RingBuf>>,
     tmp_buf : RingBuf,
     default_samples : Arc<Vec<i8>>,
-    started_flag : AtomicBool, // Have we started mixing?
     trackers : Vec<RefCell<Tracker>>,
 }
 
@@ -390,7 +388,6 @@ fn run_mixer_thread(freq : Freq,
 		    samples : Arc<Vec<i8>>,
 		    buf : Arc<Mutex<RingBuf>>,
 		    control_channel : Receiver<MixerOp>,
-		    started_flag : AtomicBool,
 		    callback_vtsensor : TrackerSensor) {
     let tracker_stereo = Tracker::new("Stereo".to_string());
     let tracker_aqueue = Tracker::new("AudioQueue".to_string());
@@ -443,7 +440,6 @@ fn run_mixer_thread(freq : Freq,
 	buf,
 	tmp_buf : RingBuf::new(AUDIO_BUF_MAX_SIZE),
 	default_samples : samples,
-	started_flag,
 	trackers,
     };
     mt.run();
@@ -497,7 +493,7 @@ impl MixerThread {
 	    self.fill_buffer();
 	    self.retire_pcmplayers();
 
-	    self.started_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+	    STARTED.store(true, std::sync::atomic::Ordering::SeqCst);
 	    // Done for now, wait
 	    thread::sleep(time::Duration::from_millis(MIXER_THREAD_FREQUENCY_MILLIS));
 	}

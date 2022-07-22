@@ -203,7 +203,7 @@ impl SincSampleSource {
 	// => x^2 = max_out_freq / min_out_freq
 	let xfact = f64::sqrt(max_out_freq as f64 / min_out_freq as f64);
 	let middle_freq = min_out_freq as f64 * xfact;
-	println!("Freqs: min:{min_out_freq}..{max_out_freq} -> midlde={middle_freq} with x:{xfact}");
+	//println!("Freqs: min:{min_out_freq}..{max_out_freq} -> midlde={middle_freq} with x:{xfact}");
 
 
 	let mut resampler_map = HashMap::new();
