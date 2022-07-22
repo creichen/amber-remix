@@ -36,6 +36,7 @@ impl MonoPCM {
 }
 
 impl MonoPCM {
+    #[allow(unused)]
     pub fn len(&self) -> usize {
 	return self.data.len();
     }

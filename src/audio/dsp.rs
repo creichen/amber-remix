@@ -15,3 +15,5 @@ pub mod hermite;
 pub mod mock_syncwriter;
 pub mod mock_pcmwriter;
 pub mod channel_sequencer;
+pub mod streamlog;
+pub mod pcmfit;

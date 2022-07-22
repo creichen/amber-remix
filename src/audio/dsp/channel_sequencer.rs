@@ -11,7 +11,7 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{rc::Rc, cell::RefCell, sync::{Arc, Mutex}};
 use crate::audio::{Freq, iterator_sequencer::IteratorSequencer, iterator::{ArcPoly, AudioIteratorObserver, self}, samplesource::SincSampleSource, pcmplay::{MonoPCM, StereoPCM}};
-use super::{writer::{RcSyncWriter, self, PCMSyncObserver, Timeslice}, crossfade_linear::LinearCrossfade, vtracker::TrackerSensor, pcmsync};
+use super::{writer::{RcSyncWriter, self, PCMSyncObserver, Timeslice}, crossfade_linear::LinearCrossfade, vtracker::TrackerSensor, pcmsync, streamlog::{StreamLogger, StreamLogClient}};
 
 // ================================================================================
 // AudioStream
@@ -90,6 +90,12 @@ impl<T> AStreamCollector<T> {
 	    astream : AudioStream::<T>::new(),
 	    done : false,
 	}
+    }
+}
+
+impl StreamLogger for AStreamCollector<ASMeta> {
+    fn log(&mut self, subsystem : &'static str, category : &'static str, message : String) {
+	self.record_meta(subsystem, category, message);
     }
 }
 
@@ -234,11 +240,21 @@ pub fn sequence_sinc_linear(polyit : ArcPoly, freq : Freq, maxtick : Option<usiz
 	    }
 	    (Rc::new(RefCell::new(po.clone())), po.asc.clone())
 	};
-	let arcit = iterator::observe(arcit, arcit_observer);
+	// Register as internal logger:
+	{
+	    let mut guard = arcit.lock().unwrap();
+	    guard.set_logger(arcit_observer.clone());
+	}
+	// Log output:
+	let arcit = iterator::observe(arcit, arcit_observer.clone());
+
 	let itseq_base = Rc::new(RefCell::new(IteratorSequencer::new_with_source(arcit, freq, 1, samplesource.clone(), TrackerSensor::new())));
+	// Register as internal logger:
+	itseq_base.borrow_mut().set_logger(arcit_observer.clone());
 	let itseq : RcSyncWriter = if linear_crossfade == 0 { itseq_base.clone() } else {
 	    LinearCrossfade::new_rc(linear_crossfade, itseq_base.clone())
 	};
+	// Log output:
 	let itseq = writer::observe_rc_sync(itseq, pcm_observer.clone());
 	let itseq = sync.borrow_mut().sync(itseq.clone());
 	observers.push((itseq.clone(), pcm_observer));
