@@ -36,8 +36,6 @@ pub enum SyncPCMResult {
     Wrote(usize, Option<Timeslice>),
     /// Source reset: flush buffers, set current time slice to 0, try to write again
     Flush,
-//    /// Debug information (if enabled)
-//    Info(Rc<String>),
 }
 
 /// Writes fixed-frequency PCM data

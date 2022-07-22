@@ -65,6 +65,15 @@ pub const SYNC_STRATEGY_MAX : bool = true;
 const RESERVE : usize = 0;
 
 impl BasicWriterState {
+    fn read_from_buf(&mut self, count : usize) -> (usize, SyncPCMResult) {
+	let mut wr = self.source.borrow_mut();
+	let wrbuf = self.buf.wrbuf(count);
+	let wrbuf_len = wrbuf.len();
+	let result = wr.write_sync_pcm(wrbuf);
+	ptrace!("  wrbuf : {}/{count}", wrbuf_len);
+	return (wrbuf_len, result);
+    }
+
     /// Read into local buffer
     /// Returns FALSE if flushed
     fn read_pcm(&mut self, index : usize, requested_count : usize) -> bool {
@@ -76,20 +85,16 @@ impl BasicWriterState {
 	let mut written1 = 0;
 	let mut samples_offered_by_our_buffer;
 	let result = {
-	    // let mut guard = self.source.lock().unwrap();
-	    // let wr = guard.deref_mut();
-	    let mut wr = self.source.borrow_mut();
-	    let wrbuf = self.buf.wrbuf(count);
-	    ptrace!("  wrbuf1 : {}/{count}", wrbuf.len());
-	    samples_offered_by_our_buffer = wrbuf.len();
-	    let result = wr.write_sync_pcm(wrbuf);
+	    let (offered, result) = self.read_from_buf(count);
+	    samples_offered_by_our_buffer = offered;
+
 	    if let SyncPCMResult::Wrote(actual_count, None) = result {
 		if samples_offered_by_our_buffer < count {
 		    written1 = actual_count;
-		    let wrbuf2 = self.buf.wrbuf(count - actual_count);
-		    ptrace!("  wrbuf2 : {}", wrbuf2.len());
-		    samples_offered_by_our_buffer += wrbuf2.len();
-		    wr.write_sync_pcm(wrbuf2)
+
+		    let (offered2, result) = self.read_from_buf(count - actual_count);
+		    samples_offered_by_our_buffer += offered2;
+		    result
 		} else { result }
 	    } else { result} };
 	match result {
