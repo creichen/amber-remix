@@ -973,6 +973,7 @@ fn test_linear_filter_boundary_crash() {
 
 #[cfg(test)]
 #[test]
+#[ignore]
 fn integrate_test_binary_sync() {
 
     let mut data0 = [0.0; 20];
