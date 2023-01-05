@@ -18,17 +18,21 @@ use crate::datafiles::palette::Palette;
 
 use self::music::Song;
 use self::tile::Tileset;
+use self::map::Map;
 
 const DEBUG : bool = true;
 
 mod string_fragment_table;
 mod map_string_table;
 mod decode;
+mod bytepattern;
+pub mod amber_string;
 pub mod palette;
 pub mod pixmap;
 pub mod music;
 pub mod sampledata;
 pub mod tile;
+pub mod map;
 
 #[derive(Debug)]
 pub enum FileHeaderType {
@@ -437,6 +441,7 @@ pub struct AmberStarFiles {
     pub sample_data : sampledata::SampleData,
     pub songs : Vec<Song>,
     pub tiles : Vec<Tileset<Pixmap>>,
+    pub maps : Vec<Map>,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -473,6 +478,15 @@ fn load_tiles(dfile : &mut DataFile) -> Vec<Tileset<Pixmap>> {
     for e in 0..dfile.num_entries {
 	let dat = dfile.decode(e);
 	result.push(tile::new(&dat));
+    }
+    return result;
+}
+
+fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
+    let mut result = vec![];
+    for e in 0..dfile.num_entries {
+	let dat = dfile.decode(e);
+	result.push(map::new(e as usize, &dat));
     }
     return result;
 }
@@ -515,6 +529,9 @@ impl AmberStarFiles {
 	let mut tiles_f = load_relative(path, "ICON_DAT.AMB");
 	let tiles = load_tiles(&mut tiles_f);
 
+	let mut map_data_f = load_relative(path, "MAP_DATA.AMB");
+	let maps = load_maps(&mut map_data_f);
+
 	let path : String = format!("{}", path);
 
 	return AmberStarFiles {
@@ -529,6 +546,7 @@ impl AmberStarFiles {
 	    sample_data,
 	    songs,
 	    tiles,
+	    maps,
 	}
     }
 }

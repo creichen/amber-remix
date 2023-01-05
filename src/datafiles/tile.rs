@@ -26,13 +26,14 @@ pub struct TileIcon<T> {
 }
 
 const PALETTE_BRIGHTNESS : u8 = 255 / 7; /* VALIDATE ME */
-const ANIM_TYPE_OFFSET : usize = 0x2;
 const PALETTE_SIZE : usize = 0x42; /* Assuming 16 entries */
 const COLOR_INDEX_FOR_TRANSPARENCY : usize = 0;
 
+const OFFSET_TILE_NUM_ANIM_FRAMES : usize = 0x2;
+
 pub fn new(src: &[u8]) -> Tileset<Pixmap> {
     let mut tile_icons = vec![];
-    let num_icons = src[ANIM_TYPE_OFFSET..].iter().position(|x|  *x == 0); // Always 250, I think?
+    let num_icons = src[OFFSET_TILE_NUM_ANIM_FRAMES..].iter().position(|x|  *x == 0); // Always 250, I think?
     let player_icon_index = decode::u16(src, 0) as usize;
 
     assert_eq!(num_icons, Some(250), "num_icons != 250 is possible, but I haven't observed it anywhere");

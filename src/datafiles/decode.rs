@@ -1,3 +1,6 @@
+// Copyright (C) 2022,23 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
 pub fn u16(vec : &[u8], offset : usize) -> u16 {
     let hi = vec[offset] as u16;
     let lo = vec[offset + 1] as u16;

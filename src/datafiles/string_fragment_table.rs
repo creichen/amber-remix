@@ -1,4 +1,7 @@
-use codepage_strings::Coding;
+// Copyright (C) 2022,23 Christoph Reichenbach (creichen@gmail.com)
+// Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
+
+use super::amber_string;
 
 pub struct StringFragmentTable {
     fragments : Vec<String>
@@ -6,7 +9,7 @@ pub struct StringFragmentTable {
 
 impl StringFragmentTable {
     pub fn new(bytes : &[u8]) -> StringFragmentTable {
-	let codepage = Coding::new(850).unwrap();
+	let codepage = &amber_string::CODEPAGE;
 
 	let mut result = StringFragmentTable { fragments : vec!["<?-NUL-?>".to_string()] };
 	let mut offset = 0;
