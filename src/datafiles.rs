@@ -33,6 +33,7 @@ pub mod music;
 pub mod sampledata;
 pub mod tile;
 pub mod map;
+//pub mod labgfx;
 
 #[derive(Debug)]
 pub enum FileHeaderType {
@@ -483,12 +484,13 @@ fn load_tiles(dfile : &mut DataFile) -> Vec<Tileset<Pixmap>> {
 }
 
 fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
-    let mut result = vec![];
-    for e in 0..dfile.num_entries {
-	let dat = dfile.decode(e);
-	result.push(map::new(e as usize, &dat));
-    }
-    return result;
+    // let mut result = vec![];
+    // for e in 0..dfile.num_entries {
+    // 	let dat = dfile.decode(e);
+    // 	result.push(map::new(e as usize, &dat));
+    // }
+    // return result;
+    (0..dfile.num_entries).map(|i| map::new(i as usize, &dfile.decode(i))).collect()
 }
 
 impl AmberStarFiles {
@@ -532,6 +534,10 @@ impl AmberStarFiles {
 	let mut map_data_f = load_relative(path, "MAP_DATA.AMB");
 	let maps = load_maps(&mut map_data_f);
 
+	let mut labblock_f = load_relative(path, "LABBLOCK.AMB");
+	let mut lab_data_f = load_relative(path, "LAB_DATA.AMB");
+	let maps = load_maps(&mut map_data_f);
+
 	let path : String = format!("{}", path);
 
 	return AmberStarFiles {
@@ -547,6 +553,7 @@ impl AmberStarFiles {
 	    songs,
 	    tiles,
 	    maps,
+	    // labgfx,
 	}
     }
 }

@@ -88,6 +88,7 @@ RUST_LOG="warn,amber_remix::datafiles::map=info" cargo run
 ## Acknowledgements
 This work is based by documentation collected from the following
 sources:
+- [Pyrdacor](https://www.pyrdacor.net)'s collection of documentation for [Ambermoon](https://github.com/Pyrdacor/Ambermoon) and [Amberstar](https://github.com/Pyrdacor/Amberstar)
 - [Pyrdacor](https://www.pyrdacor.net)'s collection of AmberMoon documentation: [https://github.com/Pyrdacor/Ambermoon]
 - Heikki Orsila's [UADE](https://zakalwe.fi/uade/), specifically m68k assembly implementations of Jochen Hippel's sound formats
 - Christian Corti's [Flod 4.1 player for Jochen Hippel's 4-voice formats](https://github.com/photonstorm/Flod/blob/master/Flod%204.1/neoart/flod/hippel/JHPlayer.as)

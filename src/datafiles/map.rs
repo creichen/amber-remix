@@ -187,7 +187,6 @@ impl Event {
 
 	if data[0] == 1 && data[1] == 0 && data[2] == 0 && data[3] == 0 && data[7] == 0 {
 	    // This would be "teleport nowhere"
-	    warn!("Terminating event: {:x?}", data);
 	    None
 	} else {
 	    let mut notes = String::new();
