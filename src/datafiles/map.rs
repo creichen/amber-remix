@@ -137,6 +137,7 @@ type MapIndex = usize;
 type ChestIndex = usize; // number of CHESTDATA.AMB entry
 type ChestFlagID = usize; // flag to store whether chest has been emptied
 
+#[derive(Clone)]
 enum EventOp {
     LockedDoor(usize), // lock pick difficulty
     PopupMessage(Option<ImageIndex>, MapMessageIndex),
@@ -148,11 +149,13 @@ enum EventOp {
     WinGame,       // win game
 }
 
+#[derive(Clone)]
 enum EventCondition {
     Enter,
     Look
 }
 
+#[derive(Clone)]
 struct Event {
     raw: [u8;10],
     cond : EventCondition,
@@ -160,6 +163,11 @@ struct Event {
 }
 
 impl Event {
+    const EMPTY : Event = Event {
+	raw : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+	cond : EventCondition::Enter,
+	program : vec![],
+    };
     fn new(data : &[u8]) -> Option<Event> {
 	const OP_TELEPORT	: u8 = 0x01;
 	const OP_LOCKED_DOOR	: u8 = 0x02;
@@ -177,8 +185,9 @@ impl Event {
 	// e.g., door to Family Home:   14 01 00 00 1c 04 00 97 00 00
 	const OP_WIN_GAME	: u8 = 0x17; // Last OP
 
-	if data[0] == 1 && data[1] == 0 && data[2] == 0 && data[7] == 0 {
+	if data[0] == 1 && data[1] == 0 && data[2] == 0 && data[3] == 0 && data[7] == 0 {
 	    // This would be "teleport nowhere"
+	    warn!("Terminating event: {:x?}", data);
 	    None
 	} else {
 	    let mut notes = String::new();
@@ -224,7 +233,6 @@ impl Event {
 		    may_be_nonzero = (0x1 << 0)
 			| (0x1 << 1)
 			| (0x1 << 2)
-			| (0x1 << 3)
 			| (0x1 << 6)
 			| (0x1 << 7);
 		    result
@@ -286,6 +294,7 @@ impl Event {
 // ----------------------------------------
 // 3D Labblock references
 
+#[derive(Clone)]
 pub struct LabInfo {
     pub head : [u8; 4], // ??? meaning unclear
     pub rest : [u8; 3], // ??? meaning unclear
@@ -297,17 +306,20 @@ pub struct LabInfo {
 type NPCSpriteIndex = usize;
 type NPCIndex = usize;
 
+#[derive(Clone)]
 pub enum NPCAction {
     PopupMessage(MapMessageIndex),
     Chat(NPCIndex),
 }
 
+#[derive(Clone)]
 pub enum NPCMovement {
     Attack,                     // move towards player and trigger fight when on same tile
     Stationary,
-    Cycle(Vec<(usize, usize)>), // cycle through coordinates
+    Cycle(Vec<Option<(usize, usize)>>), // cycle through coordinates.  None means that the NPC is "out"
 }
 
+#[derive(Clone)]
 pub struct MapNPC {
     pub sprite : NPCSpriteIndex,
     pub talk_action : NPCAction,
@@ -324,6 +336,10 @@ impl MapNPC {
     const FLAG_CHAT_TEXTMESSAGE	: u32 = 0x00001000; // only show text popup.  If not set, trigger full NPC chat
     const FLAG_STATIONARY	: u32 = 0x00000200;
     const FLAG_CHASE_AND_ATTACK	: u32 = 0x00000100;
+
+    pub fn hostile(&self) -> bool {
+	return 0 != self.flags & MapNPC::FLAG_CHASE_AND_ATTACK;
+    }
 
     pub fn decode_all(npc_decl : &[u8], npc_movement : &[u8]) -> Vec<MapNPC> {
 	let mut npc_movement_offset = 0;
@@ -364,17 +380,32 @@ impl MapNPC {
 		    let cycle_len = MapNPC::MOVEMENT_CYCLE_LEN;
 		    let x_coords = npc_movement_offset;
 		    let y_coords = npc_movement_offset + cycle_len;
-		    let coords = npc_movement[x_coords..x_coords+cycle_len].iter()
+		    let coords : Vec<Option<(usize, usize)>> = npc_movement[x_coords..x_coords+cycle_len].iter()
 			.zip(&npc_movement[y_coords..y_coords+cycle_len])
-			.map(|(x, y)| (*x as usize, *y as usize)).collect();
+			.map(|(x, y)| if *x <= 6 || *y <= 6 { None } else { Some(((*x - 1) as usize, (*y - 1) as usize)) }).collect();
+
+		    // for i in 0..MapNPC::MOVEMENT_CYCLE_LEN {
+		    // 	let (cx, cy) = coords[i];
+		    // 	let (nx, ny) = if i == MapNPC::MOVEMENT_CYCLE_LEN - 1 { coords[0] } else { coords[i+1] };
+		    // 	if isize::abs(cx as isize - nx as isize) > 1
+		    // 	    || isize::abs(cy as isize - ny as isize) > 1 {
+		    // 		warn!("Non-contiguous map movement for NPC {n:x}, i={i}: {:?}->{:?}, offsets {:x} and {:x}",
+		    // 		      (cx, cy), (nx, ny),
+		    // 		      x_coords + i,
+		    // 		      y_coords + i,
+		    // 		);
+		    // 		break;
+		    // 	    }
+		    // }
+
 		    (NPCMovement::Cycle(coords), cycle_len)
 		};
 
-		//debug!("\tNPC {n:x}: movement_offset = {npc_movement_offset:x}, num_positions={num_positions:x}");
+		debug!("\tNPC {n:x}: movement_offset = {npc_movement_offset:x}, num_positions={num_positions:x}");
 
 		// Steps are stored as sequence of x coords followed by sequence of y coords
-		let start_pos = (npc_movement[npc_movement_offset] as usize,
-				 npc_movement[npc_movement_offset + num_positions] as usize);
+		let start_pos = ((npc_movement[npc_movement_offset] - 1) as usize,
+				 (npc_movement[npc_movement_offset + num_positions] - 1) as usize);
 		npc_movement_offset += 2 * num_positions;
 
 
@@ -420,6 +451,7 @@ pub struct Map {
     pub lab_info : Vec<LabInfo>,
     pub flags : u32,
     pub first_person : bool, // Pseudo-3D view
+    pub npcs : Vec<MapNPC>,
     pub data : Vec<u8>,
 }
 
@@ -497,8 +529,6 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 
     // Decode events
     {
-	let mut found_empty = false;
-
 	for i in 0..NUM_EVENT_TABLE_ENTRIES {
 	    let pos = EVENT_TABLE_ENTRIES_START + i * EVENT_TABLE_ENTRY_SIZE;
 	    let slice = &src[pos..(pos + EVENT_TABLE_ENTRY_SIZE)];
@@ -510,11 +540,12 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 
 	    event_types[src[pos] as usize] += 1;
 	    match Event::new(slice) {
-		None    => { found_empty = true; },
+		None    => { },
 		Some(a) => {
-		    if found_empty {
-			warn!("\tEvent table index {i:02x}: should have been empty but is not\n");
-		    };
+		    // just in case there are some gaps, fill with empty events
+		    while event_table.len() < i {
+			event_table.push(Event::EMPTY);
+		    }
 		    event_table.push(a)
 		}
 	    }
@@ -580,7 +611,6 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
     }
 
     let size = src.len();
-    //let map_layers_start = last_event_end + 177;
 
     let npcs = MapNPC::decode_all(&src[npc_start..npc_end],
 				  &src[map_layers_start + total_layer_size..]);
@@ -649,6 +679,7 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	song_nr,
 	flags,
 	first_person,
+	npcs,
 	data : src.to_vec(),
     };
     pinfo!("}}");

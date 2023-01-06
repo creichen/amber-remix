@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::{TextureQuery, Canvas, Texture}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture}, video::Window, ttf::Sdl2TtfContext};
 
 use crate::datafiles::{map, self, tile::Tileset};
 
@@ -26,6 +26,82 @@ fn draw_tile(tiles : &Tileset<Texture<'_>>,
 
 struct Font<'a> {
     font : sdl2::ttf::Font<'a, 'a>,
+}
+
+struct NPC {
+    mapnpc : map::MapNPC,
+    cycle_pos : usize,  // position in NPC cycle
+    cycle_frac : u8, // fractional position in NPC cycle, in 1/256
+}
+
+impl NPC {
+    pub fn new(mapnpc : map::MapNPC) -> NPC {
+	NPC { mapnpc,
+	      cycle_pos : 0,
+	      cycle_frac : 0,
+	}
+    }
+
+    pub fn cycle_len(&self) -> usize {
+	match &self.mapnpc.movement {
+	    map::NPCMovement::Cycle(cycle) => cycle.len(),
+	    _ => 1,
+	}
+    }
+
+    pub fn pos_at_cyclepos(&self, cycle_pos : usize) -> Option<(usize, usize)> {
+	match &self.mapnpc.movement {
+	    map::NPCMovement::Cycle(cycle) => cycle[cycle_pos % cycle.len()],
+	    _                              => Some(self.mapnpc.start_pos),
+	}
+    }
+
+    /// Move NPC forward in its cycle by cycle_frac_inc 1/256th steps
+    pub fn advance_cycle(&mut self, cycle_frac_inc : usize) {
+	let cycle_total_frac = (self.cycle_pos << 8) + (cycle_frac_inc + self.cycle_frac as usize);
+	let cycle_total_frac_mod = cycle_total_frac % (self.cycle_len() << 8);
+	self.cycle_pos = cycle_total_frac_mod >> 8;
+	self.cycle_frac = (cycle_total_frac_mod & 0xff) as u8;
+    }
+
+    // Returns the floating point tile position (to allow easy positional scaling)
+    pub fn tile_pos(&self) -> Option<(f32, f32)> {
+	return self.tile_pos_at(self.cycle_pos, self.cycle_frac as usize);
+    }
+
+    pub fn tile_pos_at(&self, cycle_pos : usize, cycle_frac : usize) -> Option<(f32, f32)> {
+	// To capture movement between tiles, first get the start tile position:
+	let start_pos = self.pos_at_cyclepos(cycle_pos);
+	let end_pos = self.pos_at_cyclepos(cycle_pos + 1);
+	if start_pos == None && end_pos == None {
+	    return None;
+	} else if start_pos == None {
+	    return end_pos.map(|(x,y)| (x as f32, y as f32));
+	} else if end_pos == None {
+	    return start_pos.map(|(x,y)| (x as f32, y as f32));
+	}
+	let (start_x, start_y) = start_pos.unwrap();
+	// Now the end tile position
+	let (end_x, end_y) = end_pos.unwrap();
+	// Factor in how far we've moved:
+	let end_weight = cycle_frac;
+	let start_weight = 0x100 - cycle_frac;
+	let x_256 = start_x * start_weight + end_x * end_weight;
+	let y_256 = start_y * start_weight + end_y * end_weight;
+	return Some((x_256 as f32 / 256.0,
+		     y_256 as f32 / 256.0));
+    }
+
+    pub fn draw(&self, tiles : &Tileset<Texture<'_>>,
+		canvas : &mut Canvas<sdl2::video::Window>,
+		anim_index : usize) {
+	if let Some((x, y)) = self.tile_pos() {
+	    let xpos = (x * 32.0) as i32;
+	    let ypos = (y * 32.0) as i32;
+	    draw_tile(tiles, canvas,
+		      self.mapnpc.sprite, xpos, ypos, anim_index);
+	}
+    }
 }
 
 impl<'a> Font<'a> {
@@ -113,12 +189,18 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
     let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", font_size);
     // --------------------------------------------------------------------------------
-    let help : Vec<&str> = vec![
+    let white = Color::RGBA(0xff, 0xff, 0xff, 0xff);
+    let npc_col = Color::RGBA(0, 0xff, 0, 0xff);
+    let event_col = Color::RGBA(0xff, 0, 0, 0xff);
+    let help : Vec<(Color, String)> = vec![
 	"=== key bindings ===",
+	"[F8] toggle event info",
+	"[F9] toggle NPC info",
+	"[F10] toggle NPC routes",
 	"<- [F11] map [F12] ->",
-    ];
+    ].iter().map(|s| (white, s.to_string())).collect();
 
-    let mut map_nr = 0x41;
+    let mut map_nr = 0x40; // Twinlake Graveyard, the starting map
 
     'running: loop {
 
@@ -129,9 +211,16 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 
 	let tileset = usize::min(1, data.maps[map_nr].tileset); // tileset for 3d maps = background image
 
+	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
+	let mut draw_npc_routes = true;
+	let mut draw_npc_info = true;
+	let mut draw_event_info = true;
+
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
 	'current_map: loop {
+	    let mut current_help = help.clone();
+
             i = i + 1;
             canvas.set_draw_color(Color::RGB(20, 20, 20));
             canvas.clear();
@@ -153,19 +242,21 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 		    }
 		}
 	    }
-	    for y in 0..height {
-		for x in 0..width {
-		    let xpos = (x as isize) * 32;
-		    let ypos = (y as isize) * 32;
+	    if draw_event_info {
+		for y in 0..height {
+		    for x in 0..width {
+			let xpos = (x as isize) * 32;
+			let ypos = (y as isize) * 32;
 
-		    if let Some(hotspot_id) = map.hotspot_at(x, y) {
-			// draw text on hotspots
-			let icon_nr_str = format!("{:02x}", hotspot_id);
-			font.draw_to_with_outline(&mut canvas, &icon_nr_str,
-						  xpos, ypos,
-						  Color::RGBA(0xff, 0, 0, 0xff),
-						  Color::RGBA(0, 0, 0, 0x7f),
-			);
+			if let Some(hotspot_id) = map.hotspot_at(x, y) {
+			    // draw text on hotspots
+			    let icon_nr_str = format!("{:02x}", hotspot_id);
+			    font.draw_to_with_outline(&mut canvas, &icon_nr_str,
+						      xpos, ypos,
+						      event_col,
+						      Color::RGBA(0, 0, 0, 0x7f),
+			    );
+			}
 		    }
 		}
 	    }
@@ -180,6 +271,9 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
                 Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
 		    match kc {
 			Keycode::F1           => {},
+			Keycode::F8           => { draw_event_info = !draw_event_info; },
+			Keycode::F9           => { draw_npc_info = !draw_npc_info; },
+			Keycode::F10          => { draw_npc_routes = !draw_npc_routes; },
 			Keycode::F11          => { if map_nr > 0 { map_nr -= 1; break 'current_map; } },
 			Keycode::F12          => { if map_nr < data.maps.len() - 1 { map_nr += 1; break 'current_map; } },
 			_                     => {},
@@ -189,13 +283,72 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 		}
             }
 
+	    let mut npc_nr = 0;
+	    for npc in &mut npcs {
+		npc.advance_cycle(0x64);
+		npc.draw(&tile_textures[tileset],
+			 &mut canvas,
+			 i >> 4);
+
+		if draw_npc_info {
+		    if let Some((x, y)) = npc.tile_pos() {
+		    let nr_str = format!("{:02x}", npc_nr);
+			font.draw_to_with_outline(&mut canvas, &nr_str,
+						  (x * 32.0) as isize, (y * 32.0) as isize,
+						  npc_col,
+						  Color::RGBA(0, 0, 0, 0x3f),
+			);
+		    }
+
+		    let action = match npc.mapnpc.talk_action {
+			map::NPCAction::PopupMessage(msg) => format!("message: \"{}\"", data.map_text[map_nr].strings[msg]),
+			map::NPCAction::Chat(identity)    => format!("{} with {:x}", if npc.mapnpc.hostile() {"fight"} else {"chat"}, identity),
+		    };
+		    let info = format!("NPC {:02x}: flags {:x} {}",
+				       npc_nr, npc.mapnpc.flags, action);
+
+		    current_help.push((npc_col, info));
+		}
+
+		if draw_npc_routes {
+		    canvas.set_draw_color(Color::RGBA(0, 0xff, 0, 0x80));
+
+		    for i in 0..npc.cycle_len() {
+			if let Some((x, y)) = npc.pos_at_cyclepos(i) {
+			    if let Some((x_next, y_next)) = npc.pos_at_cyclepos(i + 1) {
+				if x != x_next || y != y_next {
+				    canvas.draw_line(Point::new(((x * 2 + 1) * 16) as i32,
+								((y * 2 + 1) * 16) as i32),
+						     Point::new(((x_next * 2 + 1) * 16) as i32,
+								((y_next * 2 + 1) * 16) as i32)).unwrap();
+				}
+			    } else {
+				// NPC disappears here
+				canvas.draw_line(Point::new((x * 32) as i32 + 8,
+							    (y * 32) as i32 + 8),
+						 Point::new((x * 32) as i32 + 24,
+							    (y * 32) as i32 + 24)).unwrap();
+				canvas.draw_line(Point::new((x * 32) as i32 + 8,
+							    (y * 32) as i32 + 24),
+						 Point::new((x * 32) as i32 + 24,
+							    (y * 32) as i32 + 8)).unwrap();
+			    }
+			}
+		    }
+		}
+		npc_nr += 1;
+	    }
+
+	    if draw_event_info {
+	    }
+
 	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {}", map_nr, map_nr, map.name).as_str(),
-			 2000, 10, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
+			 1680, 10, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
 	    let mut ypos = 20 + font_size;
-	    for help_line in &help {
+	    for (help_col, help_line) in &current_help {
 		ypos += font_size + 4;
 		font.draw_to(&mut canvas, help_line,
-			     2200, ypos as isize, Color::RGBA(0xff, 0xff, 0xff, 0xff));
+			     1650, ypos as isize, *help_col);
 	    }
 
             canvas.present();

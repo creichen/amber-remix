@@ -14,7 +14,7 @@ The current run modes are supported:
 - `cargo run strings`: Dump out all text strings
 - `cargo run graphics`: Shows some graphics
 - `cargo run song $X`: Tries to play in-game song `${X}` (will likely crash sooner or later).
-- `cargo run maps`: Shows maps (currently hardcoded to one map)
+- `cargo run maps`: Shows maps
 
 ## Why?
 I wanted a zero-stakes project to learn the basics of Rust, and this
