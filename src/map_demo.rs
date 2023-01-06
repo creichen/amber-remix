@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::{TextureQuery, Canvas, Texture}};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::Rect, render::{TextureQuery, Canvas, Texture}, video::Window, ttf::Sdl2TtfContext};
 
 use crate::datafiles::{map, self, tile::Tileset};
 
@@ -24,13 +24,75 @@ fn draw_tile(tiles : &Tileset<Texture<'_>>,
     }
 }
 
+struct Font<'a> {
+    font : sdl2::ttf::Font<'a, 'a>,
+}
+
+impl<'a> Font<'a> {
+    pub fn new_ttf(ttf_context : &'a Sdl2TtfContext, path : &str, size : usize) -> Font<'a> {
+	// TODO: include font or use the existing one
+	let mut font = ttf_context.load_font(path, size as u16).unwrap();
+	font.set_style(sdl2::ttf::FontStyle::NORMAL);
+	Font {
+	    font
+	}
+    }
+
+    pub fn draw_to(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color) {
+	let creator = canvas.texture_creator();
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+    }
+    pub fn draw_to_with_outline(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color, outline_color : Color) {
+	let creator = canvas.texture_creator();
+
+	let outline_surface = self.font
+	    .render(text)
+	    .blended(outline_color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let outline_texture = creator
+	    .create_texture_from_surface(&outline_surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = outline_texture.query();
+	for xdelta in [-1, 1] {
+	    for ydelta in [-1, 1] {
+		let target = Rect::new(xdelta + x as i32, ydelta + y as i32, width, height);
+		canvas.copy(&outline_texture, None, Some(target)).unwrap();
+	    }
+	}
+
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+    }
+}
+
 pub fn show_maps(data : &datafiles::AmberStarFiles) {
     map::debug_summary();
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    let window = video_subsystem.window("amber-remix", 3000, 1600)
+    let window = video_subsystem.window("amber-remix", 2560, 1600)
         .position_centered()
         .build()
         .unwrap();
@@ -47,13 +109,8 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
     let mut i : usize = 0;
 
     // --------------------------------------------------------------------------------
-    // -- fonts
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
-    // TODO: include font or use the existing one
-    const FONT_PATH : &str = "/usr/share/fonts/truetype/freefont/FreeMono.ttf";
-
-    let mut font = ttf_context.load_font(FONT_PATH, 20).unwrap();
-    font.set_style(sdl2::ttf::FontStyle::BOLD);
+    let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", 14);
     // --------------------------------------------------------------------------------
 
     let map_nr = 0x5b;
@@ -109,24 +166,17 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 	}
 	for y in 0..height {
 	    for x in 0..width {
-		let xpos = (x as i32) * 32;
-		let ypos = (y as i32) * 32;
+		let xpos = (x as isize) * 32;
+		let ypos = (y as isize) * 32;
 
 		if let Some(hotspot_id) = map.hotspot_at(x, y) {
 		    // draw text on hotspots
 		    let icon_nr_str = format!("{:02x}", hotspot_id);
-
-		    let surface = font
-			.render(icon_nr_str.as_str())
-			.blended(Color::RGBA(255, 0, 0, 255))
-			.map_err(|e| e.to_string()).unwrap();
-		    let texture = creator
-			.create_texture_from_surface(&surface)
-			.map_err(|e| e.to_string()).unwrap();
-
-		    let TextureQuery { width, height, .. } = texture.query();
-		    let target = Rect::new(xpos, ypos, width, height);
-		    canvas.copy(&texture, None, Some(target)).unwrap();
+		    font.draw_to_with_outline(&mut canvas, &icon_nr_str,
+					 xpos, ypos,
+					 Color::RGBA(0xff, 0, 0, 0xff),
+					 Color::RGBA(0, 0, 0, 0x7f),
+		    );
 		}
 	    }
 	}
