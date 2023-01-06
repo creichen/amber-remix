@@ -106,91 +106,100 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 	];
 
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut i : usize = 0;
+
+    let font_size = 14;
 
     // --------------------------------------------------------------------------------
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
-    let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", 14);
+    let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", font_size);
     // --------------------------------------------------------------------------------
+    let help : Vec<&str> = vec![
+	"=== key bindings ===",
+	"<- [F11] map [F12] ->",
+    ];
 
-    let map_nr = 0x5b;
-
-    for n in 0..254 {
-	let offset = 0x28 + (n * 10);
-	let slice = &data.maps[map_nr].data[offset..offset+10];
-	if slice[0] > 1 || (slice[1] | slice[2] | slice[3] | slice[7]) > 0 {
-	    print!("[{:02x}] ", n+1);
-	    for i in 0..10 {
-		print!(" {:02x}", slice[i]);
-	    }
-	    print!("\n");
-	}
-    }
-
-    let map = &data.maps[map_nr];
-    let mapdata = &map.data[..];
-
-    let width : usize = mapdata[7] as usize;
-    let height : usize = mapdata[8] as usize;
-
-    let is_3d = mapdata[4] == 1;
-    let num_layers = if is_3d { 2 } else { 3 };
-    let start_pos = mapdata.len() - (width * height * num_layers) - 8;
-    let tileset = usize::min(1, data.maps[map_nr].tileset);
-
-    print!("{:x}/{:x}/{:x}\n",
-	   0x28 + (254 * 10),
-	   start_pos, mapdata.len());
+    let mut map_nr = 0x41;
 
     'running: loop {
-        i = i + 1;
-        canvas.set_draw_color(Color::RGB(20, 20, 20));
-        canvas.clear();
 
-	for map_index in 0..map.num_layers {
-	    for y in 0..height {
-		for x in 0..width {
-		    let tile = map.tile_at(map_index, x, y);
+	let map = &data.maps[map_nr];
 
-		    let xpos = (x as i32) * 32;
-		    let ypos = (y as i32) * 32;
+	let width = map.width;
+	let height = map.height;
 
-		    if let Some(icon) = tile {
-			draw_tile(&tile_textures[tileset],
-				  &mut canvas,
-				  icon,
-				  xpos, ypos, i >> 4);
+	let tileset = usize::min(1, data.maps[map_nr].tileset); // tileset for 3d maps = background image
+
+	// Run the loop below while the current map is selected
+	let mut i : usize = 0;
+	'current_map: loop {
+            i = i + 1;
+            canvas.set_draw_color(Color::RGB(20, 20, 20));
+            canvas.clear();
+
+	    for map_index in 0..map.num_layers {
+		for y in 0..height {
+		    for x in 0..width {
+			let tile = map.tile_at(map_index, x, y);
+
+			let xpos = (x as i32) * 32;
+			let ypos = (y as i32) * 32;
+
+			if let Some(icon) = tile {
+			    draw_tile(&tile_textures[tileset],
+				      &mut canvas,
+				      icon,
+				      xpos, ypos, i >> 4);
+			}
 		    }
 		}
 	    }
-	}
-	for y in 0..height {
-	    for x in 0..width {
-		let xpos = (x as isize) * 32;
-		let ypos = (y as isize) * 32;
+	    for y in 0..height {
+		for x in 0..width {
+		    let xpos = (x as isize) * 32;
+		    let ypos = (y as isize) * 32;
 
-		if let Some(hotspot_id) = map.hotspot_at(x, y) {
-		    // draw text on hotspots
-		    let icon_nr_str = format!("{:02x}", hotspot_id);
-		    font.draw_to_with_outline(&mut canvas, &icon_nr_str,
-					 xpos, ypos,
-					 Color::RGBA(0xff, 0, 0, 0xff),
-					 Color::RGBA(0, 0, 0, 0x7f),
-		    );
+		    if let Some(hotspot_id) = map.hotspot_at(x, y) {
+			// draw text on hotspots
+			let icon_nr_str = format!("{:02x}", hotspot_id);
+			font.draw_to_with_outline(&mut canvas, &icon_nr_str,
+						  xpos, ypos,
+						  Color::RGBA(0xff, 0, 0, 0xff),
+						  Color::RGBA(0, 0, 0, 0x7f),
+			);
+		    }
 		}
 	    }
-	}
 
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-		    break 'running
-                },
-                _ => {}
+            for event in event_pump.poll_iter() {
+		match event {
+                    Event::Quit {..} |
+                    Event::KeyDown {
+			keycode: Some(Keycode::Escape), .. } => {
+			break 'running;
+                    },
+                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
+		    match kc {
+			Keycode::F1           => {},
+			Keycode::F11          => { if map_nr > 0 { map_nr -= 1; break 'current_map; } },
+			Keycode::F12          => { if map_nr < data.maps.len() - 1 { map_nr += 1; break 'current_map; } },
+			_                     => {},
+		    }
+		},
+                    _ => {}
+		}
             }
-        }
-        canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+
+	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {}", map_nr, map_nr, map.name).as_str(),
+			 2000, 10, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
+	    let mut ypos = 20 + font_size;
+	    for help_line in &help {
+		ypos += font_size + 4;
+		font.draw_to(&mut canvas, help_line,
+			     2200, ypos as isize, Color::RGBA(0xff, 0xff, 0xff, 0xff));
+	    }
+
+            canvas.present();
+            ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+	}
     }
 }
