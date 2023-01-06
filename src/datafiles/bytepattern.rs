@@ -39,6 +39,12 @@ impl BPInfer {
 	self.observed[(byte >> 7) as usize] |= 1 << (byte & 0x7f);
     }
 
+    pub fn observe_vec(vec : &mut Vec<BPInfer>, data : &[u8]) {
+	for (i, bpi) in vec.iter_mut().enumerate() {
+	    bpi.observe(data[i]);
+	}
+    }
+
     pub fn explain_as_individuals(&self) -> Vec<u8> {
 	let mut result = vec![];
 
@@ -179,7 +185,7 @@ impl BPInfer {
     }
 
     pub fn explain_flags(&self) -> String {
-	let mut result = "{fl:".to_string();
+	let mut result = "{mask:".to_string();
 
 	let (flags, _max_bits, mutex_bits) = self.explain_as_flags();
 	write!(result, "{:02x}", flags).unwrap();

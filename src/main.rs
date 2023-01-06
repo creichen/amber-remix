@@ -10,13 +10,14 @@ extern crate lazy_static;
 use std::{time::Duration, io, env, fs, path::Path};
 
 use audio::{Mixer, AQOp, SampleRange};
-use datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap, tile::Tileset};
-use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
+use datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
+use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode}};
 
-use crate::{audio::amber, datafiles::{pixmap, map}};
+use crate::{audio::amber, datafiles::pixmap};
 
 mod datafiles;
 mod audio;
+mod map_demo;
 pub mod util;
 
 fn print_strings(data : &datafiles::AmberStarFiles) {
@@ -566,182 +567,6 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 }
 
 
-fn draw_icon(tiles : &Tileset<Texture<'_>>,
-	     canvas : &mut Canvas<sdl2::video::Window>,
-	     tile : usize, xpos : i32, ypos : i32, anim_index : usize) {
-    const SRC_WIDTH : usize = 16;
-    const SRC_HEIGHT : usize = 16;
-    const WIDTH : usize = 32;
-    const HEIGHT : usize = 32;
-    if tile > 0 && tile <= tiles.tile_icons.len() {
-	let frames = &tiles.tile_icons[tile - 1].frames;
-	let index = anim_index % frames.len();
-
-	canvas.copy(&frames[index],
-		    Rect::new(0, 0, SRC_WIDTH as u32, SRC_HEIGHT as u32),
-		    Rect::new(xpos as i32, ypos as i32, WIDTH as u32, HEIGHT as u32)).unwrap();
-    }
-}
-
-fn show_maps(data : &datafiles::AmberStarFiles) {
-    map::debug_summary();
-
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-
-    let window = video_subsystem.window("amber-remix", 3000, 1600)
-        .position_centered()
-        .build()
-        .unwrap();
-
-    let mut canvas = window.into_canvas().build().unwrap();
-
-    let creator = canvas.texture_creator();
-    let tile_textures = vec![
-	data.tiles[0].as_textures(&creator),
-	data.tiles[1].as_textures(&creator),
-	];
-
-    let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut i : usize = 0;
-
-    // --------------------------------------------------------------------------------
-    // -- fonts
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
-    const FONT_PATH : &str = "/usr/share/fonts/truetype/freefont/FreeMonoOblique.ttf";
-
-    let mut font = ttf_context.load_font(FONT_PATH, 20).unwrap();
-    font.set_style(sdl2::ttf::FontStyle::BOLD);
-
-    // render a surface, and convert it to a texture bound to the canvas
-    // --------------------------------------------------------------------------------
-
-    let map_nr = 0x43;
-
-    for n in 0..254 {
-	let offset = 0x28 + (n * 10);
-	let slice = &data.maps[map_nr].data[offset..offset+10];
-	if slice[0] > 1 || (slice[1] | slice[2] | slice[3] | slice[7]) > 0 {
-	    print!("[{:02x}] ", n+1);
-	    for i in 0..10 {
-		print!(" {:02x}", slice[i]);
-	    }
-	    print!("\n");
-	}
-    }
-
-    let mapdata = &data.maps[map_nr].data[..];
-    const START_POS : usize = 0xac5;
-
-    let width : usize = mapdata[7] as usize;
-    let height : usize = mapdata[8] as usize;
-
-    let is_3d = mapdata[4] == 1;
-    let num_layers = if is_3d { 2 } else { 3 };
-    //let start_pos = mapdata.len() - (width * height * num_layers) - 1;
-    //let start_pos = START_POS;
-    //let start_pos = 0x18cd - (width * height * num_layers) - 1;
-    //let start_pos = if is_3d { 0xb0c } else { START_POS };
-    let start_pos = mapdata.len() - (width * height * num_layers) - 8;
-    let tileset = usize::min(1, data.maps[map_nr].tileset);
-
-    print!("{:x}/{:x}/{:x}\n",
-	   0x28 + (254 * 10),
-	   start_pos, mapdata.len());
-
-    'running: loop {
-        i = i + 1;
-        canvas.set_draw_color(Color::RGB(20, 20, 20));
-	//canvas.set_draw_color(Color::RGB(i, 64, 128 - (i>>1)));
-        canvas.clear();
-
-	//const START_POS : usize = 0xabd;
-	//const START_POS : usize = 0xb60;
-
-	//let base_offsets = [0, 900, 1800];
-
-	for map_index in 0..num_layers {
-	    let base_offset = width * height * map_index;
-	    for y in 0..height {
-		for x in 0..width {
-		    let offset = x + y * width;
-		    let icon = data.maps[map_nr].data[start_pos + base_offset + offset] as usize;
-
-		    let xpos = (x as i32) * 32;
-		    let ypos = (y as i32) * 32;
-
-		    if icon > 0 {
-			if map_index < num_layers - 1 {
-			    draw_icon(&tile_textures[tileset],
-				      &mut canvas,
-				      icon,
-				      xpos, ypos, i >> 4);
-			} else {
-			    // draw text on hotspots
-			    let icon_nr_str = format!("{:02x}", icon);
-
-			    let surface = font
-				.render(icon_nr_str.as_str())
-				.blended(Color::RGBA(255, 0, 0, 255))
-				.map_err(|e| e.to_string()).unwrap();
-			    let texture = creator
-				.create_texture_from_surface(&surface)
-				.map_err(|e| e.to_string()).unwrap();
-
-			    let TextureQuery { width, height, .. } = texture.query();
-
-			    let target = Rect::new(xpos, ypos, width, height);
-
-			    canvas.copy(&texture, None, Some(target)).unwrap();
-			}
-		    }
-		}
-	    }
-	}
-
-
-	// {
-	//     let mut xpos = 10;
-	//     let mut ypos = 200;
-	//     let creator = canvas.texture_creator();
-	//     let textures = gfxexplore.make_pixmaps(&creator);
-	//     let src_width = gfxexplore.width;
-	//     let src_height = gfxexplore.height;
-	//     let width = src_width * 2;
-	//     let height = src_height * 2;
-	//     for t in &textures {
-	// 	canvas.copy(&t,
-	// 		    Rect::new(0, 0, src_width as u32, src_height as u32),
-	// 		    Rect::new(xpos as i32, ypos as i32, width as u32, height as u32)).unwrap();
-	// 	xpos += width + 5;
-	// 	if xpos + width > 3000 {
-	// 	    xpos = 10;
-	// 	    ypos += height + 10;
-	// 	}
-	//     }
-	//     if focus_img < textures.len() {
-	// 	canvas.copy(&textures[focus_img],
-	// 		    Rect::new(0, 0, src_width as u32, src_height as u32),
-	// 		    Rect::new(0, (ypos + height + 10) as i32, (width * 4) as u32, (height * 4) as u32)).unwrap();
-	//     }
-	// }
-
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-		    break 'running
-                },
-                _ => {}
-            }
-        }
-        // The rest of the game loop goes here...
-
-        canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-    }
-}
-
 fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
     let sdl_context = sdl2::init().unwrap();
 
@@ -792,7 +617,7 @@ fn main() -> io::Result<()> {
 		    fs::write(filename, data).expect("Unable to write file");
 		}
 	    },
-	    "maps"	=> show_maps(&data),
+	    "maps"	=> map_demo::show_maps(&data),
 	    _		=> show_images(&data)
 	}
     }
