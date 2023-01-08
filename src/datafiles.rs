@@ -33,7 +33,7 @@ pub mod music;
 pub mod sampledata;
 pub mod tile;
 pub mod map;
-//pub mod labgfx;
+pub mod labgfx;
 
 #[derive(Debug)]
 pub enum FileHeaderType {
@@ -430,7 +430,7 @@ fn load_relative(path : &str, filename : &str) -> DataFile {
     return DataFile::load(&fullpath);
 }
 
-pub struct AmberStarFiles {
+pub struct AmberstarFiles {
     pub path : String,
     pub amberdev : Vec<u8>,
     pub string_fragments : string_fragment_table::StringFragmentTable,
@@ -443,6 +443,7 @@ pub struct AmberStarFiles {
     pub songs : Vec<Song>,
     pub tiles : Vec<Tileset<Pixmap>>,
     pub maps : Vec<Map>,
+    pub labgfx : labgfx::LabInfo,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -484,21 +485,16 @@ fn load_tiles(dfile : &mut DataFile) -> Vec<Tileset<Pixmap>> {
 }
 
 fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
-    // let mut result = vec![];
-    // for e in 0..dfile.num_entries {
-    // 	let dat = dfile.decode(e);
-    // 	result.push(map::new(e as usize, &dat));
-    // }
-    // return result;
+    // And here's the same in higher-order functional style:
     (0..dfile.num_entries).map(|i| map::new(i as usize, &dfile.decode(i))).collect()
 }
 
-impl AmberStarFiles {
+impl AmberstarFiles {
     pub fn load<'a>(&self, f : &str) -> DataFile {
 	return load_relative(&self.path, f);
     }
 
-    pub fn new(path : &str) -> AmberStarFiles {
+    pub fn new(path : &str) -> AmberstarFiles {
 	let amberdev = load_relative(path, "AMBERDEV.UDO").decode(0);
 	const STRINGTABLE_OFFSET : usize = 0x2170b;
 	let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[STRINGTABLE_OFFSET..]);
@@ -536,11 +532,11 @@ impl AmberStarFiles {
 
 	let mut labblock_f = load_relative(path, "LABBLOCK.AMB");
 	let mut lab_data_f = load_relative(path, "LAB_DATA.AMB");
-	let maps = load_maps(&mut map_data_f);
+	let labgfx = labgfx::LabInfo::load(&mut labblock_f, &mut lab_data_f);
 
 	let path : String = format!("{}", path);
 
-	return AmberStarFiles {
+	return AmberstarFiles {
 	    path,
 	    amberdev,
 	    string_fragments,
@@ -553,7 +549,7 @@ impl AmberStarFiles {
 	    songs,
 	    tiles,
 	    maps,
-	    // labgfx,
+	    labgfx,
 	}
     }
 }

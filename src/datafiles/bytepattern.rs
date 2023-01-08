@@ -19,6 +19,7 @@ const EMPTY : BPInfer = BPInfer {
 
 impl BPInfer {
 
+    #[allow(unused)]
     pub fn new() -> BPInfer {
 	EMPTY
     }

@@ -64,7 +64,7 @@ fn icon_header(src : &[u8]) -> (usize, usize, usize, usize) {
 pub fn new_icon_frame(src : &[u8]) -> IndexedPixmap {
     const HEADER_SIZE : usize = 6;
 
-    let (width, height, bitplanes, width_words) = icon_header(&src);
+    let (width, height, bitplanes, _width_words) = icon_header(&src);
 
     return new(&src[HEADER_SIZE..], width, height, bitplanes);
 }
@@ -72,7 +72,7 @@ pub fn new_icon_frame(src : &[u8]) -> IndexedPixmap {
 pub fn icon_len(src : &[u8]) -> usize {
     const HEADER_SIZE : usize = 6;
 
-    let (width, height, bitplanes, width_words) = icon_header(&src);
+    let (_width, height, bitplanes, width_words) = icon_header(&src);
 
     let size = HEADER_SIZE + (width_words * height * bitplanes);
 

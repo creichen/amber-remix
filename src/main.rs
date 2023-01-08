@@ -20,7 +20,7 @@ mod audio;
 mod map_demo;
 pub mod util;
 
-fn print_strings(data : &datafiles::AmberStarFiles) {
+fn print_strings(data : &datafiles::AmberstarFiles) {
 
     let mut map_index = 0;
     for mt in &data.map_text {
@@ -55,7 +55,7 @@ enum ISelect {
 }
 
 struct InstrSelect<'a> {
-    data : &'a datafiles::AmberStarFiles,
+    data : &'a datafiles::AmberstarFiles,
     mixer : &'a mut Mixer,
     song_nr   : usize,
     sample_nr : usize,
@@ -177,7 +177,7 @@ impl<'a> InstrSelect<'a> {
 // GfxExplore
 
 struct GfxExplorer<'a> {
-    data : &'a datafiles::AmberStarFiles,
+    data : &'a datafiles::AmberstarFiles,
     filename : String,
     offset : usize,
     width : usize,
@@ -191,7 +191,7 @@ struct GfxExplorer<'a> {
 }
 
 impl<'a> GfxExplorer<'a> {
-    fn new(data : &'a datafiles::AmberStarFiles) -> GfxExplorer {
+    fn new(data : &'a datafiles::AmberstarFiles) -> GfxExplorer {
 	return GfxExplorer {
 	    data,
 	    //filename : "COM_BACK.AMB".to_string(),
@@ -285,7 +285,7 @@ impl<'a> GfxExplorer<'a> {
     }
 
     // For ICN files
-    fn embedded_palette(&mut self) -> Palette {
+    fn _embedded_palette(&mut self) -> Palette {
 	let mut xdata = self.data.load(&self.filename);
 	self.file_index %= xdata.num_entries as usize;
 	let bytes = xdata.decode(self.file_index as u16);
@@ -396,7 +396,7 @@ fn draw_sampledata<'a>(full_data : &'a [i8], canvas : &mut Canvas<sdl2::video::W
 		     sdl2::rect::Point::new(startx + (x / xfactor) +3, ybase - 25)).unwrap();
 }
 
-fn show_images(data : &datafiles::AmberStarFiles) {
+fn show_images(data : &datafiles::AmberstarFiles) {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -567,7 +567,7 @@ fn show_images(data : &datafiles::AmberStarFiles) {
 }
 
 
-fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
+fn play_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
     let sdl_context = sdl2::init().unwrap();
 
     let mut audiocore = audio::init(&sdl_context);
@@ -595,7 +595,7 @@ fn play_song(data : &datafiles::AmberStarFiles, song_nr : usize) {
 // ================================================================================
 fn main() -> io::Result<()> {
     env_logger::init();
-    let data = datafiles::AmberStarFiles::new("data");
+    let data = datafiles::AmberstarFiles::new("data");
     let args : Vec<String> = env::args().collect();
 
     if args.len() >= 2 {

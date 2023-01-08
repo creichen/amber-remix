@@ -95,14 +95,14 @@ static mut MAP2D_DEBUG_STATS : DebugStats = DebugStats::EMPTY;
 static mut MAP3D_DEBUG_STATS : DebugStats = DebugStats::EMPTY;
 
 unsafe fn debug_stats() -> &'static mut DebugStats {
-    if debug_stats_2d {
+    if DEBUG_STATS_2D {
 	&mut MAP2D_DEBUG_STATS
     } else {
 	&mut MAP3D_DEBUG_STATS
     }
 }
 
-static mut debug_stats_2d : bool = false;
+static mut DEBUG_STATS_2D : bool = false;
 
 // static mut EVENT_OPS_INCOMPLETE : u32 = 0x00; /// flag for event ops that we failed to fully decode
 // static mut EVENT_OPS_PARAMETERS : Vec<Vec<BPInfer>> = vec![]; /// collect information about event ops
@@ -138,7 +138,7 @@ type ChestIndex = usize; // number of CHESTDATA.AMB entry
 type ChestFlagID = usize; // flag to store whether chest has been emptied
 
 #[derive(Clone)]
-enum EventOp {
+pub enum EventOp {
     LockedDoor(usize), // lock pick difficulty
     PopupMessage(Option<ImageIndex>, MapMessageIndex),
     LearnKeyword(Keyword),
@@ -150,14 +150,14 @@ enum EventOp {
 }
 
 #[derive(Clone)]
-enum EventCondition {
+pub enum EventCondition {
     Enter,
     Look
 }
 
 #[derive(Clone)]
-struct Event {
-    raw: [u8;10],
+pub struct Event {
+    pub raw: [u8;10],
     cond : EventCondition,
     program : Vec<EventOp>,
 }
@@ -173,15 +173,13 @@ impl Event {
 	const OP_LOCKED_DOOR	: u8 = 0x02;
 	const OP_MESSAGE	: u8 = 0x03;
 	const OP_CHEST		: u8 = 0x04;
-	const OP_5		: u8 = 0x05;
-	const OP_6		: u8 = 0x06; // ?? encounter
-	const OP_7		: u8 = 0x07;
-	const OP_8		: u8 = 0x08; // ?? continuous message
+	//const OP_6		: u8 = 0x06; // ?? encounter
+	//const OP_8		: u8 = 0x08; // ?? continuous message
 	const OP_RESTORE_LP	: u8 = 0x0b; // data[4]: message
 	const OP_RESTORE_SP	: u8 = 0x0c; // data[4]: message
-	const OP_3D_STORE	: u8 = 0x12; // ?? Only used in first-person view, probably stores/guilds
-	const OP_3D_BARRIER     : u8 = 0x13; // ?? need crowbar to get through?
-	const OP_3D_LOCKED_DOOR	: u8 = 0x14; // ?? Only used in first-person view
+	//const OP_3D_STORE	: u8 = 0x12; // ?? Only used in first-person view, probably stores/guilds
+	//const OP_3D_BARRIER     : u8 = 0x13; // ?? need crowbar to get through?
+	//const OP_3D_LOCKED_DOOR	: u8 = 0x14; // ?? Only used in first-person view
 	// e.g., door to Family Home:   14 01 00 00 1c 04 00 97 00 00
 	const OP_WIN_GAME	: u8 = 0x17; // Last OP
 
@@ -444,7 +442,7 @@ pub struct Map {
     pub num_layers : usize,
     tiles : Vec<MapLayer<TileIndex>>,
     hotspots : MapLayer<EventIndex>,
-    event_table : Vec<Event>,
+    pub event_table : Vec<Event>,
     pub tileset : usize,
     pub song_nr : usize,
     pub lab_info : Vec<LabInfo>,
@@ -522,7 +520,7 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	if !MAP3D_DEBUG_STATS.is_init() {
 	    MAP3D_DEBUG_STATS.init();
 	}
-	debug_stats_2d = !first_person;
+	DEBUG_STATS_2D = !first_person;
 	BPInfer::observe_vec(&mut debug_stats().header_bytes, &src);
     }
 

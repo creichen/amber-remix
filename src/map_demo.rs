@@ -6,6 +6,7 @@ use std::time::Duration;
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture}, video::Window, ttf::Sdl2TtfContext};
 
 use crate::datafiles::{map, self, tile::Tileset};
+use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
 	     canvas : &mut Canvas<sdl2::video::Window>,
@@ -162,13 +163,13 @@ impl<'a> Font<'a> {
     }
 }
 
-pub fn show_maps(data : &datafiles::AmberStarFiles) {
+pub fn show_maps(data : &datafiles::AmberstarFiles) {
     map::debug_summary();
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    let window = video_subsystem.window("amber-remix", 2560, 1600)
+    let window = video_subsystem.window("amber-remix", 2560, 1440)
         .position_centered()
         .build()
         .unwrap();
@@ -192,19 +193,30 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
     let white = Color::RGBA(0xff, 0xff, 0xff, 0xff);
     let npc_col = Color::RGBA(0, 0xff, 0, 0xff);
     let event_col = Color::RGBA(0xff, 0, 0, 0xff);
+    let tileinfo_col = Color::RGBA(0, 0xaf, 0xff, 0xff);
     let help : Vec<(Color, String)> = vec![
 	"=== key bindings ===",
+	"[F7] toggle tile nr printing",
 	"[F8] toggle event info",
 	"[F9] toggle NPC info",
 	"[F10] toggle NPC routes",
 	"<- [F11] map [F12] ->",
+	" ",
     ].iter().map(|s| (white, s.to_string())).collect();
 
     let mut map_nr = 0x40; // Twinlake Graveyard, the starting map
 
+    let mut lab_palette_nr = 0;
+    let mut lab_nr = 0;
+    let mut draw_npc_routes = true;
+    let mut draw_npc_info = true;
+    let mut draw_event_info = true;
+    let mut draw_tile_nr = false;
+
     'running: loop {
 
 	let map = &data.maps[map_nr];
+	let lab_info = &data.labgfx.labdata[map.tileset];
 
 	let width = map.width;
 	let height = map.height;
@@ -212,13 +224,39 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 	let tileset = usize::min(1, data.maps[map_nr].tileset); // tileset for 3d maps = background image
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
-	let mut draw_npc_routes = true;
-	let mut draw_npc_info = true;
-	let mut draw_event_info = true;
+
+	let labblock = data.labgfx.labblocks[lab_nr].with_palette(&data.palettes[lab_palette_nr]).as_textures(&creator);
 
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
 	'current_map: loop {
+            for event in event_pump.poll_iter() {
+		match event {
+                    Event::Quit {..} |
+                    Event::KeyDown {
+			keycode: Some(Keycode::Escape), .. } => {
+			break 'running;
+                    },
+                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
+		    match kc {
+			Keycode::F1           => {},
+			Keycode::F2           => { if lab_nr > 0 { lab_nr -= 1; break 'current_map; } },
+			Keycode::F3           => { if lab_nr < data.labgfx.labblocks.len() - 1 { lab_nr += 1; break 'current_map; } },
+			Keycode::F4           => { if lab_palette_nr > 0 { lab_palette_nr -= 1; break 'current_map; } },
+			Keycode::F5           => { if lab_palette_nr < data.palettes.len() - 1 { lab_palette_nr += 1; break 'current_map; } },
+			Keycode::F7           => { draw_tile_nr = !draw_tile_nr; },
+			Keycode::F8           => { draw_event_info = !draw_event_info; },
+			Keycode::F9           => { draw_npc_info = !draw_npc_info; },
+			Keycode::F10          => { draw_npc_routes = !draw_npc_routes; },
+			Keycode::F11          => { if map_nr > 0 { map_nr -= 1; break 'current_map; } },
+			Keycode::F12          => { if map_nr < data.maps.len() - 1 { map_nr += 1; break 'current_map; } },
+			_                     => {},
+		    }
+		},
+                    _ => {}
+		}
+            }
+
 	    let mut current_help = help.clone();
 
             i = i + 1;
@@ -233,15 +271,32 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 			let xpos = (x as i32) * 32;
 			let ypos = (y as i32) * 32;
 
-			if let Some(icon) = tile {
+			if let Some(tile_id) = tile {
 			    draw_tile(&tile_textures[tileset],
 				      &mut canvas,
-				      icon,
+				      tile_id,
 				      xpos, ypos, i >> 4);
+			    if draw_tile_nr {
+				let msg = format!("{:02x}", tile_id);
+				font.draw_to_with_outline(&mut canvas, &msg,
+							  xpos as isize, ypos as isize + 16,
+							  tileinfo_col,
+							  Color::RGBA(0, 0, 0, 0x7f));
+			    }
 			}
 		    }
 		}
 	    }
+
+	    // draw NPC
+	    for npc in &mut npcs {
+		npc.advance_cycle(0x64);
+		npc.draw(&tile_textures[tileset],
+			 &mut canvas,
+			 i >> 4);
+	    }
+
+
 	    if draw_event_info {
 		for y in 0..height {
 		    for x in 0..width {
@@ -261,35 +316,9 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 		}
 	    }
 
-            for event in event_pump.poll_iter() {
-		match event {
-                    Event::Quit {..} |
-                    Event::KeyDown {
-			keycode: Some(Keycode::Escape), .. } => {
-			break 'running;
-                    },
-                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
-		    match kc {
-			Keycode::F1           => {},
-			Keycode::F8           => { draw_event_info = !draw_event_info; },
-			Keycode::F9           => { draw_npc_info = !draw_npc_info; },
-			Keycode::F10          => { draw_npc_routes = !draw_npc_routes; },
-			Keycode::F11          => { if map_nr > 0 { map_nr -= 1; break 'current_map; } },
-			Keycode::F12          => { if map_nr < data.maps.len() - 1 { map_nr += 1; break 'current_map; } },
-			_                     => {},
-		    }
-		},
-                    _ => {}
-		}
-            }
-
+	    // draw info about NPCs
 	    let mut npc_nr = 0;
 	    for npc in &mut npcs {
-		npc.advance_cycle(0x64);
-		npc.draw(&tile_textures[tileset],
-			 &mut canvas,
-			 i >> 4);
-
 		if draw_npc_info {
 		    if let Some((x, y)) = npc.tile_pos() {
 		    let nr_str = format!("{:02x}", npc_nr);
@@ -340,6 +369,40 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 	    }
 
 	    if draw_event_info {
+		for (i, e) in map.event_table.iter().enumerate() {
+		    let mut msg = "".to_string();
+		    for b in &e.raw {
+			write!(msg, " {b:02x}").unwrap();
+		    }
+		    current_help.push((event_col, format!("ev[{:02x}] ={msg}", i+1)));
+		}
+	    }
+
+	    if draw_tile_nr {
+		if map.first_person {
+		    current_help.push((tileinfo_col, format!("LAB_INFO.AMB.{:04} magic1:{:x} magic7:{:x?} blocks={:x?}", map.tileset,
+							     lab_info.magic_byte, lab_info.magic_7, lab_info.labblocks)));
+		}
+		for (i, l) in map.lab_info.iter().enumerate() {
+		    let img_id = lab_info.labblocks[i];
+		    current_help.push((tileinfo_col, format!("labblock[{:02x}] = {:02x}{:02x}{:02x}{:02x} {:02x} {:02x} {:02x}  img={:02x}",
+							     i + 1,
+							     l.head[0],
+							     l.head[1],
+							     l.head[2],
+							     l.head[3],
+							     l.rest[0],
+							     l.rest[1],
+							     l.rest[2],
+							     img_id)));
+		}
+	    }
+
+	    // labblock
+	    {
+		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, pal {lab_palette_nr}, fmt {:?}, dim {}x{}", labblock.block_type, labblock.images.len(), labblock.num_frames_distant)));
+		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[0..labblock.unknowns.len() >> 1])));
+		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[labblock.unknowns.len() >> 1..])));
 	    }
 
 	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {}", map_nr, map_nr, map.name).as_str(),
@@ -349,6 +412,30 @@ pub fn show_maps(data : &datafiles::AmberStarFiles) {
 		ypos += font_size + 4;
 		font.draw_to(&mut canvas, help_line,
 			     1650, ypos as isize, *help_col);
+	    }
+
+	    ypos += 20;
+
+	    for (row_nr, row) in labblock.images.iter().enumerate() {
+		let mut xpos = 1020;
+		let mut maxheight = 0;
+		for (column_nr, pixmap) in row.pixmaps.iter().enumerate() {
+		    let column = &pixmap.pixmap;
+		    let TextureQuery { width, height, .. } = column.query();
+		    canvas.set_draw_color(Color::RGBA(0xff, 0xff, 0, 0xff));
+		    canvas.draw_rect(Rect::new(xpos as i32, ypos as i32, 2 + width * 2 as u32, 2 + height * 2 as u32)).unwrap();
+		    canvas.copy(&column,
+				Rect::new(0, 0, width as u32, height as u32),
+				Rect::new(1 + xpos as i32, 1 + ypos as i32, width * 2 as u32, height * 2 as u32)).unwrap();
+
+		    font.draw_to(&mut canvas, format!("{column_nr},{row_nr}").as_str(),
+				 xpos, (ypos + (height as usize) * 2 + 2) as isize, Color::RGBA(0xff, 0xff, 0, 0xff));
+
+		    xpos += (width * 2 + 4) as isize;
+		    maxheight = u32::max(maxheight, height * 2);
+		}
+
+		ypos += (maxheight + 24) as usize;
 	    }
 
             canvas.present();
