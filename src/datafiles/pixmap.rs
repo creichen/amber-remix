@@ -81,6 +81,14 @@ pub fn icon_len(src : &[u8]) -> usize {
 }
 
 impl IndexedPixmap {
+    pub fn empty(width : usize, height: usize) -> IndexedPixmap {
+	IndexedPixmap {
+	    width,
+	    height,
+	    pixels : vec![0; (width * height) as usize],
+	}
+    }
+
     pub fn with_palette(&self, palette : &Palette) -> Pixmap {
 	let mut data : Vec<u8> = vec![0; self.pixels.len() * 4];
 	let mut pos = 0;
@@ -102,11 +110,7 @@ impl IndexedPixmap {
 
     pub fn resize(&self, new_width : usize, new_height : usize) -> IndexedPixmap {
 	warn!("Resize {}x{} -> {new_width}x{new_height}", self.width, self.height);
-	let mut result = IndexedPixmap {
-	    width : new_width,
-	    height : new_height,
-	    pixels : vec![0; (new_width * new_height) as usize],
-	};
+	let mut result = IndexedPixmap::empty(new_width, new_height);
 	result.blit_into(self, 0, 0);
 	return result;
     }

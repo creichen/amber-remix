@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
+// Copyright (C) 2022,23 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 #[allow(unused)]
@@ -27,12 +27,47 @@ impl<T : Clone> Clone for LabPixmap<T> {
     }
 }
 
+/// Pixmap and screen offset
 impl<T> LabPixmap<T> {
     fn map<U, F : Fn(&T) -> U>(&self, f : &F) -> LabPixmap<U> {
 	LabPixmap {
 	    xoffset : self.xoffset,
 	    yoffset : self.yoffset,
 	    pixmap : f(&self.pixmap),
+	}
+    }
+}
+
+impl LabPixmap<IndexedPixmap> {
+
+    /// Pixmap size plus offset
+    pub fn x_extent(&self) -> usize {
+	self.xoffset + self.pixmap.width
+    }
+
+    /// Pixmap size plus offset
+    pub fn y_extent(&self) -> usize {
+	self.yoffset + self.pixmap.height
+    }
+
+    fn merge(&self, other : &LabPixmap<IndexedPixmap>) -> LabPixmap<IndexedPixmap> {
+	let min_x = usize::min(self.xoffset, other.xoffset);
+	let min_y = usize::min(self.yoffset, other.yoffset);
+	let extent_x = usize::max(self.x_extent(), other.x_extent());
+	let extent_y = usize::max(self.y_extent(), other.y_extent());
+
+	let mut result = IndexedPixmap::empty(extent_x - min_x,
+					      extent_y - min_y);
+	result.blit_into(&self.pixmap,
+			 self.xoffset - min_x,
+			 self.yoffset - min_y);
+	result.blit_into(&other.pixmap,
+			 other.xoffset - min_x,
+			 other.yoffset - min_y);
+	return LabPixmap {
+	    xoffset : min_x,
+	    yoffset : min_y,
+	    pixmap : result,
 	}
     }
 }
@@ -45,18 +80,14 @@ pub struct LabImage<T> {
 }
 
 impl LabImage<IndexedPixmap> {
+
+
     pub fn flatten(&self) -> LabImage<IndexedPixmap> {
 	// WIP: broken!
 	let pixmaps = match &self.base_pixmap {
 	    // TODO: Some pointless copying
 	    None       => {pwarn!("NO flatten"); self.pixmaps.clone()},
-	    Some(base) => {pwarn!("do flatten, YES"); self.pixmaps.iter().map(|pm| LabPixmap {
-		xoffset : base.xoffset,
-		yoffset : base.yoffset,
-		pixmap : base.pixmap.resize_and_blit(&pm.pixmap,
-						     // WIP: this is very wrong!
-						     if base.xoffset > pm.xoffset {todo!(); 0} else {pm.xoffset - base.xoffset},
-						     if base.yoffset > pm.yoffset {todo!(); 0} else {pm.yoffset - base.yoffset}) } ).collect()},
+	    Some(base) => {pwarn!("do flatten, YES"); self.pixmaps.iter().map(|pm| base.merge(&pm))}.collect(),
 	};
 	// pdebug!("    pixmaps: {}", self.pixmaps.len());
 	// for p in &self.pixmaps {
