@@ -10,7 +10,7 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{collections::VecDeque, ops::DerefMut, rc::Rc, cell::RefCell};
 use crate::audio::dsp::writer::SyncPCMResult;
-use super::{dsp::writer::{PCMSyncWriter, FrequencyTrait}, queue::AudioIteratorProcessor};
+use super::{dsp::{writer::{PCMSyncWriter, FrequencyTrait}, streamlog::{StreamLogClient, self, ArcStreamLogger}, pcmfit::PCMFit}, queue::AudioIteratorProcessor};
 use super::samplesource::SampleSource;
 use crate::audio::SampleRange;
 
@@ -20,12 +20,17 @@ use crate::audio::SampleRange;
 // use std::rc::Rc;
 use super::{samplesource::{SincSampleSource, SampleWriter}, dsp::{writer::Timeslice, vtracker::TrackerSensor}, AQSample, ArcIt, AQOp, Freq};
 
-//const DEBUG : bool = true;
+const DEBUG : bool = crate::util::LOGGING;
 
 // pub trait AudioIteratorProcessor {
 //     fn flush(&mut self);
 //     fn set_source(&mut self, new_it : ArcIt);
 // }
+
+/// When shifting frequencies/related samples, do we assume that the waveforms at the same
+/// relative positions into the respective samples are equivalent?
+/// Otherwise, use a best-fit method.
+const USE_RELATIVE_OFFSET_TRANSFER : bool = false;
 
 struct TimesliceUpdate {
     timeslice : Timeslice,
@@ -58,6 +63,7 @@ enum ReadyState {
 pub struct IteratorSequencer {
     sample_source : Rc<RefCell<SincSampleSource>>,
     current_sample : SampleWriter, // sample to play right now
+    last_sample_fit : Option<PCMFit>,
     current_sample_range : Option<SampleRange>,
     current_sample_vec : VecDeque<AQSample>,   // enqueued sapmles
 
@@ -74,6 +80,8 @@ pub struct IteratorSequencer {
     target_freq : Freq,        // output frequency target
     upsampling_lshift : usize, // target_freq is upsampled by factor 2^upsampling_lshift
 
+    total_written : usize,
+    logger : ArcStreamLogger,
 //    tracker : TrackerSensor,
 }
 
@@ -87,6 +95,7 @@ impl IteratorSequencer {
 	return IteratorSequencer {
 	    sample_source,
 	    current_sample : SampleWriter::empty(),
+	    last_sample_fit : None,
 	    current_sample_range : None,
 	    current_sample_vec : VecDeque::new(),
 
@@ -102,6 +111,8 @@ impl IteratorSequencer {
 	    target_freq : out_freq,
 	    upsampling_lshift : 0,
 
+	    total_written : 0,
+	    logger : streamlog::dummy(),
 //	    tracker,
 	}
     }
@@ -119,6 +130,7 @@ impl IteratorSequencer {
     }
 
     fn hard_reset(&mut self) {
+	self.clear_sample_fit();
 	self.soft_reset();
 	self.current_sample = SampleWriter::empty();
 	self.samples_until_next_poll = 0;
@@ -164,7 +176,7 @@ impl IteratorSequencer {
 	    Some(AQOp::SetSamples(svec))   => { self.set_sample_vec(svec); },
 	    Some(AQOp::SetFreq(freq))      => { self.play_freq = freq;
 						if self.current_sample.get_freq() != freq {
-						    self.push_back_current_sample(false);
+						    self.push_back_current_sample();
 						} },
 	    Some(AQOp::SetVolume(vol))     => { self.play_volume = vol; },
 	    Some(AQOp::End)                => { self.audio_source = None; },
@@ -177,15 +189,18 @@ impl IteratorSequencer {
 	while self.current_sample.done() && !self.current_sample_vec.is_empty() {
 	    let mut offset = None;
 	    self.current_sample_range = match self.current_sample_vec.pop_front() {
-		Some(AQSample::Once(range)) => Some(range),
-		Some(AQSample::OnceAtOffset(range, Some(off)))
-		    => { offset = Some(off);
-			 Some(range) },
-		Some(AQSample::OnceAtOffset(_, None))
-		    => panic!("Unexpected"),
-		Some(AQSample::Loop(range)) => { self.current_sample_vec.push_front(AQSample::Loop(range));
-						 Some(range) },
-		None                        => None,
+		Some(AQSample::Once(range))             => { if DEBUG {self.streamlog("sample-get", format!("Once {range}")); }
+							     Some(range)
+		                                           },
+		Some(AQSample::OnceAtOffset(range,
+					    Some(off))) => { if USE_RELATIVE_OFFSET_TRANSFER { offset = Some(off) };
+							     if DEBUG {self.streamlog("sample-get", format!("OnceAtOffset {range} at {off:?}")); }
+							     Some(range) },
+		Some(AQSample::OnceAtOffset(_, None))   => panic!("Unexpected"),
+		Some(AQSample::Loop(range))             => { self.current_sample_vec.push_front(AQSample::Loop(range));
+							     if DEBUG {self.streamlog("sample-get", format!("loop {range}")); }
+							     Some(range) },
+		None                                    => None,
 	    };
 	    if let Some(range) = self.current_sample_range {
 		ptrace!("[ISeq] Requesting sample {range:?} at freq {}", self.play_freq);
@@ -194,9 +209,13 @@ impl IteratorSequencer {
 		    Some((off_nom, off_denom)) => self.current_sample.forward_to_offset(off_nom, off_denom),
 		    _                          => {},
 		}
+		if !USE_RELATIVE_OFFSET_TRANSFER {
+		    self.apply_sample_fit();
+		}
 		if self.current_sample.len() == 0 {
 		    panic!("New sample has length 0 -> cannot progress!");
 		}
+		if DEBUG { self.streamlog("sample-new", format!("updated {}", self.current_sample)); }
 	    }
 	}
     }
@@ -233,7 +252,7 @@ impl IteratorSequencer {
 
     /// Gets the current 'ready state', if any, or None otherwise.
     /// No side effects.
-    fn get_ready_state(&self) -> Option<ReadyState> {
+    fn get_ready_state(&mut self) -> Option<ReadyState> {
 	if self.flush_requested {
 	    return Some(ReadyState::Flush);
 	}
@@ -260,6 +279,7 @@ impl IteratorSequencer {
 	} else {
 	    if self.current_sample.done() {
 		if self.current_sample_vec.is_empty() {
+		    if DEBUG { self.streamlog("samples", "Ran out of samples -> temporary silence".to_string()); }
 		    return Some(ReadyState::TemporarySilence(time));
 		} else {
 		    return None;
@@ -272,14 +292,16 @@ impl IteratorSequencer {
     /// Stop the current sample and re-request it from the sample source
     /// - If restart_sample = true:  also restart the sample
     /// - If restart_sample = false: maintain same (relative) position
-    fn push_back_current_sample(&mut self, restart_sample : bool) {
+    fn push_back_current_sample(&mut self) {
+	if DEBUG { self.streamlog("sample-pushback", format!("{}", self.current_sample)); }
 	match self.current_sample_range {
 	    None => {},
 	    Some(samplerange) => {
-		if restart_sample {
-		    self.current_sample_vec.push_front(AQSample::Once(samplerange));
-		} else {
+		if USE_RELATIVE_OFFSET_TRANSFER {
 		    self.current_sample_vec.push_front(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), self.current_sample.len()))));
+		} else {
+		    self.record_sample_fit();
+		    self.current_sample_vec.push_front(AQSample::Once(samplerange));
 		}
 		self.stop_sample();
 	    },
@@ -288,9 +310,16 @@ impl IteratorSequencer {
 
     fn set_sample_vec(&mut self, svec : Vec<AQSample>) {
 	self.current_sample_vec.clear();
+	if !USE_RELATIVE_OFFSET_TRANSFER {
+	    self.record_sample_fit();
+	}
 	for x in svec {
 	    if let AQSample::OnceAtOffset(samplerange, None) = x {
-		self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), self.current_sample.len()))));
+		if USE_RELATIVE_OFFSET_TRANSFER {
+		    self.current_sample_vec.push_back(AQSample::OnceAtOffset(samplerange, Some((self.current_sample.get_offset(), self.current_sample.len()))));
+		} else {
+		    self.current_sample_vec.push_back(AQSample::Once(samplerange));
+		}
 	    } else {
 		self.current_sample_vec.push_back(x);
 	    }
@@ -305,6 +334,29 @@ impl IteratorSequencer {
     fn no_sample(&self) -> bool {
 	return self.current_sample.is_empty();
     }
+
+    // ----------------------------------------
+    // Sample fitting
+
+    fn clear_sample_fit(&mut self) {
+	self.last_sample_fit = None;
+    }
+
+    fn record_sample_fit(&mut self) {
+	self.last_sample_fit = Some(self.current_sample.get_samplefit());
+    }
+
+    fn apply_sample_fit(&mut self) {
+	match self.last_sample_fit {
+	    None    => {},
+	    Some(f) => { self.current_sample.forward_to_best_fit(&f);
+			 self.clear_sample_fit(); }
+	}
+    }
+
+    // ----------------------------------------
+    // Returning
+
 
     fn success(&mut self, written : usize) -> SyncPCMResult {
 	self.timeslice.as_mut().map(|x| x.mark_propagated() );
@@ -326,6 +378,7 @@ impl IteratorSequencer {
     // Output operations
 
     fn write_silence(&mut self, out : &mut [f32]) -> usize {
+	self.clear_sample_fit();
 	out.fill(0.0);
 	pdebug!("[ISeq] Filling with silence: {}", out.len());
 	return out.len();
@@ -333,6 +386,7 @@ impl IteratorSequencer {
 
     fn write_sample(&mut self, out : &mut [f32]) -> usize {
 	let num_samples = usize::min(self.current_sample.remaining(), out.len());
+	if DEBUG { self.streamlog("sample-wr", format!("wr {num_samples} of {}", self.current_sample)); }
 	pdebug!("[ISeq] Asking sample with {} (done={}) to write {num_samples} samples for target len {}",
 		self.current_sample.remaining(), self.current_sample.done(), out.len());
 	self.current_sample.write(&mut out[..num_samples]);
@@ -344,6 +398,16 @@ impl IteratorSequencer {
 	}
 	pdebug!("[ISeq] Writing {num_samples} samples");
 	return num_samples;
+    }
+
+    fn streamlog(&mut self, category : &'static str, message : String) {
+	streamlog::log(&self.logger, "itseq", category, message);
+    }
+}
+
+impl StreamLogClient for IteratorSequencer {
+    fn set_logger(&mut self, logger : super::dsp::streamlog::ArcStreamLogger) {
+	self.logger = logger;
     }
 }
 
@@ -361,6 +425,7 @@ impl PCMSyncWriter for IteratorSequencer {
 
 	while outbuf_pos < outbuf_len {
 	    pdebug!("Completed {outbuf_pos} / {outbuf_len}");
+	    if DEBUG { self.streamlog("write1", format!("pos = {} vol = {}", self.total_written + outbuf_pos, self.play_volume)); }
 	    let mut out = &mut outbuf[outbuf_pos..];
 	    let outlen = out.len();
 
@@ -382,6 +447,7 @@ impl PCMSyncWriter for IteratorSequencer {
 	    outbuf_pos += completed;
 	}
 	pdebug!("[ISeq] => Success with {outbuf_pos} samples");
+	self.total_written += outbuf_pos;
 	return self.success(outbuf_pos);
     }
 

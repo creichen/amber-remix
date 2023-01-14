@@ -64,7 +64,7 @@ where T : HermiteDownsamplerTrait
 	    downsampler,
 	    partial : 0,
 	    source,
-	    buf : WindowedBuf::new(downsampler.window_size() * 2 + downsampler.factor()),
+	    buf : WindowedBuf::new(2 * (downsampler.window_size() * 2 + downsampler.factor())),
 	};
     }
 

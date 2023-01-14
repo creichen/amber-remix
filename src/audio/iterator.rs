@@ -5,7 +5,7 @@ use std::{collections::VecDeque, sync::{Arc, Mutex}};
 
 use crate::datafiles::music::BasicSample;
 
-use super::{dsp::{frequency_range::Freq, writer::Timeslice}, SampleRange};
+use super::{dsp::{frequency_range::Freq, writer::Timeslice, streamlog::StreamLogClient}, SampleRange};
 
 // ================================================================================
 // AudioIterator
@@ -44,6 +44,16 @@ pub enum AQSample {
     OnceAtOffset(SampleRange, Option<(usize, usize)>),
 }
 
+impl std::fmt::Display for AQSample {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AQSample::Loop(sr)              => write!(f, "Loop({sr})"),
+            AQSample::Once(sr)              => write!(f, "Once({sr})"),
+            AQSample::OnceAtOffset(sr, off) => write!(f, "OnceAtOffset({sr}, {off:?})"),
+        }
+    }
+}
+
 impl From<BasicSample> for AQOp {
     fn from(bs: BasicSample) -> Self {
 	let att = AQSample::Once(bs.attack);
@@ -56,12 +66,13 @@ impl From<BasicSample> for AQOp {
 
 pub type ArcIt = Arc<Mutex<dyn AudioIterator>>;
 
-pub trait AudioIterator : Send + Sync {
+pub trait AudioIterator : Send + Sync + StreamLogClient {
     fn next(&mut self, queue : &mut VecDeque<AQOp>);
 
     /// Duplicates the song in its current state
     fn clone_it(&self) -> ArcIt;
 }
+
 // ----------------------------------------
 
 pub fn mock(v : Vec<Vec<AQOp>>) -> ArcIt {
@@ -72,10 +83,16 @@ pub fn simple(v : Vec<AQOp>) -> ArcIt {
     return mock(vec![v]);
 }
 
-pub fn silent() -> ArcIt {
+// pub fn silent() -> ArcIt {
+//     return simple(vec![
+// 	AQOp::SetVolume(0.0), AQOp::SetFreq(1000), AQOp::WaitMillis(20), AQOp::Timeslice(1),
+// //	AQOp::WaitMillis(20), AQOp::Timeslice(2),
+//     ]);
+// }
+
+pub fn empty() -> ArcIt {
     return simple(vec![
-	AQOp::SetVolume(0.0), AQOp::SetFreq(1000), AQOp::WaitMillis(20), AQOp::Timeslice(1),
-//	AQOp::WaitMillis(20), AQOp::Timeslice(2),
+	AQOp::End,
     ]);
 }
 
@@ -109,6 +126,11 @@ impl MockAudioIterator {
     fn get<'a>(&'a self, i : usize) -> &'a[AQOp] {
 	let v = &self.ops[i];
 	return &v[..];
+    }
+}
+
+impl StreamLogClient for MockAudioIterator {
+    fn set_logger(&mut self, _logger : super::dsp::streamlog::ArcStreamLogger) {
     }
 }
 
@@ -148,4 +170,56 @@ pub trait PolyIterator : Send + Sync {
 
     /// Retrieves the audio samples that are indexed by AQSample
     fn get_samples(&self) -> Arc<Vec<i8>>;
+}
+
+// ================================================================================
+// Observers
+
+// ----------------------------------------
+// AudioIteratorObserver
+
+pub trait AudioIteratorObserver : Send + Sync {
+    fn observe_aqop(&mut self, result : &AQOp);
+}
+
+type ArcItObserver = Arc<Mutex<dyn AudioIteratorObserver>>;
+
+#[derive(Clone)]
+struct AudioIteratorObserverAdapter {
+    pub source : ArcIt,
+    observer : ArcItObserver,
+}
+
+pub fn observe(source : ArcIt, observer : ArcItObserver) -> ArcIt {
+    return Arc::new(Mutex::new(AudioIteratorObserverAdapter {
+	source,
+	observer : observer.clone(),
+    }));
+}
+
+impl StreamLogClient for AudioIteratorObserverAdapter {
+    fn set_logger(&mut self, logger : super::dsp::streamlog::ArcStreamLogger) {
+	let mut guard = self.source.lock().unwrap();
+	guard.set_logger(logger);
+    }
+}
+
+impl AudioIterator for AudioIteratorObserverAdapter {
+    fn next(&mut self, queue : &mut VecDeque<AQOp>) {
+	let mut tmpqueue = {
+	    let mut q = VecDeque::new();
+	    let mut guard = self.source.lock().unwrap();
+	    guard.next(&mut q);
+	    q
+	};
+	for e in tmpqueue.drain(..) {
+	    let mut guard = self.observer.lock().unwrap();
+	    guard.observe_aqop(&e);
+	    queue.push_back(e);
+	}
+    }
+
+    fn clone_it(&self) -> ArcIt {
+	panic!("Obsever cloning would probably lead to unexpected results, therefore unimplemented for now");
+    }
 }

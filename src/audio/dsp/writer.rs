@@ -30,7 +30,7 @@ pub type RcPCMWriter = Rc<RefCell<dyn PCMWriter>>;
 /// We use time slices to indicate ticks (0.02s intervals), but that interpretation is arbitrary.
 pub type Timeslice = usize;
 
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum SyncPCMResult {
     /// Specify number of samples written and optionally whether writer is ready for next time slice
     Wrote(usize, Option<Timeslice>),
@@ -52,6 +52,13 @@ pub trait PCMSyncWriter : FrequencyTrait {
 }
 
 pub type RcSyncWriter = Rc<RefCell<dyn PCMSyncWriter>>;
+
+// ================================================================================
+// Stero Writer
+
+pub trait PCMStereoWriter {
+    fn write_stereo_pcm(&mut self, out : &mut [f32]);
+}
 
 // ================================================================================
 // Flexible-frequency writers that must synchronise on timeslice boundaries
@@ -80,7 +87,10 @@ pub trait PCMSyncBarrier {
 pub type RcSyncBarrier = Rc<RefCell<dyn PCMSyncBarrier>>;
 
 // ================================================================================
-// Tee Adapters
+// Observers
+
+// ----------------------------------------
+// PCMSync
 
 pub trait PCMSyncObserver {
     fn observe_write(&mut self, result : SyncPCMResult, written : &[f32]);
@@ -89,25 +99,25 @@ pub trait PCMSyncObserver {
 
 type RcSyncObserver = Rc<RefCell<dyn PCMSyncObserver>>;
 
-pub struct PCMSyncTee {
+struct PCMSyncObserverAdapter {
     pub source : RcSyncWriter,
     observer : RcSyncObserver,
 }
 
-pub fn rc_sync_observe(source : RcSyncWriter, observer : &RcSyncObserver) -> RcSyncWriter {
-    return Rc::new(RefCell::new(PCMSyncTee {
+pub fn observe_rc_sync(source : RcSyncWriter, observer : RcSyncObserver) -> RcSyncWriter {
+    return Rc::new(RefCell::new(PCMSyncObserverAdapter {
 	source,
 	observer : observer.clone(),
     }));
 }
 
-impl FrequencyTrait for PCMSyncTee {
+impl FrequencyTrait for PCMSyncObserverAdapter {
     fn frequency(&self) -> Freq {
 	self.source.borrow().frequency()
     }
 }
 
-impl PCMSyncWriter for PCMSyncTee {
+impl PCMSyncWriter for PCMSyncObserverAdapter {
     fn write_sync_pcm(&mut self, output : &mut [f32]) -> SyncPCMResult {
 	let result = self.source.borrow_mut().write_sync_pcm(output);
 	let data_len = match result {

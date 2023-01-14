@@ -2,10 +2,10 @@
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 use core::fmt;
-use std::{rc::Rc, collections::hash_map::HashMap, cell::RefCell, time::SystemTime};
+use std::{rc::Rc, collections::hash_map::HashMap, cell::RefCell, time::SystemTime, fmt::Display};
 use rubato::{Resampler, SincFixedIn, InterpolationType, InterpolationParameters, WindowFunction};
 
-use super::{Freq, amber};
+use super::{Freq, amber, dsp::pcmfit::PCMFit};
 
 //use super::dsp::frequency_range::Freq;
 
@@ -82,6 +82,35 @@ impl SampleWriter {
 	return self.count;
     }
 
+    /// Obtains a summary of the PCM wave at the current position
+    pub fn get_samplefit(&self) -> PCMFit {
+	if self.count > 0 {
+	    return PCMFit::new(&self.data, self.count - 1);
+	}
+	return PCMFit::new(&self.data, 0);
+    }
+
+    pub fn forward_to_best_fit(&mut self, pcm_model : &PCMFit) {
+	let mut pos_best_fit = 0;
+	let mut min_actual_distance = f32::MAX;
+	let mut min_distance = f32::MAX;
+	let dat = &self.data;
+	// heuristic bias against high index:
+	let lenfact = 0.1 / (self.len() + 1) as f32;
+	for pos in 0..self.range.len >> 2 {
+	    let fitter = PCMFit::new(dat, pos);
+	    let actual_distance = fitter.distance(&pcm_model);
+	    let distance = actual_distance + (pos as f32 * lenfact); // bias by index
+	    if distance < min_distance {
+		pos_best_fit = pos;
+		min_actual_distance = actual_distance;
+		min_distance = distance;
+	    }
+	}
+	self.count = pos_best_fit;
+	println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
+    }
+
     /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR
     pub fn forward_to_offset(&mut self, off_nominator : usize, off_denominator : usize) {
 	if off_denominator != 0 {
@@ -128,6 +157,50 @@ pub trait SampleSource {
 
 pub type RcSampleSource = Rc<RefCell<dyn SampleSource>>;
 
+impl Display for SampleWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	if self.range.len == 0 {
+	    write!(f, "<empty>")
+	} else {
+	    let mut samples = "".to_string();
+
+	    let mut printed_ellipsis = false;
+
+	    let dlen = self.data.len();
+	    let playpos = self.get_offset() as i64;
+	    for (index, s) in self.data.iter().enumerate() {
+
+		if index > 2 && index + 2 < dlen && i64::abs((index as i64) - playpos) > 2 {
+		    // not interesting, skip
+		    if !printed_ellipsis {
+			printed_ellipsis = true;
+			samples = format!("{samples} ...");
+		    }
+		    continue;
+		}
+		printed_ellipsis = false;
+
+		let str = if *s == 0.0 { "0".to_string() }
+		else if *s < 0.0 {
+		    format!("-{:x}", (-s*128.0) as usize)
+		} else {
+		    format!("+{:x}", (s*127.0) as usize)
+		};
+
+		if index == self.get_offset() {
+		    samples = format!("{samples} << {str} >>");
+		} else {
+		    samples = format!("{samples} {str}");
+		}
+	    }
+	    write!(f, "[progress:{:3}; pos:{} in {} at {} Hz: [{samples}]]",
+		   (self.len() - self.remaining()) as f32 / self.len() as f32,
+		   self.get_offset(),
+		   self.range,
+		   self.freq)
+	}
+    }
+}
 
 // ----------------------------------------
 // Simple sample source; ignores requested frequency
@@ -203,7 +276,7 @@ impl SincSampleSource {
 	// => x^2 = max_out_freq / min_out_freq
 	let xfact = f64::sqrt(max_out_freq as f64 / min_out_freq as f64);
 	let middle_freq = min_out_freq as f64 * xfact;
-	println!("Freqs: min:{min_out_freq}..{max_out_freq} -> midlde={middle_freq} with x:{xfact}");
+	//println!("Freqs: min:{min_out_freq}..{max_out_freq} -> midlde={middle_freq} with x:{xfact}");
 
 
 	let mut resampler_map = HashMap::new();
