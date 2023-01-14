@@ -1,11 +1,16 @@
 // Copyright (C) 2022, 23 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+#[allow(unused)]
+use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
 use std::time::Duration;
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map, self, tile::Tileset};
+use crate::datafiles::{map, self, tile::Tileset, labgfx, pixmap::Pixmap};
 use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
@@ -163,6 +168,22 @@ impl<'a> Font<'a> {
     }
 }
 
+fn labblock_textures<'a, T>(data : &datafiles::AmberstarFiles, tc : &'a TextureCreator<T>,
+			    labdata : &labgfx::LabData) -> Vec<labgfx::LabBlock<Texture<'a>>> {
+    let palette = &data.palettes[labdata.magic_7[6] as usize - 1];
+    let labblocks = &data.labgfx.labblocks;
+    // let pallettized : Vec<labgfx::LabBlock<Pixmap>> = labdata.labblocks.iter().map(|n| {pwarn!("flattening {}", *n); labblocks[*n].flatten().with_palette(palette)}).collect();
+    let mut pallettized = vec![];
+    for n in labdata.labblocks.iter() {
+	pwarn!("flattening {}", *n);
+	// WIP:
+	let r = labblocks[*n].flatten().with_palette(palette);
+	pallettized.push(r);
+    }
+    return pallettized.iter().map(|l| l.as_textures(&tc)).collect();
+}
+
+
 pub fn show_maps(data : &datafiles::AmberstarFiles) {
     map::debug_summary();
 
@@ -212,6 +233,11 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     let mut draw_npc_info = true;
     let mut draw_event_info = true;
     let mut draw_tile_nr = false;
+
+    // WIP
+    //let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = data.labgfx.labdata.iter().map(|labdata| labblock_textures(&data, &creator, labdata)).collect();
+    let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = vec![labblock_textures(&data, &creator, &data.labgfx.labdata[0])];
+
 
     'running: loop {
 
@@ -416,11 +442,28 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	    ypos += 20;
 
-	    for (row_nr, row) in labblock.images.iter().enumerate() {
+	    //for (row_nr, row) in labblock.images.iter().enumerate() {
+	    for (row_nr, row) in labblocks[0][lab_nr].images.iter().enumerate() {
 		let mut xpos = 1020;
 		let mut maxheight = 0;
-		for (column_nr, pixmap) in row.pixmaps.iter().enumerate() {
-		    let column = &pixmap.pixmap;
+		//for (column_nr, _pixmap) in row.pixmaps.iter().enumerate() {
+		for (column_nr, column) in row.pixmaps.iter().enumerate() {
+		    //WIP: this is what we used to do
+		    //let column = &pixmap.pixmap;
+
+		    // WIP: current test:
+		    // let lba = &labblocks[0][lab_nr];
+		    // if column_nr >= lba.images.len() {
+		    // 	break;
+		    // }
+		    // let lbr = &lba.images[column_nr];
+		    // if row_nr >= lbr.pixmaps.len() {
+		    // 	break;
+		    // }
+		    // let column = &lbr.pixmaps[row_nr].pixmap;
+		    let column = &column.pixmap;
+
+		    // WIP continues "normally" below:
 		    let TextureQuery { width, height, .. } = column.query();
 		    canvas.set_draw_color(Color::RGBA(0xff, 0xff, 0, 0xff));
 		    canvas.draw_rect(Rect::new(xpos as i32, ypos as i32, 2 + width * 2 as u32, 2 + height * 2 as u32)).unwrap();

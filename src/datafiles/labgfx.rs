@@ -17,6 +17,16 @@ pub struct LabPixmap<T> {
     pub pixmap : T,
 }
 
+impl<T : Clone> Clone for LabPixmap<T> {
+    fn clone(&self) -> Self {
+        LabPixmap {
+	    xoffset : self.xoffset,
+	    yoffset : self.yoffset,
+	    pixmap : self.pixmap.clone(),
+	}
+    }
+}
+
 impl<T> LabPixmap<T> {
     fn map<U, F : Fn(&T) -> U>(&self, f : &F) -> LabPixmap<U> {
 	LabPixmap {
@@ -34,15 +44,36 @@ pub struct LabImage<T> {
     pub pixmaps : Vec<LabPixmap<T>>,
 }
 
+impl LabImage<IndexedPixmap> {
+    pub fn flatten(&self) -> LabImage<IndexedPixmap> {
+	// WIP: broken!
+	let pixmaps = match &self.base_pixmap {
+	    // TODO: Some pointless copying
+	    None       => {pwarn!("NO flatten"); self.pixmaps.clone()},
+	    Some(base) => {pwarn!("do flatten, YES"); self.pixmaps.iter().map(|pm| LabPixmap {
+		xoffset : base.xoffset,
+		yoffset : base.yoffset,
+		pixmap : base.pixmap.resize_and_blit(&pm.pixmap,
+						     // WIP: this is very wrong!
+						     if base.xoffset > pm.xoffset {todo!(); 0} else {pm.xoffset - base.xoffset},
+						     if base.yoffset > pm.yoffset {todo!(); 0} else {pm.yoffset - base.yoffset}) } ).collect()},
+	};
+	// pdebug!("    pixmaps: {}", self.pixmaps.len());
+	// for p in &self.pixmaps {
+	//     pdebug!("    - {} x {}", p.pixmap.width, p.pixmap.height);
+	//     }
+	return LabImage {
+	    base_pixmap : None,
+	    //pixmaps,
+	    pixmaps,
+	}
+    }
+}
+
 impl<T> LabImage<T> {
     fn map<U, F : Fn(&T) -> U>(&self, f : &F) -> LabImage<U> {
 	LabImage {
 	    base_pixmap : self.base_pixmap.as_ref().map(|i : &LabPixmap<T>| i.map(f)),
-	    // match self.base_pixmap {
-	    // 	None => None,
-	    // 	    Some(v) => Some(v.map(f)),
-	    // },
-	    //
 	    pixmaps : self.pixmaps.iter().map(|i : &LabPixmap<T>| i.map(f)).collect(),
 	}
     }
@@ -96,8 +127,8 @@ impl LabBlock<IndexedPixmap> {
 
 	assert!(data[0] == 0);
 	let hdr_type = data[1];
-	let num_frames = data[2] as usize;
-	let num_images = data[3] as usize;
+	let num_images = data[2] as usize;
+	let num_frames = data[3] as usize;
 
 	let num_offsets = if hdr_type == HDR_TYPE_FURNITURE { 36 } else { 34 };
 	let xoffsets : Vec<usize> = (0..17).map(|i| decode::u16(&data, 4 + i * 2) as usize).collect();
@@ -120,12 +151,15 @@ impl LabBlock<IndexedPixmap> {
 	    } else { None };
 
 	let mut image_header_pos = num_offsets * 2 + 4;
-	let mut images = vec![];
+	let mut unsorted_pixmaps = vec![];
+	let mut unsorted_offsets = vec![];
 
-	for image_nr in 0..num_images {
-	    let mut base_pixmap = None;
-	    let mut frames = vec![];
-	    for frame in 0..num_frames {
+	debug!("  @ start {resource_nr} = {resource_nr:#x}, {num_images}x{num_frames}");
+	for frame in 0..num_frames {
+	    let mut pixmap_batch = vec![];
+	    let mut offset_batch = vec![];
+
+	    for image_nr in 0..num_images {
 		assert!(image_header_pos < data.len() - 1);
 		let img_size = decode::u32(&data, image_header_pos) as usize;
 		if img_size + image_header_pos + 4 > data.len() {
@@ -133,16 +167,37 @@ impl LabBlock<IndexedPixmap> {
 		}
 		let img_start = image_header_pos+4;
 		let pixmap = pixmap::new_icon_frame(&data[img_start..img_start+img_size]);
-		image_header_pos += 4 + img_size;
+		debug!("   @ decoded {} x {}", pixmap.width, pixmap.height);
+
+		pixmap_batch.push(pixmap);
 
 		let offsets_default = (xoffsets[image_nr], yoffsets[image_nr]);
 
-		let (xoffset, yoffset) = match (image_nr, frame, anim_offsets) {
+		let offset_pair = match (image_nr, frame, anim_offsets) {
 		    (_, _, None)                => offsets_default,
 		    (3, 0, Some(_))             => offsets_default,
 		    (3, _, Some(offsets_anim))  => offsets_anim,
 		    (_, _, Some(_))             => offsets_default,
 		};
+
+		offset_batch.push(offset_pair);
+
+		image_header_pos += 4 + img_size;
+	    }
+	    unsorted_pixmaps.push(pixmap_batch);
+	    unsorted_offsets.push(offset_batch);
+	}
+
+	let mut images = vec![];
+
+	for image_nr in 0..num_images {
+	    let mut base_pixmap = None;
+	    let mut frames = vec![];
+
+	    for frame in 0..num_frames {
+
+		let pixmap = unsorted_pixmaps[frame].pop().unwrap();
+		let (xoffset, yoffset) = unsorted_offsets[frame].pop().unwrap();
 
 		let lab_pixmap = LabPixmap {
 		    xoffset,
@@ -151,15 +206,18 @@ impl LabBlock<IndexedPixmap> {
 		};
 
 		match (image_nr, frame, anim_offsets) {
-		    (3, 0, Some(_))  => { base_pixmap = Some(lab_pixmap) },
+		    (0, 0, Some(_))  => { base_pixmap = Some(lab_pixmap) },
 		    _                => frames.push(lab_pixmap),
 		};
 	    }
+	    pdebug!("  Pushed image with {} frames", frames.len());
 	    images.push(LabImage {
 		base_pixmap,
 		pixmaps : frames,
 	    });
 	}
+
+
 	return LabBlock {
 	    images,
 	    num_frames_distant : num_frames,
@@ -169,6 +227,16 @@ impl LabBlock<IndexedPixmap> {
 
     pub fn with_palette(&self, palette : &Palette) -> LabBlock<Pixmap> {
 	self.map(&|i : &IndexedPixmap| i.with_palette(palette))
+    }
+
+    /// merge base_images with their inferior pixmaps
+    pub fn flatten(&self) -> LabBlock<IndexedPixmap> {
+	pdebug!("  images: {}", self.images.len());
+	LabBlock {
+	    images : self.images.iter().map(|i| i.flatten()).collect(),
+	    num_frames_distant : self.num_frames_distant,
+	    block_type : self.block_type.clone(),
+	}
     }
 }
 
@@ -292,3 +360,4 @@ impl LabInfo {
 	};
     }
 }
+

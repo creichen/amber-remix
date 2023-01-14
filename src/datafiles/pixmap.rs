@@ -12,6 +12,7 @@ use crate::datafiles::decode;
 use crate::datafiles::palette::Palette;
 
 /// An indexed pixel map without a palette
+#[derive(Clone)]
 pub struct IndexedPixmap {
     pub width : usize,
     pub height : usize,
@@ -97,6 +98,50 @@ impl IndexedPixmap {
 	    height : self.height,
 	    data,
 	}
+    }
+
+    pub fn resize(&self, new_width : usize, new_height : usize) -> IndexedPixmap {
+	warn!("Resize {}x{} -> {new_width}x{new_height}", self.width, self.height);
+	let mut result = IndexedPixmap {
+	    width : new_width,
+	    height : new_height,
+	    pixels : vec![0; (new_width * new_height) as usize],
+	};
+	result.blit_into(self, 0, 0);
+	return result;
+    }
+
+    // clips width and height
+    pub fn blit_into(&mut self, src : &IndexedPixmap, x : usize, y : usize) {
+	let width = self.width;
+	let height = self.height;
+
+	let src_width = isize::min(width as isize - x as isize, src.width as isize);
+	let src_height = isize::min(height as isize - y as isize, src.height as isize);
+	warn!("blitclip {}x{} -> {src_width}x{src_height}", src.width, src.height);
+	if src_width <= 0 || src_height <= 0 {
+	    return;
+	}
+	let src_width = src_width as usize;
+	let src_height = src_height as usize;
+
+	let dest_start_base = x + y * width;
+	for h in 0..src_height {
+	    let dest_start = dest_start_base + h * width;
+	    let src_start = src.width * h;
+	    self.pixels[dest_start..dest_start+src_width].clone_from_slice(&src.pixels[src_start..src_start+src_width]);
+	}
+    }
+
+    pub fn resize_and_blit(&self, src : &IndexedPixmap, x : usize, y : usize) -> IndexedPixmap {
+	let width = usize::max(self.width, x + src.width);
+	let height = usize::max(self.height, y + src.height);
+	warn!("resize_and_blit INTO {}x{} <== {}x{} @ {x}x{y} -> {width}x{height}",
+	      self.width, self.height, src.width, src.height);
+
+	let mut dest = self.resize(width, height);
+	dest.blit_into(src, x, y);
+	return dest;
     }
 }
 
