@@ -6,11 +6,11 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use std::time::Duration;
+use std::{time::Duration, borrow::Borrow};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType}};
+use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock}};
 use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
@@ -56,27 +56,58 @@ impl<'a> TilesetPainter<'a> {
 impl<'a> IndexedTilePainter for TilesetPainter<'a> {
     fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
 	draw_tile(&self.tileset,
-		  &mut canvas,image_id, xpos as i32, ypos as i32, anim_index);
+		  canvas,image_id, xpos as i32, ypos as i32, anim_index);
     }
 }
 
+// ----------------------------------------
 
-struct TilesetPainter2<'a> {
-    tileset : &'a Tileset<Texture<'a>>,
+struct LabBlockPainter<'a> {
+    labblocks : &'a Vec<LabBlock<Texture<'a>>>,
 }
 
-impl<'a> TilesetPainter2<'a> {
-    pub fn new(tileset : &'a Tileset<Texture<'a>>) -> TilesetPainter<'a> {
-	TilesetPainter {
-	    tileset
+impl<'a> LabBlockPainter<'a> {
+    pub fn new(labblocks : &'a Vec<LabBlock<Texture<'a>>>) -> LabBlockPainter<'a> {
+	LabBlockPainter {
+	    labblocks
 	}
     }
 }
 
-impl<'a> IndexedTilePainter for TilesetPainter2<'a> {
+impl<'a> IndexedTilePainter for LabBlockPainter<'a> {
     fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
-	draw_tile(&self.tileset,
-		  &mut canvas,image_id, xpos as i32, ypos as i32, anim_index);
+	if image_id > 0 && image_id <= self.labblocks.len() {
+	    let labblock = &self.labblocks[image_id - 1];
+	    let perspectives = &labblock.images;
+
+	    let mut perspective_nr = perspectives.len() - 1;
+	    if labblock.block_type != LabBlockType::Furniture {
+		perspective_nr = usize::min(8, perspective_nr);
+	    };
+	    let perspective = &perspectives[perspective_nr];
+	    let frames = &perspective.pixmaps;
+	    let index = anim_index % frames.len();
+
+	    let pixmap = &frames[index].pixmap;
+
+	    let TextureQuery { width, height, .. } = pixmap.query();
+
+	    let target_size = 32;
+	    let (dest_width, dest_height, xoffset, yoffset) = if width > height {
+		let reduced_size = (height * target_size) / width;
+		(target_size, reduced_size,
+		 0, (target_size - reduced_size) >> 1)
+	    } else {
+		// height > width
+		let reduced_size = (width * target_size) / height;
+		(reduced_size, target_size,
+		 (target_size - reduced_size) >> 1, 0)
+	    };
+
+	    canvas.copy(pixmap,
+			Rect::new(0, 0, width as u32, height as u32),
+			Rect::new((xpos + xoffset as isize) as i32, (ypos + yoffset as isize) as i32, dest_width as u32, dest_height as u32)).unwrap();
+	}
     }
 }
 
@@ -145,14 +176,17 @@ impl NPC {
 		     y_256 as f32 / 256.0));
     }
 
-    pub fn draw(&self, tiles : &Tileset<Texture<'_>>,
+    pub fn draw(&self, //tiles : &Tileset<Texture<'_>>,
+		painter: &dyn IndexedTilePainter,
 		canvas : &mut Canvas<sdl2::video::Window>,
 		anim_index : usize) {
 	if let Some((x, y)) = self.tile_pos() {
-	    let xpos = (x * 32.0) as i32;
-	    let ypos = (y * 32.0) as i32;
-	    draw_tile(tiles, canvas,
-		      self.mapnpc.sprite, xpos, ypos, anim_index);
+	    let xpos = (x * 32.0) as isize;
+	    let ypos = (y * 32.0) as isize;
+	    painter.draw(canvas,
+			 self.mapnpc.sprite, xpos, ypos, anim_index);
+	    // draw_tile(tiles, canvas,
+	    // 	      self.mapnpc.sprite, xpos, ypos, anim_index);
 	}
     }
 }
@@ -295,14 +329,14 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let width = map.width;
 	let height = map.height;
 
-	let tileset = usize::min(1, data.maps[map_nr].tileset); // tileset for 3d maps = background image
+	let tileset = data.maps[map_nr].tileset; // tileset for 3d maps = background image
 	let labblock = &labblocks[lab_nr][lab_img_nr];
 
-	let &mut tileset_painter;
+	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
-	    tileset_painter = TilesetPainter::new(&tile_textures[tileset]);
+	    tileset_painter = Box::new(LabBlockPainter::new(&labblocks[tileset]));
 	} else {
-	    tileset_painter = TilesetPainter2::new(&tile_textures[tileset]);
+	    tileset_painter = Box::new(TilesetPainter::new(&tile_textures[tileset]));
 	}
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
@@ -355,10 +389,9 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 			if let Some(tile_id) = tile {
 			    tileset_painter.draw(
-			    // draw_tile(&tile_textures[tileset],
 				&mut canvas,
-				      tile_id,
-				      xpos, ypos, i >> 4);
+				tile_id,
+				xpos, ypos, i >> 4);
 			    if draw_tile_nr {
 				let msg = format!("{:02x}", tile_id);
 				font.draw_to_with_outline(&mut canvas, &msg,
@@ -374,9 +407,10 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    // draw NPC
 	    for npc in &mut npcs {
 		npc.advance_cycle(0x64);
-		npc.draw(&tile_textures[tileset],
-			 &mut canvas,
-			 i >> 4);
+		npc.draw(//&tile_textures[tileset],
+		    tileset_painter.borrow(),
+		    &mut canvas,
+		    i >> 4);
 	    }
 
 
@@ -500,7 +534,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    ypos += 20;
 
 	    let base_ypos = ypos;
-	    let mut xpos = 1020;
+	    let mut xpos = 1620;
 	    //for (row_nr, row) in labblock.images.iter().enumerate() {
 	    for (column_nr, column) in labblocks[lab_nr][lab_img_nr].images.iter().enumerate() {
 		let mut maxwidth = 0;
