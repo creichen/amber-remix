@@ -27,7 +27,7 @@ pub struct TileIcon<T> {
 
 const PALETTE_BRIGHTNESS : u8 = 255 / 7; /* VALIDATE ME */
 const PALETTE_SIZE : usize = 0x42; /* Assuming 16 entries */
-const COLOR_INDEX_FOR_TRANSPARENCY : usize = 0;
+pub const COLOR_INDEX_FOR_TRANSPARENCY : usize = 0;
 
 const OFFSET_TILE_NUM_ANIM_FRAMES : usize = 0x2;
 

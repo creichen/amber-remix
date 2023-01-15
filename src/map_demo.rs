@@ -8,9 +8,9 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{time::Duration, borrow::Borrow};
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock}};
+use crate::datafiles::{map::{self, LabRef}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock}};
 use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
@@ -64,21 +64,21 @@ impl<'a> IndexedTilePainter for TilesetPainter<'a> {
 
 struct LabBlockPainter<'a> {
     labblocks : &'a Vec<LabBlock<Texture<'a>>>,
+    labrefs : &'a Vec<LabRef>,
 }
 
 impl<'a> LabBlockPainter<'a> {
-    pub fn new(labblocks : &'a Vec<LabBlock<Texture<'a>>>) -> LabBlockPainter<'a> {
+    pub fn new(labrefs : &'a Vec<LabRef>, labblocks : &'a Vec<LabBlock<Texture<'a>>>) -> LabBlockPainter<'a> {
 	LabBlockPainter {
-	    labblocks
+	    labblocks,
+	    labrefs,
 	}
     }
-}
 
-impl<'a> IndexedTilePainter for LabBlockPainter<'a> {
-    fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
+    pub fn draw_block(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
 	if image_id > 0 && image_id <= self.labblocks.len() {
 	    let labblock = &self.labblocks[image_id - 1];
-	    let perspectives = &labblock.images;
+	    let perspectives = &labblock.perspectives;
 
 	    let mut perspective_nr = perspectives.len() - 1;
 	    if labblock.block_type != LabBlockType::Furniture {
@@ -104,9 +104,23 @@ impl<'a> IndexedTilePainter for LabBlockPainter<'a> {
 		 (target_size - reduced_size) >> 1, 0)
 	    };
 
+	    // let (dest_width, dest_height, xoffset, yoffset) = (width, height, 0, 0);
+
+	    // print!("bm {:?}\n", pixmap.blend_mode());
+
 	    canvas.copy(pixmap,
 			Rect::new(0, 0, width as u32, height as u32),
 			Rect::new((xpos + xoffset as isize) as i32, (ypos + yoffset as isize) as i32, dest_width as u32, dest_height as u32)).unwrap();
+	}
+    }
+
+}
+
+impl<'a> IndexedTilePainter for LabBlockPainter<'a> {
+    fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
+	if image_id > 0 {
+	    self.draw_block(canvas, self.labrefs[image_id - 1].rest[1] as usize, xpos, ypos, anim_index);
+	    self.draw_block(canvas, self.labrefs[image_id - 1].rest[0] as usize, xpos, ypos, anim_index);
 	}
     }
 }
@@ -334,7 +348,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
-	    tileset_painter = Box::new(LabBlockPainter::new(&labblocks[tileset]));
+	    tileset_painter = Box::new(LabBlockPainter::new(&map.lab_info, &labblocks[tileset]));
 	} else {
 	    tileset_painter = Box::new(TilesetPainter::new(&tile_textures[tileset]));
 	}
@@ -500,24 +514,24 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		    current_help.push((tileinfo_col, format!("LAB_INFO.AMB.{:04} magic1:{:x} magic7:{:x?} blocks={:x?}", map.tileset,
 							     lab_info.magic_byte, lab_info.magic_7, lab_info.labblocks)));
 		}
-		for (i, l) in map.lab_info.iter().enumerate() {
-		    let img_id = lab_info.labblocks[i];
-		    current_help.push((tileinfo_col, format!("labblock[{:02x}] = {:02x}{:02x}{:02x}{:02x} {:02x} {:02x} {:02x}  img={:02x}",
-							     i + 1,
-							     l.head[0],
-							     l.head[1],
-							     l.head[2],
-							     l.head[3],
-							     l.rest[0],
-							     l.rest[1],
-							     l.rest[2],
-							     img_id)));
-		}
+	    }
+	    for (i, l) in map.lab_info.iter().enumerate() {
+		let img_id = lab_info.labblocks[l.rest[0] as usize - 1];
+		current_help.push((tileinfo_col, format!("labblock[{:02x}] = {:02x}{:02x}{:02x}{:02x} {:02x} {:02x} {:02x}  img={:02x}",
+							 i + 1,
+							 l.head[0],
+							 l.head[1],
+							 l.head[2],
+							 l.head[3],
+							 l.rest[0],
+							 l.rest[1],
+							 l.rest[2],
+							 img_id)));
 	    }
 
 	    // labblock
 	    {
-		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, img {lab_img_nr}, fmt {:?}, labblock {}, dim {}x{}", labblock.block_type, labblock.id, labblock.images.len(), labblock.num_frames_distant)));
+		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, img {lab_img_nr}, fmt {:?}, labblock {}, dim {}x{}", labblock.block_type, labblock.id, labblock.perspectives.len(), labblock.num_frames_distant)));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[0..labblock.unknowns.len() >> 1])));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[labblock.unknowns.len() >> 1..])));
 	    }
@@ -536,7 +550,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    let base_ypos = ypos;
 	    let mut xpos = 1620;
 	    //for (row_nr, row) in labblock.images.iter().enumerate() {
-	    for (column_nr, column) in labblocks[lab_nr][lab_img_nr].images.iter().enumerate() {
+	    for (column_nr, column) in labblocks[lab_nr][lab_img_nr].perspectives.iter().enumerate() {
 		let mut maxwidth = 0;
 		let mut ypos = base_ypos;
 		if lab_anim {

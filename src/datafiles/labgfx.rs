@@ -7,7 +7,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use super::{DataFile, pixmap::{IndexedPixmap, Pixmap}, palette::Palette};
-use sdl2::render::{Texture, TextureCreator};
+use sdl2::render::{Texture, TextureCreator, BlendMode};
 use crate::datafiles::{decode, pixmap};
 
 /// Single "3D perspective" image
@@ -146,7 +146,7 @@ pub enum LabBlockType {
 
 /// One set of images for one type of wall, decoration, furniture, or NPC
 pub struct LabBlock<T> {
-    pub images : Vec<LabImage<T>>,   // vector of animation frames
+    pub perspectives : Vec<LabImage<T>>,   // vector of animation frames
     pub num_frames_distant : usize,  // animation frames (the last image may have one frame less)
     pub id : usize,                  // file ID
     pub block_type : LabBlockType,
@@ -203,6 +203,7 @@ impl LabBlock<IndexedPixmap> {
 		let img_start = image_header_pos+4;
 		let pixmap = pixmap::new_icon_frame(&data[img_start..img_start+img_size]);
 		debug!("   @ decoded {} x {}", pixmap.width, pixmap.height);
+		//pixmap.print();
 
 		let offsets_default = (xoffsets[image_nr], yoffsets[image_nr]);
 
@@ -239,7 +240,7 @@ impl LabBlock<IndexedPixmap> {
 	}
 
 	return LabBlock {
-	    images,
+	    perspectives: images,
 	    num_frames_distant : num_frames,
 	    id : resource_nr,
 	    block_type,
@@ -253,7 +254,7 @@ impl LabBlock<IndexedPixmap> {
     /// merge base_images with their inferior pixmaps
     pub fn flatten(&self) -> LabBlock<IndexedPixmap> {
 	LabBlock {
-	    images : self.images.iter().map(|i| i.flatten()).collect(),
+	    perspectives : self.perspectives.iter().map(|i| i.flatten()).collect(),
 	    num_frames_distant : self.num_frames_distant,
 	    id : self.id,
 	    block_type : self.block_type.clone(),
@@ -264,7 +265,7 @@ impl LabBlock<IndexedPixmap> {
 impl<T> LabBlock<T> {
     pub fn map<U, F : Fn(&T) -> U>(&self, f : &F) -> LabBlock<U> {
 	LabBlock {
-	    images : self.images.iter().map(|i| i.map(f)).collect(),
+	    perspectives : self.perspectives.iter().map(|i| i.map(f)).collect(),
 	    num_frames_distant : self.num_frames_distant,
 	    id : self.id,
 	    block_type : self.block_type.clone(),
@@ -314,20 +315,20 @@ impl<T> LabBlock<T> {
 	    LabBlockType::Block |
 	    LabBlockType::Decoration => {
 		let facing_img = if let Some(facing_index) = LabBlock::<T>::image_index_facing(distance, x) {
-		    if facing_index < self.images.len() {
-			Some(&self.images[facing_index])
+		    if facing_index < self.perspectives.len() {
+			Some(&self.perspectives[facing_index])
 		    } else { None }
 		} else { None };
 		let orthogonal_img = if let Some(facing_index) = LabBlock::<T>::image_index_orthogonal(distance, x) {
-		    if facing_index < self.images.len() {
-			Some(&self.images[facing_index])
+		    if facing_index < self.perspectives.len() {
+			Some(&self.perspectives[facing_index])
 		    } else { None }
 		} else { None };
 		(facing_img, orthogonal_img)
 	    },
 	    LabBlockType::Furniture => {
 		(if x == 0 && distance < 4 {
-		    Some(&self.images[3 - distance])
+		    Some(&self.perspectives[3 - distance])
 		} else {
 		    None
 		}, None)
@@ -339,7 +340,7 @@ impl<T> LabBlock<T> {
 
 impl LabBlock<Pixmap> {
     pub fn as_textures<'a, T>(&self, tc: &'a TextureCreator<T>) -> LabBlock<Texture<'a>> {
-	self.map(&|i| i.as_texture(tc))
+	self.map(&|i| { let mut t = i.as_texture(tc); t.set_blend_mode(BlendMode::Blend); t})
     }
 }
 

@@ -292,7 +292,7 @@ impl Event {
 // 3D Labblock references
 
 #[derive(Clone)]
-pub struct LabInfo {
+pub struct LabRef {
     pub head : [u8; 4], // ??? meaning unclear
     pub rest : [u8; 3], // ??? meaning unclear
 }
@@ -445,7 +445,7 @@ pub struct Map {
     pub event_table : Vec<Event>,
     pub tileset : usize,
     pub song_nr : usize,
-    pub lab_info : Vec<LabInfo>,
+    pub lab_info : Vec<LabRef>,
     pub flags : u32,
     pub first_person : bool, // Pseudo-3D view
     pub npcs : Vec<MapNPC>,
@@ -585,7 +585,7 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	    let labblock_2 = labblock_section[labblock_2_pos];
 	    let labblock_3 = labblock_section[labblock_3_pos];
 	    let labblock_4 = labblock_section[labblock_4_pos];
-	    let labinfo = LabInfo {
+	    let labinfo = LabRef {
 		head : labblock_head,
 		rest : [labblock_2, labblock_3, labblock_4],
 	    };

@@ -93,7 +93,7 @@ impl IndexedPixmap {
 	let mut data : Vec<u8> = vec![0; self.pixels.len() * 4];
 	let mut pos = 0;
 	for pal_index in self.pixels.iter() {
-	    let col = palette.get((*pal_index & 0xf) as usize);
+	    let col = palette.get((*pal_index & 0x1f) as usize);
 	    /* Since we can't convert u32 to u8 vectors, we here force endianness to be little */
 	    data[pos + 3] = col.r;
 	    data[pos + 2] = col.g;
@@ -105,6 +105,16 @@ impl IndexedPixmap {
 	    width : self.width,
 	    height : self.height,
 	    data,
+	}
+    }
+
+    pub fn print(&self) {
+	for y in 0..self.height {
+	    for x in 0..self.width {
+		let pix = self.pixels[x + y * self.width];
+		print!(" {pix:2x}");
+	    }
+	    print!("\n");
 	}
     }
 
