@@ -34,6 +34,53 @@ struct Font<'a> {
     font : sdl2::ttf::Font<'a, 'a>,
 }
 
+// --------------------------------------------------------------------------------
+trait IndexedTilePainter {
+    // Draw specified image at coordinates, at default size for canvas
+    fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize);
+}
+
+// ----------------------------------------
+struct TilesetPainter<'a> {
+    tileset : &'a Tileset<Texture<'a>>,
+}
+
+impl<'a> TilesetPainter<'a> {
+    pub fn new(tileset : &'a Tileset<Texture<'a>>) -> TilesetPainter<'a> {
+	TilesetPainter {
+	    tileset
+	}
+    }
+}
+
+impl<'a> IndexedTilePainter for TilesetPainter<'a> {
+    fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
+	draw_tile(&self.tileset,
+		  &mut canvas,image_id, xpos as i32, ypos as i32, anim_index);
+    }
+}
+
+
+struct TilesetPainter2<'a> {
+    tileset : &'a Tileset<Texture<'a>>,
+}
+
+impl<'a> TilesetPainter2<'a> {
+    pub fn new(tileset : &'a Tileset<Texture<'a>>) -> TilesetPainter<'a> {
+	TilesetPainter {
+	    tileset
+	}
+    }
+}
+
+impl<'a> IndexedTilePainter for TilesetPainter2<'a> {
+    fn draw(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize) {
+	draw_tile(&self.tileset,
+		  &mut canvas,image_id, xpos as i32, ypos as i32, anim_index);
+    }
+}
+
+// --------------------------------------------------------------------------------
 struct NPC {
     mapnpc : map::MapNPC,
     cycle_pos : usize,  // position in NPC cycle
@@ -249,10 +296,16 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let height = map.height;
 
 	let tileset = usize::min(1, data.maps[map_nr].tileset); // tileset for 3d maps = background image
+	let labblock = &labblocks[lab_nr][lab_img_nr];
+
+	let &mut tileset_painter;
+	if map.first_person {
+	    tileset_painter = TilesetPainter::new(&tile_textures[tileset]);
+	} else {
+	    tileset_painter = TilesetPainter2::new(&tile_textures[tileset]);
+	}
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
-
-	let labblock = &labblocks[lab_nr][lab_img_nr];
 
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
@@ -297,12 +350,13 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		    for x in 0..width {
 			let tile = map.tile_at(map_index, x, y);
 
-			let xpos = (x as i32) * 32;
-			let ypos = (y as i32) * 32;
+			let xpos = (x as isize) * 32;
+			let ypos = (y as isize) * 32;
 
 			if let Some(tile_id) = tile {
-			    draw_tile(&tile_textures[tileset],
-				      &mut canvas,
+			    tileset_painter.draw(
+			    // draw_tile(&tile_textures[tileset],
+				&mut canvas,
 				      tile_id,
 				      xpos, ypos, i >> 4);
 			    if draw_tile_nr {
