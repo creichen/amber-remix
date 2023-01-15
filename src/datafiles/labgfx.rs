@@ -86,8 +86,8 @@ impl LabImage<IndexedPixmap> {
 	// WIP: broken!
 	let pixmaps = match &self.base_pixmap {
 	    // TODO: Some pointless copying
-	    None       => {pwarn!("NO flatten"); self.pixmaps.clone()},
-	    Some(base) => {pwarn!("do flatten, YES"); self.pixmaps.iter().map(|pm| base.merge(&pm))}.collect(),
+	    None       => self.pixmaps.clone(),
+	    Some(base) => self.pixmaps.iter().map(|pm| base.merge(&pm)).collect(),
 	};
 	// pdebug!("    pixmaps: {}", self.pixmaps.len());
 	// for p in &self.pixmaps {
@@ -146,8 +146,9 @@ pub enum LabBlockType {
 
 /// One set of images for one type of wall, decoration, furniture, or NPC
 pub struct LabBlock<T> {
-    pub images : Vec<LabImage<T>>, // vector of animation frames
-    pub num_frames_distant : usize,      // animation frames (the last image may have one frame less)
+    pub images : Vec<LabImage<T>>,   // vector of animation frames
+    pub num_frames_distant : usize,  // animation frames (the last image may have one frame less)
+    pub id : usize,                  // file ID
     pub block_type : LabBlockType,
 }
 
@@ -183,13 +184,15 @@ impl LabBlock<IndexedPixmap> {
 	    } else { None };
 
 	let mut image_header_pos = num_offsets * 2 + 4;
-	let mut unsorted_pixmaps = vec![];
-	let mut unsorted_offsets = vec![];
 
 	debug!("  @ start {resource_nr} = {resource_nr:#x}, {num_images}x{num_frames}");
+
+	// let mut base_images = vec![];
+	let mut images = vec![];
+
 	for frame in 0..num_frames {
-	    let mut pixmap_batch = vec![];
-	    let mut offset_batch = vec![];
+	    // let mut pixmap_batch = vec![];
+	    // let mut offset_batch = vec![];
 
 	    for image_nr in 0..num_images {
 		assert!(image_header_pos < data.len() - 1);
@@ -201,58 +204,44 @@ impl LabBlock<IndexedPixmap> {
 		let pixmap = pixmap::new_icon_frame(&data[img_start..img_start+img_size]);
 		debug!("   @ decoded {} x {}", pixmap.width, pixmap.height);
 
-		pixmap_batch.push(pixmap);
-
 		let offsets_default = (xoffsets[image_nr], yoffsets[image_nr]);
 
-		let offset_pair = match (image_nr, frame, anim_offsets) {
-		    (_, _, None)                => offsets_default,
-		    (3, 0, Some(_))             => offsets_default,
-		    (3, _, Some(offsets_anim))  => offsets_anim,
-		    (_, _, Some(_))             => offsets_default,
+		let (is_animation_base_image, (xoffset, yoffset)) = match (image_nr, frame, anim_offsets) {
+		    (3, 0, Some(_))             => (true, offsets_default),
+		    (3, _, Some(offsets_anim))  => (false, offsets_anim),
+		    (_, _, _)                   => (false, offsets_default),
 		};
 
-		offset_batch.push(offset_pair);
+		let lab_pixmap = LabPixmap {
+		    pixmap,
+		    xoffset,
+		    yoffset,
+		};
+
+		if is_animation_base_image {
+		    assert!(images.len() <= image_nr);
+		    images.push(LabImage {
+			base_pixmap : Some(lab_pixmap),
+			pixmaps : vec![],
+		    });
+		} else {
+		    if images.len() <= image_nr {
+			images.push(LabImage {
+			    base_pixmap : None,
+			    pixmaps : vec![],
+			});
+		    }
+		    images[image_nr].pixmaps.push(lab_pixmap);
+		}
 
 		image_header_pos += 4 + img_size;
 	    }
-	    unsorted_pixmaps.push(pixmap_batch);
-	    unsorted_offsets.push(offset_batch);
 	}
-
-	let mut images = vec![];
-
-	for image_nr in 0..num_images {
-	    let mut base_pixmap = None;
-	    let mut frames = vec![];
-
-	    for frame in 0..num_frames {
-
-		let pixmap = unsorted_pixmaps[frame].pop().unwrap();
-		let (xoffset, yoffset) = unsorted_offsets[frame].pop().unwrap();
-
-		let lab_pixmap = LabPixmap {
-		    xoffset,
-		    yoffset,
-		    pixmap,
-		};
-
-		match (image_nr, frame, anim_offsets) {
-		    (0, 0, Some(_))  => { base_pixmap = Some(lab_pixmap) },
-		    _                => frames.push(lab_pixmap),
-		};
-	    }
-	    pdebug!("  Pushed image with {} frames", frames.len());
-	    images.push(LabImage {
-		base_pixmap,
-		pixmaps : frames,
-	    });
-	}
-
 
 	return LabBlock {
 	    images,
 	    num_frames_distant : num_frames,
+	    id : resource_nr,
 	    block_type,
 	};
     }
@@ -263,10 +252,10 @@ impl LabBlock<IndexedPixmap> {
 
     /// merge base_images with their inferior pixmaps
     pub fn flatten(&self) -> LabBlock<IndexedPixmap> {
-	pdebug!("  images: {}", self.images.len());
 	LabBlock {
 	    images : self.images.iter().map(|i| i.flatten()).collect(),
 	    num_frames_distant : self.num_frames_distant,
+	    id : self.id,
 	    block_type : self.block_type.clone(),
 	}
     }
@@ -277,6 +266,7 @@ impl<T> LabBlock<T> {
 	LabBlock {
 	    images : self.images.iter().map(|i| i.map(f)).collect(),
 	    num_frames_distant : self.num_frames_distant,
+	    id : self.id,
 	    block_type : self.block_type.clone(),
 	}
     }

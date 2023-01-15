@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType}, pixmap::Pixmap};
+use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType}};
 use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
@@ -252,8 +252,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
 
-	// This will generally get the wrong palette, but it's enough for the meta-information (which is the only thing we use it for)
-	let labblock = data.labgfx.labblocks[lab_nr].with_palette(&data.palettes[0]).as_textures(&creator);
+	let labblock = &labblocks[lab_nr][lab_img_nr];
 
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
@@ -430,7 +429,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	    // labblock
 	    {
-		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, img {lab_img_nr}, fmt {:?}, dim {}x{}", labblock.block_type, labblock.images.len(), labblock.num_frames_distant)));
+		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, img {lab_img_nr}, fmt {:?}, labblock {}, dim {}x{}", labblock.block_type, labblock.id, labblock.images.len(), labblock.num_frames_distant)));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[0..labblock.unknowns.len() >> 1])));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[labblock.unknowns.len() >> 1..])));
 	    }
