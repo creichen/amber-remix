@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map, self, tile::Tileset, labgfx, pixmap::Pixmap};
+use crate::datafiles::{map, self, tile::Tileset, labgfx::{self, LabBlockType}, pixmap::Pixmap};
 use std::fmt::Write;
 
 fn draw_tile(tiles : &Tileset<Texture<'_>>,
@@ -227,16 +227,17 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
     let mut map_nr = 0x40; // Twinlake Graveyard, the starting map
 
-    let mut lab_palette_nr = 0;
     let mut lab_nr = 0;
+    let mut lab_img_nr = 0;
+    let mut lab_anim = false;
     let mut draw_npc_routes = true;
     let mut draw_npc_info = true;
     let mut draw_event_info = true;
     let mut draw_tile_nr = false;
 
     // WIP
-    //let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = data.labgfx.labdata.iter().map(|labdata| labblock_textures(&data, &creator, labdata)).collect();
-    let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = vec![labblock_textures(&data, &creator, &data.labgfx.labdata[0])];
+    let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = data.labgfx.labdata.iter().map(|labdata| labblock_textures(&data, &creator, labdata)).collect();
+    //let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = vec![labblock_textures(&data, &creator, &data.labgfx.labdata[0])];
 
 
     'running: loop {
@@ -251,7 +252,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
 
-	let labblock = data.labgfx.labblocks[lab_nr].with_palette(&data.palettes[lab_palette_nr]).as_textures(&creator);
+	// This will generally get the wrong palette, but it's enough for the meta-information (which is the only thing we use it for)
+	let labblock = data.labgfx.labblocks[lab_nr].with_palette(&data.palettes[0]).as_textures(&creator);
 
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
@@ -266,10 +268,12 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
                 Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
 		    match kc {
 			Keycode::F1           => {},
-			Keycode::F2           => { if lab_nr > 0 { lab_nr -= 1; break 'current_map; } },
-			Keycode::F3           => { if lab_nr < data.labgfx.labblocks.len() - 1 { lab_nr += 1; break 'current_map; } },
-			Keycode::F4           => { if lab_palette_nr > 0 { lab_palette_nr -= 1; break 'current_map; } },
-			Keycode::F5           => { if lab_palette_nr < data.palettes.len() - 1 { lab_palette_nr += 1; break 'current_map; } },
+			Keycode::F2           => { if lab_nr > 0 { lab_nr -= 1; lab_img_nr = 0; break 'current_map; } },
+			Keycode::F3           => { if lab_nr < labblocks.len() - 1 { lab_img_nr = 0; lab_nr += 1; break 'current_map; } },
+			Keycode::F4           => { if lab_img_nr > 0 { lab_img_nr -= 1; break 'current_map; } },
+			Keycode::F5           => { if lab_img_nr < labblocks[lab_nr].len() - 1 { lab_img_nr += 1; break 'current_map; } },
+			Keycode::F6           => { lab_anim = !lab_anim; },
+
 			Keycode::F7           => { draw_tile_nr = !draw_tile_nr; },
 			Keycode::F8           => { draw_event_info = !draw_event_info; },
 			Keycode::F9           => { draw_npc_info = !draw_npc_info; },
@@ -426,7 +430,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	    // labblock
 	    {
-		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, pal {lab_palette_nr}, fmt {:?}, dim {}x{}", labblock.block_type, labblock.images.len(), labblock.num_frames_distant)));
+		current_help.push((white, format!("LAB: block {lab_nr}={lab_nr:#x}, img {lab_img_nr}, fmt {:?}, dim {}x{}", labblock.block_type, labblock.images.len(), labblock.num_frames_distant)));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[0..labblock.unknowns.len() >> 1])));
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[labblock.unknowns.len() >> 1..])));
 	    }
@@ -442,43 +446,56 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	    ypos += 20;
 
+	    let base_ypos = ypos;
+	    let mut xpos = 1020;
 	    //for (row_nr, row) in labblock.images.iter().enumerate() {
-	    for (row_nr, row) in labblocks[0][lab_nr].images.iter().enumerate() {
-		let mut xpos = 1020;
-		let mut maxheight = 0;
-		//for (column_nr, _pixmap) in row.pixmaps.iter().enumerate() {
-		for (column_nr, column) in row.pixmaps.iter().enumerate() {
-		    //WIP: this is what we used to do
-		    //let column = &pixmap.pixmap;
-
-		    // WIP: current test:
-		    // let lba = &labblocks[0][lab_nr];
-		    // if column_nr >= lba.images.len() {
-		    // 	break;
-		    // }
-		    // let lbr = &lba.images[column_nr];
-		    // if row_nr >= lbr.pixmaps.len() {
-		    // 	break;
-		    // }
-		    // let column = &lbr.pixmaps[row_nr].pixmap;
-		    let column = &column.pixmap;
-
-		    // WIP continues "normally" below:
-		    let TextureQuery { width, height, .. } = column.query();
-		    canvas.set_draw_color(Color::RGBA(0xff, 0xff, 0, 0xff));
+	    for (column_nr, column) in labblocks[lab_nr][lab_img_nr].images.iter().enumerate() {
+		let mut maxwidth = 0;
+		let mut ypos = base_ypos;
+		if lab_anim {
+		    let num_frames = column.pixmaps.len();
+		    let mut frame;
+		    if labblocks[lab_nr][lab_img_nr].block_type == LabBlockType::Furniture {
+			frame = (i >> 3) % (num_frames * 2);
+			if frame >= num_frames {
+			    frame = num_frames * 2 - 1 - frame;
+			}
+		    } else {
+			frame = (i >> 3) % (num_frames);
+		    }
+		    let pixmap = &column.pixmaps[frame].pixmap;
+		    let TextureQuery { width, height, .. } = pixmap.query();
+		    canvas.set_draw_color(Color::RGBA(0x3f, 0x3f, 0, 0x3f));
 		    canvas.draw_rect(Rect::new(xpos as i32, ypos as i32, 2 + width * 2 as u32, 2 + height * 2 as u32)).unwrap();
-		    canvas.copy(&column,
+		    canvas.copy(&pixmap,
 				Rect::new(0, 0, width as u32, height as u32),
 				Rect::new(1 + xpos as i32, 1 + ypos as i32, width * 2 as u32, height * 2 as u32)).unwrap();
 
-		    font.draw_to(&mut canvas, format!("{column_nr},{row_nr}").as_str(),
+		    font.draw_to(&mut canvas, format!("{column_nr}").as_str(),
 				 xpos, (ypos + (height as usize) * 2 + 2) as isize, Color::RGBA(0xff, 0xff, 0, 0xff));
 
-		    xpos += (width * 2 + 4) as isize;
-		    maxheight = u32::max(maxheight, height * 2);
+		    maxwidth = u32::max(width, width * 2);
+		} else {
+		    for (row_nr, row) in column.pixmaps.iter().enumerate() {
+			let pixmap = &row.pixmap;
+
+			// WIP continues "normally" below:
+			let TextureQuery { width, height, .. } = pixmap.query();
+			canvas.set_draw_color(Color::RGBA(0xff, 0xff, 0, 0xff));
+			canvas.draw_rect(Rect::new(xpos as i32, ypos as i32, 2 + width * 2 as u32, 2 + height * 2 as u32)).unwrap();
+			canvas.copy(&pixmap,
+				    Rect::new(0, 0, width as u32, height as u32),
+				    Rect::new(1 + xpos as i32, 1 + ypos as i32, width * 2 as u32, height * 2 as u32)).unwrap();
+
+			font.draw_to(&mut canvas, format!("{column_nr},{row_nr}").as_str(),
+				     xpos, (ypos + (height as usize) * 2 + 2) as isize, Color::RGBA(0xff, 0xff, 0, 0xff));
+
+			ypos += (width * 2 + 24) as usize;
+			maxwidth = u32::max(width, width * 2);
+		    }
 		}
 
-		ypos += (maxheight + 24) as usize;
+		xpos += (maxwidth + 4) as isize;
 	    }
 
             canvas.present();

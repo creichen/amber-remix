@@ -112,6 +112,7 @@ impl<T> LabImage<T> {
 
 #[derive(Debug)]
 #[derive(Clone)]
+#[derive(PartialEq)]
 pub enum LabBlockType {
     // Determines the number of images and how to draw them
     Error,
