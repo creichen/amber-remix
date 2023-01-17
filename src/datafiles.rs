@@ -17,6 +17,7 @@ use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
 
 use self::music::Song;
+use self::pixmap::IndexedPixmap;
 use self::tile::Tileset;
 use self::map::Map;
 
@@ -26,6 +27,7 @@ mod string_fragment_table;
 mod map_string_table;
 mod decode;
 mod bytepattern;
+mod pictures;
 pub mod amber_string;
 pub mod palette;
 pub mod pixmap;
@@ -443,6 +445,7 @@ pub struct AmberstarFiles {
     pub songs : Vec<Song>,
     pub tiles : Vec<Tileset<Pixmap>>,
     pub maps : Vec<Map>,
+    pub bg_pictures : Vec<Vec<IndexedPixmap>>,
     pub labgfx : labgfx::LabInfo,
 }
 
@@ -534,6 +537,9 @@ impl AmberstarFiles {
 	let mut lab_data_f = load_relative(path, "LAB_DATA.AMB");
 	let labgfx = labgfx::LabInfo::load(&mut labblock_f, &mut lab_data_f);
 
+	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
+	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
+
 	let path : String = format!("{}", path);
 
 	return AmberstarFiles {
@@ -549,6 +555,7 @@ impl AmberstarFiles {
 	    songs,
 	    tiles,
 	    maps,
+	    bg_pictures,
 	    labgfx,
 	}
     }

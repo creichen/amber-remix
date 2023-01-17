@@ -53,7 +53,7 @@ pub fn new(src : &[u8], width : usize, height : usize, bitplanes : usize) -> Ind
     return result;
 }
 
-fn icon_header(src : &[u8]) -> (usize, usize, usize, usize) {
+pub fn icon_header(src : &[u8]) -> (usize, usize, usize, usize) {
     let width = 1 + decode::u16(src, 0) as usize;
     let height = 1 + decode::u16(src, 2) as usize;
     let bitplanes = decode::u16(src, 4) as usize;

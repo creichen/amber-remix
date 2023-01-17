@@ -8,7 +8,7 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{time::Duration, borrow::Borrow};
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
 use crate::datafiles::{map::{self, LabRef}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock}};
 use std::fmt::Write;
@@ -339,6 +339,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	let map = &data.maps[map_nr];
 	let lab_info = &data.labgfx.labdata[map.tileset];
+	//let lab_bg_image_nr;
+	let lab_bg_images : Vec<Texture<'_>>;
 
 	let width = map.width;
 	let height = map.height;
@@ -349,8 +351,12 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
 	    tileset_painter = Box::new(LabBlockPainter::new(&map.lab_info, &labblocks[tileset]));
+	    let lab_bg_image_nr = lab_info.magic_7[6] as usize - 1;
+	    // lab_bg_images = data.bg_pictures[lab_bg_image_nr].iter().map(|img| img.as_texture(&creator)).collect();
+	    lab_bg_images = vec![];
 	} else {
 	    tileset_painter = Box::new(TilesetPainter::new(&tile_textures[tileset]));
+	    lab_bg_images = vec![];
 	}
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
@@ -536,13 +542,26 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		// current_help.push((white, format!("LAB: ?| {:?}", &labblock.unknowns[labblock.unknowns.len() >> 1..])));
 	    }
 
-	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {}", map_nr, map_nr, map.name).as_str(),
+	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {} tileset={tileset}", map_nr, map_nr, map.name).as_str(),
 			 1680, 10, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
 	    let mut ypos = 20 + font_size;
 	    for (help_col, help_line) in &current_help {
 		ypos += font_size + 4;
 		font.draw_to(&mut canvas, help_line,
 			     1650, ypos as isize, *help_col);
+	    }
+
+	    {
+		let mut max_bg_height = 0;
+		let mut xpos = 1620;
+		for bg_pixmap in lab_bg_images.iter() {
+		    let TextureQuery { width, height, .. } = bg_pixmap.query();
+		    max_bg_height = usize::max(max_bg_height, (height * 2) as usize + 10);
+		    canvas.copy(&bg_pixmap,
+				Rect::new(0, 0, width as u32, height as u32),
+				Rect::new(1 + xpos as i32, 1 + ypos as i32, width * 2 as u32, height * 2 as u32)).unwrap();
+		    xpos += width * 2 + 4;
+		}
 	    }
 
 	    ypos += 20;
