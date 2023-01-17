@@ -265,7 +265,7 @@ impl<'a> Font<'a> {
 
 fn labblock_textures<'a, T>(data : &datafiles::AmberstarFiles, tc : &'a TextureCreator<T>,
 			    labdata : &labgfx::LabData) -> Vec<labgfx::LabBlock<Texture<'a>>> {
-    let palette = &data.palettes[labdata.magic_7[6] as usize - 1];
+    let palette = &data.palettes[labdata.palette_index];
     let labblocks = &data.labgfx.labblocks;
     // let pallettized : Vec<labgfx::LabBlock<Pixmap>> = labdata.labblocks.iter().map(|n| {pwarn!("flattening {}", *n); labblocks[*n].flatten().with_palette(palette)}).collect();
     let mut pallettized = vec![];
@@ -351,7 +351,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
 	    tileset_painter = Box::new(LabBlockPainter::new(&map.lab_info, &labblocks[tileset]));
-	    let lab_bg_image_nr = lab_info.magic_7[6] as usize - 1;
+	    // let lab_bg_image_nr = lab_info.palette_index;
 	    // lab_bg_images = data.bg_pictures[lab_bg_image_nr].iter().map(|img| img.as_texture(&creator)).collect();
 	    lab_bg_images = vec![];
 	} else {
@@ -517,8 +517,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 	    if draw_tile_nr {
 		if map.first_person {
-		    current_help.push((tileinfo_col, format!("LAB_INFO.AMB.{:04} magic1:{:x} magic7:{:x?} blocks={:x?}", map.tileset,
-							     lab_info.magic_byte, lab_info.magic_7, lab_info.labblocks)));
+		    current_help.push((tileinfo_col, format!("LAB_INFO.AMB.{:04} magic1:{:x} out:{} floor:{} ceil:{} pal:{} blocks={:x?}", map.tileset,
+							     lab_info.magic_byte, lab_info.outdoors, lab_info.bg_floor_index, lab_info.bg_ceiling_index, lab_info.palette_index, lab_info.labblocks)));
 		}
 	    }
 	    for (i, l) in map.lab_info.iter().enumerate() {

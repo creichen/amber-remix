@@ -347,7 +347,10 @@ impl LabBlock<Pixmap> {
 pub struct LabData {
     pub magic_byte : u8,
     pub labblocks :  Vec<usize>,
-    pub magic_7 : [u8;7],
+    pub outdoors : bool,
+    pub bg_floor_index : usize,
+    pub bg_ceiling_index : usize,
+    pub palette_index : usize,
 }
 
 pub struct LabInfo {
@@ -364,11 +367,21 @@ impl LabData {
 	let magic_7_slice = &data[3+num_labblock_refs..];
 
 	assert!(magic_7_slice.len() == 7);
+	assert!(magic_7_slice[0] == 0x00);
+	let outdoors = magic_7_slice[1] == 0x03;
+        assert!(magic_7_slice[2] == 0x02);
+	let bg_ceiling_index = magic_7_slice[3] as usize - 1;
+	let bg_floor_index = magic_7_slice[4] as usize - 1;
+        assert!(magic_7_slice[5] == 0x01);
+	let palette_index =  magic_7_slice[6] as usize - 1;
 
 	return LabData {
 	    magic_byte : data[1],
 	    labblocks : labblock_slice.iter().map(|i| *i as usize - 1).collect(),
-	    magic_7 : magic_7_slice.try_into().unwrap(),
+	    outdoors,
+	    bg_floor_index,
+	    bg_ceiling_index,
+	    palette_index,
 	}
     }
 }
