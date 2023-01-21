@@ -237,24 +237,14 @@ impl<'a> GfxExplorer<'a> {
 	    // file_index : 0,
 
 	    // --------------------------------------------------------------------------------
-	    filename : "LABBLOCK.AMB".to_string(),
-	    //offset: 0x33d70,
+	    filename : "COM_BACK.AMB".to_string(),
 	    offset:   0x0,
 	    pad : 0,
-	    width : 16,
-	    height : 16,
+	    width : 176, // try 16, 64 and 128
+	    height : 112,
 	    palette : 0,
-	    bitplanes : 4,
+	    bitplanes : 4, // usually 4
 	    file_index : 0,
-
-
-	    // filename : "ICON_DAT.AMB".to_string(),
-	    // offset: 0x814,
-	    // pad : 6,
-	    // width : 16,
-	    // height : 16,
-	    // palette : 0,
-	    // bitplanes : 4,
 
 	    transparency : false,
 	    print_gfxinfo : true,
@@ -265,7 +255,7 @@ impl<'a> GfxExplorer<'a> {
     pub fn mod_width(&mut self, delta : isize) { self.width = isize::max(0, self.width as isize + delta) as usize;  self.info(); }
     pub fn mod_height(&mut self, delta : isize) { self.height = isize::max(0, self.height as isize + delta) as usize;  self.info(); }
     pub fn mod_pad(&mut self, delta : isize) { self.pad = isize::max(0, self.pad as isize + delta) as usize;  self.info(); }
-    pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.palettes.len() - 1) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
+    pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.palettes.len() + 2) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
     pub fn mod_bitplanes(&mut self, delta : isize) { self.bitplanes = isize::min(5, isize::max(2, self.bitplanes as isize + delta)) as usize;  self.info(); }
     pub fn mod_file_index(&mut self, delta : isize) { self.file_index = isize::max(0, self.file_index as isize + delta) as usize;  self.info(); }
     pub fn toggle_transparency(&mut self) { self.transparency = !self.transparency; self.info(); println!("transparency = {}", self.transparency); }
@@ -277,6 +267,11 @@ impl<'a> GfxExplorer<'a> {
 
     #[allow(unused)]
     fn get_palette(&self) -> Palette {
+	if self.palette == self.data.palettes.len() {
+	    return palette::TEST_PALETTE.clone();
+	} else if self.palette > self.data.palettes.len() {
+	    return self.data.tiles[self.palette - self.data.palettes.len() - 1].palette.clone();
+	}
 	return self.data.palettes[self.palette].clone();
     }
 

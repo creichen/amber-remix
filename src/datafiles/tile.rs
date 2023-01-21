@@ -47,35 +47,35 @@ impl TileFlags {
     const ANIM_BACK_AND_FORTH	: u32 = 0x00000001; // Loop from first to last frame and back again; Otherwise: loop over all frames
     const VIEW_BLOCK		: u32 = 0x00000002; // Cannot see past this tile
     const UNKNOWN_02		: u32 = 0x00000004;
-    const UNKNOWN_03		: u32 = 0x00000008;
+    const DRAW_SEAT		: u32 = 0x00000008; // If player is here, next icon represents player sitting/sleeping here
     const ANIM_RANDOM_START	: u32 = 0x00000010; // Animation starts at random point for each tile, otherwise same for all tiles of this number
     const ILLUSION		: u32 = 0x00000020;
-    const UNKNOWN_06		: u32 = 0x00000040;
-    const PASSABLE_NEVER	: u32 = 0x00000080; // Not passable by any means of transportation
-    const UNKNOWN_08		: u32 = 0x00000100;
-    const UNKNOWN_09		: u32 = 0x00000200;
-    const UNKNOWN_0A		: u32 = 0x00000400;
-    const UNKNOWN_0B		: u32 = 0x00000800;
-    const UNKNOWN_0C		: u32 = 0x00001000;
-    const UNKNOWN_0D		: u32 = 0x00002000;
-    const UNKNOWN_0E		: u32 = 0x00004000;
-    const UNKNOWN_0F		: u32 = 0x00008000;
-    const UNKNOWN_10		: u32 = 0x00010000;
-    const UNKNOWN_11		: u32 = 0x00020000;
-    const UNKNOWN_12		: u32 = 0x00040000;
-    const UNKNOWN_13		: u32 = 0x00080000;
-    const UNKNOWN_14		: u32 = 0x00100000;
-    const UNKNOWN_15		: u32 = 0x00200000;
-    const UNKNOWN_16		: u32 = 0x00400000;
-    const UNKNOWN_17		: u32 = 0x00800000;
-    const UNKNOWN_18		: u32 = 0x01000000;
-    const UNKNOWN_19		: u32 = 0x02000000;
-    const UNKNOWN_1A		: u32 = 0x04000000;
-    const UNKNOWN_1B		: u32 = 0x08000000;
-    const UNKNOWN_1C		: u32 = 0x10000000;
-    const UNKNOWN_1D		: u32 = 0x20000000;
-    const UNKNOWN_1E		: u32 = 0x40000000;
-    const UNKNOWN_1F		: u32 = 0x80000000;
+    const DRAW_FOREGROUND	: u32 = 0x00000040; // Draw over player
+    const PASS_NEVER		: u32 = 0x00000080; // Not passable by any means of transportation
+    const PASS_FOOT		: u32 = 0x00000100; // Passable while on foot
+    const PASS_HORSE		: u32 = 0x00000200;
+    const PASS_RAFT		: u32 = 0x00000400;
+    const PASS_BOAT		: u32 = 0x00000800;
+    const PASS_DISK		: u32 = 0x00001000;
+    const PASS_EAGLES		: u32 = 0x00002000;
+    const PASS_RED_WEDGE	: u32 = 0x00004000;
+    const DRAW_NOPLAYER		: u32 = 0x00008000; // Hide player when here
+    const COMBAT_BG_0		: u32 = 0x00010000; // First combat background
+    // const UNKNOWN_11		: u32 = 0x00020000;
+    // const UNKNOWN_12		: u32 = 0x00040000;
+    // const UNKNOWN_13		: u32 = 0x00080000;
+    // const UNKNOWN_14		: u32 = 0x00100000;
+    // const UNKNOWN_15		: u32 = 0x00200000;
+    // const UNKNOWN_16		: u32 = 0x00400000;
+    // const UNKNOWN_17		: u32 = 0x00800000;
+    // const UNKNOWN_18		: u32 = 0x01000000;
+    // const UNKNOWN_19		: u32 = 0x02000000;
+    // const UNKNOWN_1A		: u32 = 0x04000000;
+    // const UNKNOWN_1B		: u32 = 0x08000000;
+    // const UNKNOWN_1C		: u32 = 0x10000000;
+    // const UNKNOWN_1D		: u32 = 0x20000000;
+    // const UNKNOWN_1E		: u32 = 0x40000000;
+    const POISON		: u32 = 0x80000000;
 }
 
 
@@ -84,12 +84,13 @@ impl TileFlags {
 
 pub struct Tileset<T> {
     pub tile_icons : Vec<TileIcon<T>>,
+    pub palette : palette::Palette,
     pub player_icon_index : usize,
 }
 
 pub struct TileIcon<T> {
     pub frames : Vec<T>,
-    pub magic_flags : u32,
+    pub flags : TileFlags,
     pub map_color : Color,
 }
 
@@ -127,7 +128,7 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 	    let num_frames = base[i] as usize;
 	    let anim_start = decode::u16(&anim_start_base, i * 2) as usize;
 	    let anim_end = anim_start + num_frames;
-	    let magic_flags = decode::u32(&magic_flags1_base, i * 4);
+	    let flags = TileFlags::new(&magic_flags1_base[i * 4..(i+1) * 4]);
 	    let map_color_index = map_color_index_base[i];
 
 	    let mut frames = vec![];
@@ -140,11 +141,12 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 	    }
 	    tile_icons.push(TileIcon {
 		frames,
-		magic_flags,
+		flags,
 		map_color : palette.get(map_color_index as usize),
 	    });
 	}
 	return Tileset {
+	    palette,
 	    tile_icons,
 	    player_icon_index,
 	}
@@ -168,12 +170,13 @@ impl Tileset<Pixmap> {
 	    }
 	    icons.push(TileIcon {
 		frames,
-		magic_flags : t.magic_flags,
+		flags : t.flags,
 		map_color : t.map_color,
 	    });
 	}
 	return Tileset {
 	    tile_icons : icons,
+	    palette : self.palette.clone(),
 	    player_icon_index : self.player_icon_index,
 	}
     }

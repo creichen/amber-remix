@@ -472,7 +472,7 @@ fn load_palettes(dfile : &mut DataFile) -> Vec<Palette> {
     let mut result = vec![];
     for i in 0..dfile.num_entries {
 	let dat = dfile.decode(i);
-	let pal = palette::new_with_header(&dat[..], 42);
+	let pal = palette::new_with_header(&dat[..], 0x1f);
 	result.push(pal.with_transparency(0));
     }
     return result;

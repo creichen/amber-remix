@@ -31,20 +31,41 @@ lazy_static! {
 	    Color{ r : 0xff, g: 0xff, b: 0xff, a : 0xff }, // f white
 	],
     };
+
+    pub static ref COMBAT_PALETTE : Palette = Palette {
+	colors : vec![
+	    Color{ r : 0xff, g: 0xff, b: 0xff, a : 0xff },
+	    Color{ r : 0x00, g: 0x00, b: 0x00, a : 0xff },
+	    Color{ r : 0x82, g: 0x82, b: 0x82, a : 0xff },
+	    Color{ r : 0x61, g: 0x61, b: 0x41, a : 0xff },
+	    Color{ r : 0x20, g: 0x41, b: 0x41, a : 0xff }, // 204141
+	    Color{ r : 0xa2, g: 0xa2, b: 0x41, a : 0xff }, // a2a241
+	    Color{ r : 0xa2, g: 0x61, b: 0x20, a : 0xff }, // a26120
+	    Color{ r : 0x82, g: 0x41, b: 0x00, a : 0xff }, // 824100
+	    Color{ r : 0x61, g: 0x20, b: 0x00, a : 0xff }, // 612000
+	    Color{ r : 0x41, g: 0xa2, b: 0x00, a : 0xff }, // 41a200
+	    Color{ r : 0x00, g: 0x61, b: 0x20, a : 0xff }, // 006120
+	    Color{ r : 0x41, g: 0x00, b: 0x00, a : 0xff }, // 410000
+	    Color{ r : 0x24, g: 0x6d, b: 0x92, a : 0xff }, // 246d92
+	    Color{ r : 0x00, g: 0x24, b: 0x49, a : 0xff }, // 002449
+	    Color{ r : 0x92, g: 0xb6, b: 0xb6, a : 0xff }, // 92b6b6
+	    Color{ r : 0xc3, g: 0xc3, b: 0xc3, a : 0xff }, // c3c3c3
+	],
+    };
 }
 
 // packed 0RGB format
 pub fn new(src : &[u8], num_colors : usize) -> Palette {
     let mut p = Palette { colors : vec![] };
     for i in 0..num_colors {
-	let r = src[i * 2] & 0xf;
-	let gb = src[i * 2 + 1];
+	let r = src[i * 2] & 0x7;
+	let gb = src[i * 2 + 1] & 0x77;
 	let g = gb >> 4;
 	let b = gb & 0xf;
 	let c = Color {
-	    r : r | (r << 4),
-	    g : g | (g << 4),
-	    b : b | (b << 4),
+	    r : r * 0x1f,
+	    g : g * 0x1f,
+	    b : b * 0x1f,
 	    a : 0xff,
 	};
 	p.colors.push(c);
@@ -66,7 +87,7 @@ pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
 	    r : r * factor, // max value 6 -> 252,
 	    g : g * factor,
 	    b : b * factor,
-	    a : a * factor
+	    a : 0xff,
 	};
 	p.colors.push(c);
     }

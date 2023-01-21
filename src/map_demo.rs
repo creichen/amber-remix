@@ -331,6 +331,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     let tileinfo_col = Color::RGBA(0, 0xaf, 0xff, 0xff);
     let help : Vec<(Color, String)> = vec![
 	"=== key bindings ===",
+	"WASD : move over 3D maps | QE: rotate view",
 	"[F7] toggle tile nr printing",
 	"[F8] toggle event info",
 	"[F9] toggle NPC info",
@@ -345,8 +346,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     let mut lab_img_nr = 0;
     let mut lab_anim = false;
     let mut draw_npc_routes = true;
-    let mut draw_npc_info = true;
-    let mut draw_event_info = true;
+    let mut draw_npc_info = false;
+    let mut draw_event_info = false;
     let mut draw_tile_nr = false;
 
     let mut x = 10;
@@ -454,8 +455,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		let ys = 40;
 		for xit in 0..8 {
 		    for yit in 0..ys {
-			let x = xit * 200;
-			let y = yit * 32;
+			let xpos = xit * 200;
+			let ypos = yit * 32;
 			let k = xit * ys + yit;
 			if k >= tiles.tile_icons.len() {
 			    break;
@@ -463,11 +464,12 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 
 			tileset_painter.draw(&mut canvas,
 					     k + 1,
-					     x as isize, y as isize, i >> 4);
+					     xpos as isize, ypos as isize, i >> 4);
+			let mark = if tiles.tile_icons[k].flags.flags & ((1 as u32) << ((x - 1) as usize)) != 0 {0xff} else {0x20};
 			font.draw_to(&mut canvas, format!("{}{:08x}",
 							  if k == tiles.player_icon_index { "@" } else { "" },
-						      tiles.tile_icons[k].magic_flags).as_str(),
-				 x as isize + 34, y as isize, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
+						      tiles.tile_icons[k].flags.flags).as_str(),
+				 xpos as isize + 34, ypos as isize, Color::RGBA(mark, 0xaf, 0xaf, 0xff));
 
 		}}
 		canvas.present();
@@ -718,12 +720,12 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 			    let num_pixmaps = perspective.pixmaps.len();
 			    let mut index;
 			    if labinfo.flags.anim_back_and_forth() {
-				index = (i >> 2) % (num_pixmaps * 2 - 1);
+				index = (i >> 3) % (num_pixmaps * 2 - 1);
 				if index >= num_pixmaps {
 				    index = num_pixmaps * 2 - 1 - index;
 				}
 			    } else {
-				index = (i >> 2) % num_pixmaps;
+				index = (i >> 3) % num_pixmaps;
 			    };
 			    let LabPixmap { xoffset, yoffset, pixmap } = &perspective.pixmaps[index];
 			    let TextureQuery { width, height, .. } = pixmap.query();
@@ -749,7 +751,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    }
 
 	    let base_ypos = ypos;
-	    let mut xpos = 1020;
+	    let mut xpos = 1620;
 	    //for (row_nr, row) in labblock.images.iter().enumerate() {
 	    for (column_nr, column) in labblocks[lab_nr][lab_img_nr].perspectives.iter().enumerate() {
 		let mut maxwidth = 0;
