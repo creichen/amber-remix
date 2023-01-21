@@ -14,7 +14,7 @@ The current run modes are supported:
 - `cargo run strings`: Dump out all text strings
 - `cargo run graphics`: Shows some graphics
 - `cargo run song $X`: Tries to play in-game song `${X}` (will likely crash sooner or later).
-- `cargo run maps`: Shows maps
+- `cargo run maps`: Shows maps, allows walking through first-person dungeons
 
 ## Why?
 I wanted a zero-stakes project to learn the basics of Rust, and this
@@ -49,7 +49,7 @@ Only tested on a late English version of the game.
 | AMBERDEV.UDO | only very partially                                                                                              |
 | Amberload    |                                                                                                                  |
 | AUTOMAP.AMB  |                                                                                                                  |
-| BACKGRND.AMB | only partially, palettes missing                                                                                 |
+| BACKGRND.AMB | yes                                                                                                              |
 | CHARDATA.AMB | only very partially: : contians NPC name and portrait (4 bp, 32x34) at 0x6b0, likely followed by compressed text |
 | CHESTDAT.AMB |                                                                                                                  |
 | CODETXT.AMB  | yes                                                                                                              |
@@ -57,17 +57,17 @@ Only tested on a late English version of the game.
 | COM_BACK.AMB | Missing palettes                                                                                                 |
 | EXTRO.UDO    |                                                                                                                  |
 | F_T_ANIM.ICN | yes, but not handled by program yet: 16x16, 4 bpp graphics for magic                                             |
-| ICON_DAT.AMB | partially                                                                                                        |
+| ICON_DAT.AMB | mostly                                                                                                        |
 | INTRO_P.UDO  |                                                                                                                  |
 | INTRO.UDO    |                                                                                                                  |
-| LABBLOCK.AMB |                                                                                                                  |
-| LAB_DATA.AMB |                                                                                                                  |
-| MAP_DATA.AMB | partially                                                                                                        |
+| LABBLOCK.AMB | yes                                                                                                                 |
+| LAB_DATA.AMB | yes                                                                                                                 |
+| MAP_DATA.AMB | mostly                                                                                                        |
 | MAPTEXT.AMB  | yes                                                                                                              |
 | MON_DATA.AMB |                                                                                                                  |
 | MON_GFX.AMB  |                                                                                                                  |
 | PARTYDAT.SAV |                                                                                                                  |
-| PICS80.AMB   | mostly, missing palette bindings                                                                                 |
+| PICS80.AMB   | yes                                                                                 |
 | PUZZLE.ICN   |                                                                                                                  |
 | PUZZLE.TXT   |                                                                                                                  |
 | SAMPLEDA.IMG | yes                                                                                                              |
