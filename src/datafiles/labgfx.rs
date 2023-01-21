@@ -345,7 +345,7 @@ impl LabBlock<Pixmap> {
 }
 
 pub struct LabData {
-    pub magic_byte : u8,
+    pub num_images : usize, // total # of images in all LabBlocks combined
     pub labblocks :  Vec<usize>,
     pub outdoors : bool,
     pub bg_floor_index : usize,
@@ -376,7 +376,7 @@ impl LabData {
 	let palette_index =  magic_7_slice[6] as usize - 1;
 
 	return LabData {
-	    magic_byte : data[1],
+	    num_images : data[1] as usize,
 	    labblocks : labblock_slice.iter().map(|i| *i as usize - 1).collect(),
 	    outdoors,
 	    bg_floor_index,

@@ -9,6 +9,8 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 use crate::datafiles::{amber_string, decode, bytepattern::BPInfer};
 use std::{fmt::Write, num::NonZeroU8};
 
+use super::tile::TileFlags;
+
 // ----------------------------------------
 struct MapLayer<T> {
     width : usize,
@@ -28,6 +30,53 @@ impl<T : Clone + Copy> MapLayer<T> {
 	assert!(x < self.width);
 	assert!(y < self.height);
 	return self.tiles[self.width * y + x];
+    }
+}
+
+// ----------------------------------------
+
+#[derive(Clone)]
+#[derive(Copy)]
+pub enum MapDir {
+    NORTH,
+    EAST,
+    SOUTH,
+    WEST
+}
+
+impl MapDir {
+    pub fn rotate_right(self) -> MapDir {
+	match self {
+	    MapDir::NORTH	=> MapDir::EAST,
+	    MapDir::EAST	=> MapDir::SOUTH,
+	    MapDir::SOUTH	=> MapDir::WEST,
+	    MapDir::WEST	=> MapDir::NORTH,
+	}
+    }
+
+    pub fn rotate_left(self) -> MapDir {
+	match self {
+	    MapDir::NORTH	=> MapDir::WEST,
+	    MapDir::EAST	=> MapDir::NORTH,
+	    MapDir::SOUTH	=> MapDir::EAST,
+	    MapDir::WEST	=> MapDir::SOUTH,
+	}
+    }
+
+    pub fn xvec(self) -> isize {
+	match self {
+	    MapDir::EAST	=> 1,
+	    MapDir::WEST	=> -1,
+	    _			=> 0,
+	}
+    }
+
+    pub fn yvec(self) -> isize {
+	match self {
+	    MapDir::SOUTH	=> 1,
+	    MapDir::NORTH	=> -1,
+	    _			=> 0,
+	}
     }
 }
 
@@ -292,9 +341,12 @@ impl Event {
 // 3D Labblock references
 
 #[derive(Clone)]
+#[derive(Copy)]
 pub struct LabRef {
-    pub head : [u8; 4], // ??? meaning unclear
-    pub rest : [u8; 3], // ??? meaning unclear
+    pub flags : TileFlags,
+    pub fg_image : usize,
+    pub bg_image : usize,
+    pub magic : u8,
 }
 
 // ----------------------------------------
@@ -333,6 +385,10 @@ impl MapNPC {
     const FLAG_CHAT_TEXTMESSAGE	: u32 = 0x00001000; // only show text popup.  If not set, trigger full NPC chat
     const FLAG_STATIONARY	: u32 = 0x00000200;
     const FLAG_CHASE_AND_ATTACK	: u32 = 0x00000100;
+
+    pub fn lab_ref(&self, map : &Map) -> LabRef {
+	return map.lab_info[self.sprite - 1];
+    }
 
     pub fn hostile(&self) -> bool {
 	return 0 != self.flags & MapNPC::FLAG_CHASE_AND_ATTACK;
@@ -464,6 +520,33 @@ impl Map {
 	return tm.get(x, y).map(|x| x.get() as usize);
     }
 
+
+
+    // Constructs tuples of entities to draw
+    // (labref, distance, -1 / 0 / 1)
+    pub fn lab_view(&self, x : isize, y : isize, dir : MapDir) -> Vec<(LabRef, usize, isize)> {
+	let mut results = vec![];
+	let right_dir = dir.rotate_right();
+
+	for dist in [3, 2, 1, 0] {
+	    for leftright in [-1, 1, 0] {
+		let rx = x + (dir.xvec() * dist) + (right_dir.xvec() * leftright);
+		let ry = y + (dir.yvec() * dist) + (right_dir.yvec() * leftright);
+		if rx >= 0 && ry >= 0 {
+		    match self.tile_at(0, rx as usize, ry as usize) {
+			Some(t) => {
+			    if t > 0 && t <= self.lab_info.len() {
+				results.push((self.lab_info[t - 1], dist as usize, leftright));
+			    }
+			},
+			None => {},
+		    }
+		}
+	    }
+	}
+	return results;
+    }
+
     pub fn hotspot_at(&self, x : usize, y : usize) -> Option<usize> {
 	let tm = &self.hotspots;
 	if x >= tm.width || y >= tm.height {
@@ -581,25 +664,27 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	    let labblock_3_pos = num_labblock_entries * 5 + labblock_index;
 	    let labblock_4_pos = num_labblock_entries * 6 + labblock_index;
 
-	    let labblock_head : [u8; 4] = labblock_section[labblock_head_pos..4+labblock_head_pos].try_into().unwrap();
-	    let labblock_2 = labblock_section[labblock_2_pos];
-	    let labblock_3 = labblock_section[labblock_3_pos];
-	    let labblock_4 = labblock_section[labblock_4_pos];
+	    let labblock_flags = TileFlags::new(&labblock_section[labblock_head_pos..4+labblock_head_pos]);
+	    let fg_image = labblock_section[labblock_2_pos] as usize;
+	    let bg_image = labblock_section[labblock_3_pos] as usize;
+	    let magic = labblock_section[labblock_4_pos];
 	    let labinfo = LabRef {
-		head : labblock_head,
-		rest : [labblock_2, labblock_3, labblock_4],
+		flags : labblock_flags,
+		fg_image,
+		bg_image,
+		magic,
 	    };
-	    unsafe {
-		for i in 0..4 {
-		    debug_stats().labinfo_bytes[i].observe(labblock_head[i]);
-		}
-		debug_stats().labinfo_bytes[4].observe(labblock_2);
-		debug_stats().labinfo_bytes[5].observe(labblock_3);
-		debug_stats().labinfo_bytes[6].observe(labblock_4);
-	    }
+	    // unsafe {
+	    // 	for i in 0..4 {
+	    // 	    debug_stats().labinfo_bytes[i].observe(labblock_head[i]);
+	    // 	}
+	    // 	debug_stats().labinfo_bytes[4].observe(labblock_2);
+	    // 	debug_stats().labinfo_bytes[5].observe(labblock_3);
+	    // 	debug_stats().labinfo_bytes[6].observe(labblock_4);
+	    // }
 	    lab_info.push(labinfo);
-	    info!("\tlabblock.{labblock_index} = {:08x} {labblock_2:02x} {labblock_3:02x} {labblock_4:02x}",
-		  decode::u32(&labblock_head, 0));
+	    info!("\tlabblock.{labblock_index} = {:08x} {fg_image:02x} {bg_image:02x} {magic:02x}",
+		  labblock_flags.flags);
 	};
 	// map layers start after the lab block section, if present
 	info!("\tlabblock_start     = {labblock_start:#x} =\t{labblock_start}");

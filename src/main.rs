@@ -3,7 +3,6 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-
 #[macro_use(lazy_static)]
 extern crate lazy_static;
 
