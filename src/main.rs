@@ -10,11 +10,11 @@ use std::{time::Duration, io, env, fs, path::Path};
 
 use audio::{Mixer, AQOp, SampleRange};
 use datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
-use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode}};
+use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
 
 use crate::{audio::amber, datafiles::pixmap};
 
-mod datafiles;
+pub mod datafiles;
 mod audio;
 mod map_demo;
 mod debug_audio;
@@ -255,7 +255,7 @@ impl<'a> GfxExplorer<'a> {
     pub fn mod_width(&mut self, delta : isize) { self.width = isize::max(0, self.width as isize + delta) as usize;  self.info(); }
     pub fn mod_height(&mut self, delta : isize) { self.height = isize::max(0, self.height as isize + delta) as usize;  self.info(); }
     pub fn mod_pad(&mut self, delta : isize) { self.pad = isize::max(0, self.pad as isize + delta) as usize;  self.info(); }
-    pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.palettes.len() + 2) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
+    pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.amberdev_palettes.len() + 2) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
     pub fn mod_bitplanes(&mut self, delta : isize) { self.bitplanes = isize::min(5, isize::max(2, self.bitplanes as isize + delta)) as usize;  self.info(); }
     pub fn mod_file_index(&mut self, delta : isize) { self.file_index = isize::max(0, self.file_index as isize + delta) as usize;  self.info(); }
     pub fn toggle_transparency(&mut self) { self.transparency = !self.transparency; self.info(); println!("transparency = {}", self.transparency); }
@@ -267,12 +267,14 @@ impl<'a> GfxExplorer<'a> {
 
     #[allow(unused)]
     fn get_palette(&self) -> Palette {
-	if self.palette == self.data.palettes.len() {
+	let palettes = &self.data.amberdev_palettes;
+
+	if self.palette == palettes.len() {
 	    return palette::TEST_PALETTE.clone();
-	} else if self.palette > self.data.palettes.len() {
-	    return self.data.tiles[self.palette - self.data.palettes.len() - 1].palette.clone();
+	} else if self.palette > palettes.len() {
+	    return self.data.tiles[self.palette - palettes.len() - 1].palette.clone();
 	}
-	return self.data.palettes[self.palette].clone();
+	return palettes[self.palette].clone();
     }
 
     fn info(&mut self) {
@@ -384,7 +386,7 @@ fn draw_sampledata<'a>(full_data : &'a [i8], canvas : &mut Canvas<sdl2::video::W
 	x += 1;
     }
 
-    canvas.set_draw_color(Color::RGB(255, 0, 128));
+    canvas.set_draw_color(Color::RGBA(255, 0, 128, 255));
     canvas.draw_line(sdl2::rect::Point::new(startx -3, ybase),
 		     sdl2::rect::Point::new(startx -3, ybase - 25)).unwrap();
     canvas.draw_line(sdl2::rect::Point::new(startx + (x / xfactor) +3, ybase),
@@ -401,6 +403,7 @@ fn show_images(data : &datafiles::AmberstarFiles) {
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
+    let creator = canvas.texture_creator();
 
     let mut audiocore = audio::init(&sdl_context);
     let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
@@ -416,14 +419,14 @@ fn show_images(data : &datafiles::AmberstarFiles) {
     let mut gfxexplore = GfxExplorer::new(data);
     let mut focus_img : usize = 0;
 
-    canvas.set_draw_color(Color::RGB(0, 255, 255));
+    canvas.set_draw_color(Color::RGBA(0, 255, 255, 255));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     let mut i = 0;
     'running: loop {
         i = (i + 1) & 0x3f;
-        canvas.set_draw_color(Color::RGB(0, 0, 32 + i));
+        canvas.set_draw_color(Color::RGBA(0, 0, 32 + i, 0xff));
 	//canvas.set_draw_color(Color::RGB(i, 64, 128 - (i>>1)));
         canvas.clear();
 
@@ -432,6 +435,27 @@ fn show_images(data : &datafiles::AmberstarFiles) {
 	    let creator = canvas.texture_creator();
 	    let texture = img.as_texture(&creator);
 	    canvas.copy(&texture, None, Some(Rect::new(j as i32 * (img.width as i32 + 8), 0, img.width as u32, img.height as u32))).unwrap();
+	}
+
+	// for (index, j) in [5, 15, 24, 25].iter().enumerate() {
+	//     let img = &data.pics80[*j];
+	//     let creator = canvas.texture_creator();
+	//     let texture = img.as_texture(&creator);
+	//     canvas.copy(&texture, None, Some(Rect::new(index as i32 * (img.width as i32 + 8), 0, img.width as u32, img.height as u32))).unwrap();
+	// }
+
+	for j in 0..data.monster_gfx.len() {
+	    let imgseq = &data.monster_gfx[j];
+	    let pal = gfxexplore.get_palette().with_transparency(0);
+	    for (y, mgfx) in imgseq.iter().enumerate() {
+		let img = mgfx.with_palette(&pal);
+		let mut texture = img.as_texture(&creator);
+		texture.set_blend_mode(BlendMode::Blend);
+		let TextureQuery { width, height, .. } = texture.query();
+		canvas.copy(&texture,
+			    Rect::new(0, 0, width, height),
+			    Some(Rect::new(j as i32 * 60 + 1500, y as i32 * 60, img.width as u32, img.height as u32))).unwrap();
+	    }
 	}
 
 	{

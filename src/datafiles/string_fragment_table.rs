@@ -33,7 +33,19 @@ impl StringFragmentTable {
 	return result;
     }
 
-    pub fn get(&self, index : u16) -> &str {
+    pub fn len(&self) -> usize {
+	return self.fragments.len();
+    }
+
+    pub fn get(&self, index : u16) -> String {
+	if index as usize >= self.fragments.len() {
+	    println!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
+	    return "<?-?>".to_string();
+	}
+	return self.fragments[index as usize].clone();
+    }
+
+    pub fn get_str(&self, index : u16) -> &str {
 	if index as usize >= self.fragments.len() {
 	    println!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
 	    return "<?-?>";

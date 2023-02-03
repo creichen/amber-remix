@@ -284,7 +284,7 @@ impl<'a> Font<'a> {
 
 fn labblock_textures<'a, T>(data : &datafiles::AmberstarFiles, tc : &'a TextureCreator<T>,
 			    labdata : &labgfx::LabData) -> Vec<labgfx::LabBlock<Texture<'a>>> {
-    let palette = &data.palettes[labdata.palette_index];
+    let palette = &data.lab_palettes[labdata.palette_index];
     let labblocks = &data.labgfx.labblocks;
     // let pallettized : Vec<labgfx::LabBlock<Pixmap>> = labdata.labblocks.iter().map(|n| {pwarn!("flattening {}", *n); labblocks[*n].flatten().with_palette(palette)}).collect();
     let mut pallettized = vec![];
@@ -375,7 +375,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
 	    tileset_painter = Box::new(LabBlockPainter::new(&map.lab_info, &labblocks[tileset]));
-	    let palette = &data.palettes[lab_info.palette_index];
+	    let palette = &data.lab_palettes[lab_info.palette_index];
 	    //let palette = &palette::TEST_PALETTE;
 	    let lab_floors = &data.bg_pictures[lab_info.bg_floor_index];
 	    let lab_ceilings = &data.bg_pictures[lab_info.bg_ceiling_index];

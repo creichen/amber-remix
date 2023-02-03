@@ -3,6 +3,7 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+use crate::datafiles::chardata::CharData;
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
@@ -36,6 +37,8 @@ pub mod sampledata;
 pub mod tile;
 pub mod map;
 pub mod labgfx;
+mod chardata;
+mod item;
 
 #[derive(Debug)]
 pub enum FileHeaderType {
@@ -310,7 +313,9 @@ pub struct DataFile {
 
 impl DataFile {
     pub fn load(path : &Path) -> DataFile {
-	let mut f = File::open(path).unwrap();
+	let mut f = File::open(path).unwrap_or_else(|err|
+						    panic!("Could not open {path:?}: {err}")
+	);
 	let meta = f.metadata().unwrap();
 	let mut buffer = vec![0; meta.len() as usize];
 	f.read(&mut buffer).unwrap();
@@ -440,13 +445,16 @@ pub struct AmberstarFiles {
     pub code_text : Vec<map_string_table::MapStringTable>,
     pub pics80 : Vec<Pixmap>,
     pub pic_intro : Pixmap,
-    pub palettes : Vec<Palette>,
+    pub lab_palettes : Vec<Palette>,
+    pub amberdev_palettes : Vec<Palette>,
     pub sample_data : sampledata::SampleData,
     pub songs : Vec<Song>,
     pub tiles : Vec<Tileset<Pixmap>>,
     pub maps : Vec<Map>,
     pub bg_pictures : Vec<Vec<IndexedPixmap>>,
+    pub monster_gfx : Vec<Vec<IndexedPixmap>>,
     pub labgfx : labgfx::LabInfo,
+    pub chardata : Vec<CharData>,
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -512,11 +520,11 @@ impl AmberstarFiles {
 	}
 
 	let mut pall_f = load_relative(path, "COL_PALL.AMB");
-	let palettes = load_palettes(&mut pall_f);
+	let lab_palettes = load_palettes(&mut pall_f);
 
 	let mut intro_f = load_relative(path, "INTRO_P.UDO");
 	let pic_intro_raw = pixmap::new(&intro_f.decode(0)[82964..], 320, 200, 4);
-	let pic_intro = pic_intro_raw.with_palette(&palettes[0]);
+	let pic_intro = pic_intro_raw.with_palette(&lab_palettes[0]);
 
 	let mut songseeker = music::seeker(&amberdev, 0x4cd00);
 	let mut songs = vec![];
@@ -540,6 +548,14 @@ impl AmberstarFiles {
 	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
 	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
 
+	let mut mon_gfx_f = load_relative(path, "MON_GFX.AMB");
+	let monster_gfx = pictures::load_monster_gfx(&mut mon_gfx_f);
+
+	let mut chardata_f = load_relative(path, "CHARDATA.AMB");
+	let chardata : Vec<CharData> = (0..(chardata_f.num_entries)).map(|i| CharData::new(&string_fragments, i, &chardata_f.decode(i))).collect();
+
+	let amberdev_palettes = Palette::amberdev_palettes(&amberdev);
+
 	let path : String = format!("{}", path);
 
 	return AmberstarFiles {
@@ -550,13 +566,16 @@ impl AmberstarFiles {
 	    code_text,
 	    pics80,
 	    pic_intro,
-	    palettes,
+	    lab_palettes,
+	    amberdev_palettes,
 	    sample_data,
 	    songs,
 	    tiles,
 	    maps,
 	    bg_pictures,
+	    monster_gfx,
 	    labgfx,
+	    chardata,
 	}
     }
 }
