@@ -4,13 +4,13 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
-use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+use amber_remix::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use std::{time::Duration, borrow::Borrow};
+use std::{time::Duration, borrow::Borrow, io};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
 
-use crate::datafiles::{map::{self, LabRef, MapDir}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
+use amber_remix::datafiles::{map::{self, LabRef, MapDir}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
 use std::fmt::Write;
 
 struct Font<'a> {
@@ -289,7 +289,7 @@ fn labblock_textures<'a, T>(data : &datafiles::AmberstarFiles, tc : &'a TextureC
     // let pallettized : Vec<labgfx::LabBlock<Pixmap>> = labdata.labblocks.iter().map(|n| {pwarn!("flattening {}", *n); labblocks[*n].flatten().with_palette(palette)}).collect();
     let mut pallettized = vec![];
     for n in labdata.labblocks.iter() {
-	pwarn!("flattening {}", *n);
+	//pwarn!("flattening {}", *n);
 	// WIP:
 	let r = labblocks[*n].flatten().with_palette(palette);
 	pallettized.push(r);
@@ -806,4 +806,11 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
             ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
 	}
     }
+}
+
+fn main() -> io::Result<()> {
+    env_logger::init();
+    let data = datafiles::AmberstarFiles::new("data");
+    show_maps(&data);
+    Ok(())
 }

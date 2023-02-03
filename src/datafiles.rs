@@ -3,7 +3,7 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-use crate::datafiles::chardata::CharData;
+//use crate::datafiles::chardata::CharData;
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
@@ -17,6 +17,7 @@ use std::path::Path;
 use crate::datafiles::pixmap::Pixmap;
 use crate::datafiles::palette::Palette;
 
+use self::chardata::CharData;
 use self::music::Song;
 use self::pixmap::IndexedPixmap;
 use self::tile::Tileset;

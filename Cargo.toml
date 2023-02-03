@@ -1,5 +1,5 @@
 [package]
-name = "amber-remix"
+name = "amber_remix"
 version = "0.1.2"
 edition = "2021"
 

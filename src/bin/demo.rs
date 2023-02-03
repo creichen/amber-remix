@@ -3,22 +3,19 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-#[macro_use(lazy_static)]
-extern crate lazy_static;
 
 use std::{time::Duration, io, env, fs, path::Path};
 
-use audio::{Mixer, AQOp, SampleRange};
-use datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
+use amber_remix::audio::{Mixer, AQOp, SampleRange};
+use amber_remix::datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
 use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
 
-use crate::{audio::amber, datafiles::pixmap};
+use amber_remix::{audio::amber, datafiles::pixmap};
 
-pub mod datafiles;
-mod audio;
-mod map_demo;
-mod debug_audio;
-pub mod util;
+use amber_remix::datafiles;
+use amber_remix::audio;
+use amber_remix::debug_audio;
+// mod util;
 
 fn print_strings(data : &datafiles::AmberstarFiles) {
 
@@ -639,7 +636,7 @@ fn main() -> io::Result<()> {
 		    fs::write(filename, data).expect("Unable to write file");
 		}
 	    },
-	    "maps"	=> map_demo::show_maps(&data),
+	    // "maps"	=> map_demo::show_maps(&data),
 	    _		=> show_images(&data)
 	}
     }
