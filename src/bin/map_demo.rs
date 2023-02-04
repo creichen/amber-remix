@@ -358,6 +358,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = data.labgfx.labdata.iter().map(|labdata| labblock_textures(&data, &creator, labdata)).collect();
     //let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = vec![labblock_textures(&data, &creator, &data.labgfx.labdata[0])];
 
+    let mut only_tiles = false;
 
     'running: loop {
 
@@ -395,7 +396,6 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	}
 
 	let mut npcs : Vec<NPC> = map.npcs.iter().map(|x| NPC::new(x.clone())).collect();
-	let only_tiles = false;
 
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
@@ -416,7 +416,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 			Keycode::D            => { movedir = Some(dir.rotate_right()); }
 			Keycode::E            => { dir = dir.rotate_right(); }
 			Keycode::Q            => { dir = dir.rotate_left(); }
-			Keycode::F1           => {},
+			Keycode::F1           => { only_tiles = !only_tiles },
 			Keycode::F2           => { if lab_nr > 0 { lab_nr -= 1; lab_img_nr = 0; break 'current_map; } },
 			Keycode::F3           => { if lab_nr < labblocks.len() - 1 { lab_img_nr = 0; lab_nr += 1; break 'current_map; } },
 			Keycode::F4           => { if lab_img_nr > 0 { lab_img_nr -= 1; break 'current_map; } },
@@ -455,7 +455,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		let ys = 40;
 		for xit in 0..8 {
 		    for yit in 0..ys {
-			let xpos = xit * 200;
+			let xpos = xit * 280;
 			let ypos = yit * 32;
 			let k = xit * ys + yit;
 			if k >= tiles.tile_icons.len() {
@@ -466,8 +466,9 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 					     k + 1,
 					     xpos as isize, ypos as isize, i >> 4);
 			let mark = if tiles.tile_icons[k].flags.flags & ((1 as u32) << ((x - 1) as usize)) != 0 {0xff} else {0x20};
-			font.draw_to(&mut canvas, format!("{}{:08x}",
+			font.draw_to(&mut canvas, format!("{} {k:02x}:{:02x} {:08x}",
 							  if k == tiles.player_icon_index { "@" } else { "" },
+							  tiles.tile_index_start[k],
 						      tiles.tile_icons[k].flags.flags).as_str(),
 				 xpos as isize + 34, ypos as isize, Color::RGBA(mark, 0xaf, 0xaf, 0xff));
 

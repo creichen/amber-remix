@@ -12,10 +12,10 @@ use std::{fmt::Write, num::NonZeroU8};
 use super::tile::TileFlags;
 
 // ----------------------------------------
-struct MapLayer<T> {
-    width : usize,
-    height : usize,
-    tiles : Vec<T>,
+pub struct MapLayer<T> {
+    pub width : usize,
+    pub height : usize,
+    pub tiles : Vec<T>,
 }
 
 impl<T : Clone + Copy> MapLayer<T> {
@@ -496,7 +496,7 @@ pub struct Map {
     pub width : usize,
     pub height : usize,
     pub num_layers : usize,
-    tiles : Vec<MapLayer<TileIndex>>,
+    pub tiles : Vec<MapLayer<TileIndex>>,
     hotspots : MapLayer<EventIndex>,
     pub event_table : Vec<Event>,
     pub tileset : usize,

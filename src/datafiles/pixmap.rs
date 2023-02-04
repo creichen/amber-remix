@@ -161,6 +161,7 @@ impl IndexedPixmap {
 
 // ================================================================================
 
+#[derive(Clone)]
 pub struct Pixmap {
     pub width : usize,
     pub height : usize,

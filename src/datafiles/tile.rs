@@ -44,9 +44,13 @@ impl TileFlags {
 	return self.flags & TileFlags::ILLUSION > 0;
     }
 
+    pub fn draw_with_transparency(&self) -> bool {
+	return self.flags & TileFlags::DRAW_WITH_TRANSPARENCY > 0;
+    }
+
     const ANIM_BACK_AND_FORTH	: u32 = 0x00000001; // Loop from first to last frame and back again; Otherwise: loop over all frames
     const VIEW_BLOCK		: u32 = 0x00000002; // Cannot see past this tile
-    const UNKNOWN_02		: u32 = 0x00000004;
+    const DRAW_WITH_TRANSPARENCY: u32 = 0x00000004; // Colour index 0 means transparent
     const DRAW_SEAT		: u32 = 0x00000008; // If player is here, next icon represents player sitting/sleeping here
     const ANIM_RANDOM_START	: u32 = 0x00000010; // Animation starts at random point for each tile, otherwise same for all tiles of this number
     const ILLUSION		: u32 = 0x00000020;
@@ -83,7 +87,10 @@ impl TileFlags {
 // TileIcons are animated graphics used for map tiles.
 
 pub struct Tileset<T> {
+    /// Each tile may consist of multiple icons
     pub tile_icons : Vec<TileIcon<T>>,
+    /// For each tile, the index of the first image in the result of `self.all_frames()`
+    pub tile_index_start : Vec<usize>,
     pub palette : palette::Palette,
     pub player_icon_index : usize,
 }
@@ -100,8 +107,16 @@ pub const COLOR_INDEX_FOR_TRANSPARENCY : usize = 0;
 
 const OFFSET_TILE_NUM_ANIM_FRAMES : usize = 0x2;
 
+impl<T : Clone> Tileset<T> {
+    /// Flattens all tileset frame images into one vector (for uploading as textures)
+    pub fn all_frames(&self) -> Vec<T> {
+	self.tile_icons.iter().flat_map(|icon| icon.frames.clone()).collect()
+    }
+}
+
 pub fn new(src: &[u8]) -> Tileset<Pixmap> {
     let mut tile_icons = vec![];
+    let mut tile_index_start = vec![];
     let num_icons = src[OFFSET_TILE_NUM_ANIM_FRAMES..].iter().position(|x|  *x == 0); // Always 250, I think?
     let player_icon_index = decode::u16(src, 0) as usize;
 
@@ -110,7 +125,8 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 	let palette_offset = num_icons * 8; // anim_type(u8), anim_start(u16), magic_flags1(u32), magic_flags2(u8)
 	assert!(src.len() >= palette_offset + PALETTE_SIZE);
 	let base = &src[2..];
-	let palette = palette::new_with_header(&base[palette_offset..], PALETTE_BRIGHTNESS).with_transparency(COLOR_INDEX_FOR_TRANSPARENCY);
+	let opaque_palette = palette::new_with_header(&base[palette_offset..], PALETTE_BRIGHTNESS);
+	let transparent_palette = opaque_palette.with_transparency(COLOR_INDEX_FOR_TRANSPARENCY);
 	let anim_start_base = &base[num_icons * 1..];
 	let magic_flags1_base = &base[num_icons * 3..];
 	let map_color_index_base = &base[num_icons * 7..];
@@ -136,18 +152,25 @@ pub fn new(src: &[u8]) -> Tileset<Pixmap> {
 		// if Some(img) = images.
 		let pos = frame_start[image_index];
 		let frame = pixmap::new_icon_frame(&frame_base[pos..]);
+		let palette = if flags.draw_with_transparency() {
+		    &transparent_palette
+		} else {
+		    &opaque_palette
+		};
 		let frame = frame.with_palette(&palette);
 		frames.push(frame);
 	    }
+	    tile_index_start.push(anim_start);
 	    tile_icons.push(TileIcon {
 		frames,
 		flags,
-		map_color : palette.get(map_color_index as usize),
+		map_color : opaque_palette.get(map_color_index as usize),
 	    });
 	}
 	return Tileset {
-	    palette,
+	    palette : opaque_palette,
 	    tile_icons,
+	    tile_index_start,
 	    player_icon_index,
 	}
     }
@@ -176,6 +199,7 @@ impl Tileset<Pixmap> {
 	}
 	return Tileset {
 	    tile_icons : icons,
+	    tile_index_start : self.tile_index_start.clone(),
 	    palette : self.palette.clone(),
 	    player_icon_index : self.player_icon_index,
 	}
