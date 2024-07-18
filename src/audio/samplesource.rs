@@ -108,7 +108,7 @@ impl SampleWriter {
 	    }
 	}
 	self.count = pos_best_fit;
-	println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
+	//println!("Forwarded via best fit {min_distance:.3} actual {min_actual_distance:.3} to {pos_best_fit} in {self}");
     }
 
     /// Forward sample to position OFF_NOMINATOR/OFF_DENOMINATOR

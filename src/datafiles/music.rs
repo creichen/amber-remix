@@ -311,6 +311,32 @@ pub struct Song {
     pub songinfo : SongInfo,
 }
 
+impl fmt::Display for Song {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	write!(f, "##[ Basic Samples ]\n")?;
+	for (n, bs) in self.basic_samples.iter().enumerate() {
+	    write!(f, "- S:{n:x}: {bs}\n")?;
+	}
+	write!(f, "##[ Instruments ]\n")?;
+	for (n, instr) in self.instruments.iter().enumerate() {
+	    write!(f, "- I:{n:x}: {instr}\n")?;
+	}
+	write!(f, "##[ Timbres ]\n")?;
+	for (n, timbre) in self.timbres.iter().enumerate() {
+	    write!(f, "- T:{n:x}: {timbre}\n")?;
+	}
+	write!(f, "##[ Monopatterns ]\n")?;
+	for (n, monopat) in self.monopatterns.iter().enumerate() {
+	    write!(f, "- P{n:02x}:\t{monopat}\n")?;
+	}
+	write!(f, "##[ Divisions ]\n")?;
+	for (n, div) in self.divisions.iter().enumerate() {
+	    write!(f, "- D{n:02x}:\t{div}\n")?;
+	}
+	return write!(f, "##[ {} ]\n", self.songinfo)
+    }
+}
+
 struct TableIndexedData<'a> {
     data : &'a [u8],
     count : usize,

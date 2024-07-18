@@ -3,10 +3,13 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+use sdl2::audio::AudioSpecDesired;
 
+use std::collections::VecDeque;
 use std::{time::Duration, io, env, fs, path::Path};
 
-use amber_remix::audio::{Mixer, AQOp, SampleRange};
+use amber_remix::audio::{Mixer, AQOp, SampleRange, AudioIterator};
+use amber_remix::audio::amber::SongIterator;
 use amber_remix::datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
 use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
 
@@ -144,6 +147,7 @@ impl<'a> InstrSelect<'a> {
     }
 
     fn play_song(&mut self) {
+	println!("Song:\n{}\n", self.song());
 	self.mixer.set_polyiterator(amber::play_song(self.song()));
     }
 
@@ -582,6 +586,154 @@ fn show_images(data : &datafiles::AmberstarFiles) {
     mixer.shutdown();
 }
 
+fn print_iter_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
+    let song = &data.songs[song_nr];
+    println!("{}", song);
+    let mut poly_it = SongIterator::new(&song,
+					song.songinfo.first_division,
+					song.songinfo.last_division);
+    for i in 0..32 {
+	let mut d = VecDeque::<AQOp>::new();
+	poly_it.channels[0].next(&mut d);
+	println!("--- tick {i:02x}\n");
+	for dd in d {
+	    println!(" {dd:?}\n");
+	}
+    }
+}
+// fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
+//     // Generate a square wave
+//     let tone_volume = 10_000i16;
+//     let period = 48_000 / 256;
+//     let sample_count = bytes_to_write;
+//     let mut result = Vec::new();
+
+//     for x in 0..sample_count {
+//         result.push(if (x / period) % 2 == 0 {
+//             tone_volume
+//         } else {
+//             -tone_volume
+//         });
+//     }
+//     result
+// }
+
+fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
+    let mut result = Vec::new();
+    for xr in input {
+	// FIXME: why can't I iterate more elegantly?
+	let x = *xr;
+	result.push(if x > 1.0 { 0x3fff } else
+		    { if x < -1.0 { -0x4000 } else { (x * 32767.0) as i16 }});
+    }
+    result
+}
+
+const SAMPLE_RATE : usize = 48_000;
+
+fn mk_sine(buf: &mut [f32], start : usize, duration : usize, freq : usize) {
+    for x in 0 .. duration {
+	let pos = start + x;
+	let sine = f32::sin((pos as f32) * 2.0 * 3.1415 * (freq as f32) / (SAMPLE_RATE as f32));
+	buf[pos * 2] = sine;
+	buf[pos * 2 + 1] = sine;
+    }
+}
+
+fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
+    let song = &data.songs[song_nr];
+    println!("{}", song);
+    let sdl_context = sdl2::init().unwrap();
+
+    //let mut audiocore = audio::init(&sdl_context);
+    //instr.play_song_fg();
+    let mut poly_it = SongIterator::new(&song,
+					song.songinfo.first_division,
+					song.songinfo.last_division);
+    let audio = sdl_context.audio()?;
+
+    const DURATION_SECONDS : usize = 8;
+
+    let desired_spec = AudioSpecDesired {
+        freq: Some(SAMPLE_RATE as i32),
+        channels: Some(2),
+        samples: None,
+    };
+
+    let device = audio.open_queue::<i16, _>(None, &desired_spec)?;
+
+    //let target_bytes = SAMPLE_RATE * 4;
+    const BUF_SIZE : usize = SAMPLE_RATE * DURATION_SECONDS * 2;
+    let mut buf : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
+
+    let max_pos = SAMPLE_RATE * DURATION_SECONDS;
+    let mut buf_pos_ms = 0;
+    let mut freq = 1;
+
+    while buf_pos_ms < DURATION_SECONDS * 1000 {
+	let mut d = VecDeque::<AQOp>::new();
+	let mut d2 = VecDeque::<AQOp>::new();
+	poly_it.channels[0].next(&mut d);
+	if poly_it.channels[0].is_done() {
+	    // FIXME: this should happen when ALL channels are done
+	    // (though that should normally coincide.....)
+	    poly_it.next_division();
+	}
+	poly_it.channels[1].next(&mut d2);
+	poly_it.channels[2].next(&mut d2);
+	poly_it.channels[3].next(&mut d2);
+	println!("--- tick {buf_pos_ms:02x}\n");
+	for dd in d {
+	    println!("  {dd:?}\n");
+	    match dd {
+		AQOp::WaitMillis(ms) => {
+		    let start = (SAMPLE_RATE * buf_pos_ms) / 1000;
+		    buf_pos_ms += ms;
+		    let mut stop = (SAMPLE_RATE * buf_pos_ms) / 1000;
+		    if stop > max_pos {
+			stop = max_pos;
+		    }
+		    mk_sine(&mut buf, start,
+			    stop - start,
+			    freq);
+		},
+		AQOp::SetFreq(f) => freq = f / 32,
+		//AQOp::Timeslice => poly_it.adv,
+		_ => {},
+	    }
+	    //println!(" {dd:?}\n");
+	}
+    }
+
+    // mk_sine(&mut buf, 0,
+    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
+    // 	    1000);
+    // mk_sine(&mut buf,
+    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
+    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
+    // 	    500);
+    // for x in 0 .. BUF_SIZE {
+    // 	let k = x as u32;
+    // 	if ((k >> 8) & 1) == 1 {
+    // 	    buf[x] = -1.0;
+    // 	} else {
+    // 	    buf[x] = 1.0;
+    // 	}
+    // }
+    //let wave = gen_wave(target_bytes);
+    let wave = float_buffer_to_i16(&buf);
+    device.queue_audio(&wave)?;
+    // Start playback
+    device.resume();
+
+    // Play for 2 seconds
+    std::thread::sleep(Duration::from_millis(1000 * DURATION_SECONDS as u64));
+
+    // Device is automatically closed when dropped
+
+    Ok(())
+}
+
 
 fn play_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
     let sdl_context = sdl2::init().unwrap();
@@ -620,6 +772,14 @@ fn main() -> io::Result<()> {
 	    "song"	=> {
 		let source = &args[2];
 		play_song(&data, str::parse::<usize>(source).unwrap());
+	    },
+	    "fg-song"	=> {
+		let source = &args[2];
+		play_song_fg(&data, str::parse::<usize>(source).unwrap());
+	    },
+	    "iter-song"	=> {
+		let source = &args[2];
+		print_iter_song(&data, str::parse::<usize>(source).unwrap());
 	    },
 	    "debug-audio" => {
 	    debug_audio::debug_audio(&data).unwrap();

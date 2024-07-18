@@ -411,7 +411,7 @@ fn run_mixer_thread(freq : Freq,
     let sync_amiga = pcmsync::new_basic();
     let mut trackers = vec![RefCell::new(tracker_aqueue), RefCell::new(tracker_linear), RefCell::new(tracker_stereo)];
 
-    let amiga_pipelines : [RcAudioPipeline; 4] = if false {
+    let amiga_pipelines : [RcAudioPipeline; 4] = if true {
 	let sample_source = Rc::new(RefCell::new(SimpleSampleSource::from_iter(samples.iter())));
 	[
 	    make_linear_pipeline("A0L", 0.5, 0.0, sample_source.clone(), freq, sync_amiga.clone(), &mut trackers),

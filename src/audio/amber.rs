@@ -669,8 +669,6 @@ impl MonopatternIterator {
 
 // ================================================================================
 // Song data storage
-//
-// The channel iterator handles all audio for one voice.
 
 trait SongDataBank : Send + Sync {
     fn get_instrument(&self, nr : usize) -> &Instrument;
@@ -727,7 +725,7 @@ struct ChannelState {
 }
 
 #[derive(Clone)]
-struct ChannelIterator {
+pub struct ChannelIterator {
     state : ChannelState,
 
     songdb : Arc<dyn SongDataBank>, // Information about the current song
@@ -815,9 +813,7 @@ impl AudioIterator for ChannelIterator {
 
 	match self.monopattern.tick(&mut self.state, &self.songdb) {
 	    MPStep::OK              => {},
-	    MPStep::Stop            => (
-		pdebug!("  : Finished Monopattern")
-	    ),
+	    MPStep::Stop            => pdebug!("  : Finished Monopattern"),
 	    MPStep::SetTimbre(ti, instr_opt) => {
 		pdebug!("  : Timbre/Instrument switch");
 		self.timbre = ti;
@@ -893,7 +889,7 @@ pub fn play_monopattern(song : &Song, pat : &Monopattern, note : Note) -> ArcIt 
 // Handles a polyphonic song
 
 
-struct SongIterator {
+pub struct SongIterator {
     songdb : ArcSDB,
     monopatterns : Vec<Monopattern>,
     divisions : Vec<Division>,
@@ -902,7 +898,7 @@ struct SongIterator {
     division_first : usize,
     division_last : usize,
 
-    channels : Vec<ChannelIterator>,
+    pub channels : Vec<ChannelIterator>,
 
     song_speed : usize,
     stopped : bool,
