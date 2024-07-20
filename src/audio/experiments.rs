@@ -172,6 +172,8 @@ impl<'a> SincResamplingPlayer<'a> {
     }
 
     fn resample(&mut self) {
+	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
+
 	let params = SincInterpolationParameters {
 	    sinc_len: 32,
 	    f_cutoff: 0.95,
@@ -202,6 +204,7 @@ impl<'a> SincResamplingPlayer<'a> {
 		 waves_out[0].len()
 	);
 	self.current_resampled_sample = waves_out[0].clone();
+	self.current_outpos = (self.current_resampled_sample.len() as f64 * relative_outpos) as usize;
 	// let pcm_resampled = &waves_out[0];
 	// for x in 0 .. duration {
 	//     let pos = start + x;
