@@ -8,7 +8,7 @@ use sdl2::audio::AudioSpecDesired;
 use std::collections::VecDeque;
 use std::{time::Duration, io, env, fs, path::Path};
 
-use amber_remix::audio::{Mixer, AQOp, SampleRange, AudioIterator, AQSample};
+use amber_remix::audio::{Mixer, AQOp, SampleRange, AudioIterator};
 use amber_remix::audio::amber::SongIterator;
 use amber_remix::datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
 use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
@@ -18,7 +18,6 @@ use amber_remix::{audio::amber, datafiles::pixmap};
 use amber_remix::datafiles;
 use amber_remix::audio;
 use amber_remix::debug_audio;
-use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 // mod util;
 
 fn print_strings(data : &datafiles::AmberstarFiles) {
@@ -602,22 +601,9 @@ fn print_iter_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
 	}
     }
 }
-// fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
-//     // Generate a square wave
-//     let tone_volume = 10_000i16;
-//     let period = 48_000 / 256;
-//     let sample_count = bytes_to_write;
-//     let mut result = Vec::new();
 
-//     for x in 0..sample_count {
-//         result.push(if (x / period) % 2 == 0 {
-//             tone_volume
-//         } else {
-//             -tone_volume
-//         });
-//     }
-//     result
-// }
+const SAMPLE_RATE : usize = audio::experiments::SAMPLE_RATE;
+const NUM_OUTPUT_CHANNELS : usize = audio::experiments::NUM_OUTPUT_CHANNELS;
 
 fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
     let mut result = Vec::new();
@@ -630,79 +616,6 @@ fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
     result
 }
 
-const SAMPLE_RATE : usize = 48_000;
-const NUM_OUTPUT_CHANNELS : usize = 1; // 2 for stereo
-
-
-fn mk_sine(buf: &mut [f32], start : usize, duration : usize, freq : usize) {
-    for x in 0 .. duration {
-	let pos = start + x;
-	let sine = f32::sin((pos as f32) * 2.0 * 3.1415 * (freq as f32) / (SAMPLE_RATE as f32));
-	for i in 0..NUM_OUTPUT_CHANNELS {
-	    buf[pos * NUM_OUTPUT_CHANNELS + i] = sine;
-	}
-    }
-}
-
-fn mk_audio(data : &datafiles::sampledata::SampleData,
-	    buf : &mut [f32],
-	    sample: &mut Vec<AQSample>, start : usize, duration : usize, freq : usize) {
-    let empty : &[i8] = &[];
-    let pcm : &[i8] = match sample.as_slice() {
-	[] => empty,
-	[AQSample::Once(r), ..] => &data[r],
-	[AQSample::Loop(r), ..] => &data[r],
-	[AQSample::OnceAtOffset(r, _), ..] => &data[r],
-    };
-    let must_pop = match sample.as_slice() {
-	[AQSample::Once(_), ..] => true,
-	_ => false };
-    if must_pop {
-	println!("--pop--");
-	sample.pop();
-    }
-    if pcm.len() > 0 {
-	let params = SincInterpolationParameters {
-	    sinc_len: 32,
-	    f_cutoff: 0.95,
-	    interpolation: SincInterpolationType::Linear,
-	    oversampling_factor: 16,
-	    window: WindowFunction::BlackmanHarris2,
-	};
-	let sample_rate = SAMPLE_RATE as f64;
-	let frequency = freq as f64;
-	let pcm_len = pcm.len() as f64;
-
-	let resample_ratio = sample_rate / (pcm_len * frequency);
-	//let resample_ratio = 1.0 / (frequency / sample_rate);
-
-	let mut resampler = SincFixedIn::<f32>::new(
-	    resample_ratio,
-	    1.0,
-	    params,
-	    pcm.len(),
-	    1,
-	).unwrap();
-
-	let pcm_expanded: Vec<f32> = pcm.iter()
-	    .map(|&v| v as f32 / 128.0).collect();
-	let waves_in = vec![pcm_expanded];
-	let waves_out = resampler.process(&waves_in, None).unwrap();
-	println!("Converted {} samples at freq {freq} to length {} with duration {duration}, ratio={resample_ratio}",
-		 pcm.len(),
-		 waves_out[0].len(),
-	);
-	let pcm_resampled = &waves_out[0];
-	for x in 0 .. duration {
-	    let pos = start + x;
-	    let v = pcm_resampled[x % pcm_resampled.len()];
-	    buf[pos] = v;
-	}
-    } else {
-	mk_sine(buf, start, duration, freq);
-    }
-}
-
 fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
     let song = &data.songs[song_nr];
     println!("{}", song);
@@ -710,9 +623,6 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
 
     //let mut audiocore = audio::init(&sdl_context);
     //instr.play_song_fg();
-    let mut poly_it = SongIterator::new(&song,
-					song.songinfo.first_division,
-					song.songinfo.last_division);
     let audio = sdl_context.audio()?;
 
     const DURATION_SECONDS : usize = 2;
@@ -729,56 +639,10 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     const BUF_SIZE : usize = SAMPLE_RATE * DURATION_SECONDS * NUM_OUTPUT_CHANNELS;
     let mut buf : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
 
-    let max_pos = SAMPLE_RATE * DURATION_SECONDS;
-    let mut current_samples = Vec::new();
-    let mut buf_pos_ms = 0;
-    let mut freq = 1;
-    let channel_to_play = 0;
-
-    while buf_pos_ms < DURATION_SECONDS * 1000 {
-	let mut d = VecDeque::<AQOp>::new();
-	let mut d2 = VecDeque::<AQOp>::new();
-
-	for i in 0..4 {
-	    if i == channel_to_play {
-		poly_it.channels[i].next(&mut d);
-		if poly_it.channels[i].is_done() {
-		    // FIXME: this should happen when ALL channels are done
-		    // (though that should normally coincide.....)
-		    poly_it.next_division();
-		}
-	    } else {
-		poly_it.channels[i].next(&mut d2);
-	    }
-	}
-	println!("--- tick {buf_pos_ms:02x}\n");
-	for dd in d {
-	    println!("  {dd:?}\n");
-	    match dd {
-		AQOp::SetSamples(samples) => {
-		    current_samples = samples
-		},
-		AQOp::WaitMillis(ms) => {
-		    let start = (SAMPLE_RATE * buf_pos_ms) / 1000;
-		    buf_pos_ms += ms;
-		    let mut stop = (SAMPLE_RATE * buf_pos_ms) / 1000;
-		    if stop > max_pos {
-			stop = max_pos;
-		    }
-		    mk_audio(&data.sample_data,
-			     &mut buf,
-			     &mut current_samples,
-			     start,
-			     stop - start,
-			     freq);
-		},
-		AQOp::SetFreq(f) => freq = f / 32,
-		//AQOp::Timeslice => poly_it.adv,
-		_ => {},
-	    }
-	    //println!(" {dd:?}\n");
-	}
-    }
+    audio::experiments::song_to_pcm(&data.sample_data,
+				    &mut buf,
+				    song,
+				    SAMPLE_RATE);
 
     // mk_sine(&mut buf, 0,
     // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
@@ -850,7 +714,7 @@ fn main() -> io::Result<()> {
 	    },
 	    "fg-song"	=> {
 		let source = &args[2];
-		play_song_fg(&data, str::parse::<usize>(source).unwrap());
+		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap());
 	    },
 	    "iter-song"	=> {
 		let source = &args[2];

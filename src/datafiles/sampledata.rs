@@ -68,14 +68,14 @@ impl Index<std::ops::Range<usize>> for SampleData {
     }
 }
 
-impl Index<&SampleRange> for &SampleData {
-    type Output = [i8];
+// impl Index<&SampleRange> for &SampleData {
+//     type Output = [i8];
 
-    fn index(&self, index: &SampleRange) -> &Self::Output {
-	let r : std::ops::Range<usize> = index.into();
-        &self.data[r]
-    }
-}
+//     fn index(&self, index: &SampleRange) -> &Self::Output {
+// 	let r : std::ops::Range<usize> = index.into();
+//         &self.data[r]
+//     }
+// }
 
 impl Index<SampleRange> for SampleData {
     type Output = [i8];

@@ -23,6 +23,8 @@ pub use self::queue::SampleRange;
 pub use self::dsp::frequency_range::Freq;
 pub use self::iterator::ArcIt;
 
+pub mod experiments;
+
 pub mod dsp;
 mod queue;
 pub mod iterator;
