@@ -88,10 +88,12 @@ impl<'a> Instrument<'a> {
 	    return InstrumentUpdate::None;
 	}
 	if new_range == self.last_range {
+	    print!("    -> looping sample: {:?}", self.current_sample_range());
 	    return InstrumentUpdate::Loop;
 	}
 	// otherwise we have an actual update
 	let sample = self.current_sample();
+	print!("    -> single sample: {:?}", self.current_sample_range());
 	if !self.is_looping() {
 	    self.ops.pop();
 	}
@@ -166,8 +168,8 @@ impl<'a> SincResamplingPlayer<'a> {
 	SincResamplingPlayer {
 	    volume: 0.0,
 	    freq: 0,
-	    current_sample: vec![0.0],
-	    current_resampled_sample: vec![0.0],
+	    current_sample: vec![],
+	    current_resampled_sample: vec![],
 	    current_outpos: 0,
 	    instrument: None,
 	}
@@ -200,7 +202,7 @@ impl<'a> SincResamplingPlayer<'a> {
 
 	let waves_in = vec![&self.current_sample];
 	let waves_out = resampler.process(&waves_in, None).unwrap();
-	println!("Converted {} samples at freq {} to length {}, ratio={resample_ratio}",
+	println!("    #<resample># Converted {} samples at freq {} to length {}, ratio={resample_ratio}",
 		 self.current_sample.len(),
 		 self.freq,
 		 waves_out[0].len()
@@ -317,7 +319,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 		    {&mut*buf_left } else { &mut*buf_right };
 
 		for dd in d {
-		    println!("  #i- {dd:?}\n");
+		    println!("  #{i}- {dd:?}");
 		    match dd {
 			AQOp::SetSamples(samples) => {
 			    players[i].set_instrument(Instrument::new(sample_data,

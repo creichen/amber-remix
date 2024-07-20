@@ -637,7 +637,7 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     //instr.play_song_fg();
     let audio = sdl_context.audio()?;
 
-    const DURATION_SECONDS : usize = 1;
+    const DURATION_SECONDS : usize = 2;
 
     let desired_spec = AudioSpecDesired {
         freq: Some(SAMPLE_RATE as i32),
