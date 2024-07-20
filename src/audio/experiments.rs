@@ -2,6 +2,7 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
+use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
 use std::collections::VecDeque;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
 use super::{amber::SongIterator, AQSample, SampleRange};
@@ -272,6 +273,142 @@ impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
     }
 }
 
+// ================================================================================
+// DirectFFTPlayer
+
+struct DirectFFTPlayer<'a> {
+    freq: usize,
+    volume: f32,
+    current_freq_sample: Vec<Complex<f32>>,
+    scratch: Vec<Complex<f32>>,
+    current_resampled_sample: Vec<f32>,
+    current_outpos: usize,
+    instrument: Option<Instrument<'a>>,
+    planner: FftPlanner<f32>,
+}
+
+impl<'a> DirectFFTPlayer<'a> {
+    fn new() -> Self {
+	DirectFFTPlayer {
+	    volume: 0.0,
+	    freq: 0,
+	    current_freq_sample: vec![],
+	    scratch: vec![],
+	    current_resampled_sample: vec![],
+	    current_outpos: 0,
+	    instrument: None,
+	    planner: FftPlanner::new(),
+	}
+    }
+
+    fn resample(&mut self) {
+	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
+
+	let sample_rate = SAMPLE_RATE as f64;
+	let frequency = self.freq as f64;
+	let resample_ratio = 1.0 / (frequency / sample_rate);
+
+	let input_len = self.current_freq_sample.len();
+	let output_len = (resample_ratio * input_len as f64) as usize;
+	let fft = self.planner.plan_fft(output_len, FftDirection::Inverse);
+
+	println!("input_len={input_len}, output_len={output_len}, scratchsize={}", self.scratch.len());
+	let mut complex_sample = if input_len < output_len {
+	    let mut c = self.current_freq_sample.clone();
+	    c.resize(output_len, Complex::new(0.0, 0.0));
+	    c
+	} else {
+	    // input_len > output_len
+	    self.current_freq_sample[0..output_len].to_vec()
+	};
+	self.ensure_scratch(fft.get_inplace_scratch_len());
+	fft.process_with_scratch(&mut complex_sample,
+				 &mut self.scratch);
+
+	self.current_resampled_sample = complex_sample.iter().map(|&c| c.re).collect();
+	self.current_outpos = (self.current_resampled_sample.len() as f64 * relative_outpos) as usize;
+    }
+
+    fn ensure_scratch(&mut self, len: usize) {
+	println!("  Ensuring scratch space: is {}, needed {len}", self.scratch.len());
+	if self.scratch.len() < len {
+	    println!("   -> resized");
+	    self.scratch = vec![Complex::new(0.0, 0.0); len];
+	}
+    }
+
+    fn set_current_sample(&mut self, freqspace: &[f32]) {
+	self.current_freq_sample = freqspace.iter().map(|&re| Complex::new(re, 0.0)).collect();
+	let len =  self.current_freq_sample.len();
+	let fft = self.planner.plan_fft(len, FftDirection::Forward);
+	self.ensure_scratch(fft.get_inplace_scratch_len());
+	fft.process_with_scratch(&mut self.current_freq_sample,
+				 &mut self.scratch);
+	self.filter_sample();
+    }
+
+    fn filter_sample(&mut self) {
+	let len = self.current_freq_sample.len();
+	let filter_start = len / 5;
+	self.current_freq_sample[filter_start..len].fill(Complex::new(0.0,0.0));
+    }
+}
+
+impl<'a> ChannelPlayer<'a> for DirectFFTPlayer<'a> {
+    fn play(&mut self, buf: &mut [f32]) {
+	let volume = self.volume;
+	if self.freq == 0 || volume == 0.0 {
+	    return;
+	}
+
+	let mut pos = 0;
+	while pos < buf.len() {
+	    if self.current_outpos >= self.current_resampled_sample.len() {
+		if let Some(ref mut instr) = self.instrument {
+		    match instr.next_sample() {
+			InstrumentUpdate::None => {
+			    self.instrument = None;
+			    return;
+			},
+			InstrumentUpdate::Loop => {
+			    self.current_outpos = 0;
+			},
+			InstrumentUpdate::New(sample) => {
+			    self.set_current_sample(&sample);
+			    self.resample();
+			    self.current_outpos = 0;
+			},
+		    }
+		} else {
+		    return;
+		}
+	    }
+	    let copy_len = usize::min(buf.len() - pos,
+				      self.current_resampled_sample.len() - self.current_outpos);
+	    for x in 0..copy_len {
+		buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
+	    }
+	    pos += copy_len;
+	    self.current_outpos += copy_len;
+	}
+    }
+
+    fn set_frequency(&mut self, freq: usize) {
+	self.freq = freq;
+	self.resample();
+    }
+
+    fn set_instrument(&mut self, instr: Instrument<'a>) {
+	self.instrument = Some(instr.clone());
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+	self.volume = volume;
+    }
+}
+
+
+// ================================================================================
 
 /// Iterate over the song's poly iterator until the buffer is full
 pub fn song_to_pcm(sample_data: &SampleData,
@@ -286,14 +423,18 @@ pub fn song_to_pcm(sample_data: &SampleData,
     let max_pos = buf_left.len();
     let duration_milliseconds = (max_pos * 1000) / sample_rate;
     let mut buf_pos_ms = [0, 0, 0, 0];
-    //let channel_to_play = 0;
     let mut players = [
 	SincResamplingPlayer::new(),
 	SincResamplingPlayer::new(),
 	SincResamplingPlayer::new(),
 	SincResamplingPlayer::new(), ];
+    // let mut players = [
+    // 	DirectFFTPlayer::new(),
+    // 	DirectFFTPlayer::new(),
+    // 	DirectFFTPlayer::new(),
+    // 	DirectFFTPlayer::new(), ];
 
-    let channels = [0, -1, 1, -1];
+    let channels = [0, 1, 1, 0];
 
     // FIXME: doesn't necessarily iterate until buffer is full
     while buf_pos_ms[0] < duration_milliseconds {
