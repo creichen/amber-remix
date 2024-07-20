@@ -3,46 +3,14 @@
 
 use core::fmt;
 use std::{rc::Rc, collections::hash_map::HashMap, cell::RefCell, time::SystemTime, fmt::Display};
-use rubato::{Resampler, SincFixedIn, InterpolationType, InterpolationParameters, WindowFunction};
-
+use rubato::{Resampler, SincFixedIn, WindowFunction, SincInterpolationParameters, SincInterpolationType};
 use super::{Freq, amber, dsp::pcmfit::PCMFit};
+pub use crate::datafiles::sampledata::SampleRange;
 
 //use super::dsp::frequency_range::Freq;
 
 const ONE_128TH : f32 = 1.0 / 128.0;
 const ONE_128TH_F64 : f64 = 1.0 / 128.0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SampleRange {
-    pub start : usize,
-    pub len : usize,
-}
-
-impl SampleRange {
-    pub fn at_offset(&self, n : usize) -> SampleRange {
-	if n > self.len {
-	    SampleRange { start : self.start, len : 0 }
-	} else {
-	    SampleRange { start : self.start + n, len : self.len - n }
-	}
-    }
-}
-
-impl fmt::Display for SampleRange {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[0x{:x}..0x{:x} (len=0x{:x} ({}))]",
-	       self.start, self.start+self.len,
-	       self.len, self.len)
-    }
-}
-
-impl SampleRange {
-    pub fn new(start : usize, len : usize) -> SampleRange {
-	SampleRange {
-	    start, len,
-	}
-    }
-}
 
 pub struct SampleWriter {
     data : Rc<Vec<f32>>,
@@ -287,10 +255,10 @@ impl SincSampleSource {
 	    while sinc_len > size {
 		sinc_len >>= 1;
 	    }
-	    let params = InterpolationParameters {
+	    let params = SincInterpolationParameters {
 		sinc_len,
 		f_cutoff: 0.95,
-		interpolation: InterpolationType::Linear,
+		interpolation: SincInterpolationType::Linear,
 		oversampling_factor: 16,
 		window: WindowFunction::BlackmanHarris2,
 	    };
@@ -325,7 +293,7 @@ impl SincSampleSource {
 	    Some(r) => r,
 	    None    => panic!("Unsupported size {desired_size}"),
 	};
-	resampler.borrow_mut().set_resample_ratio_relative(1.0/(desired_freq as f64 / self.base_target_freq)).unwrap();
+	resampler.borrow_mut().set_resample_ratio_relative(1.0/(desired_freq as f64 / self.base_target_freq), false).unwrap();
 	return resampler;
     }
 
