@@ -24,8 +24,6 @@ use super::{amber::SongIterator, AQSample, SampleRange};
 // }
 
 pub const SAMPLE_RATE : usize = 48_000;
-pub const NUM_OUTPUT_CHANNELS : usize = 1; // 2 for stereo
-
 
 // ================================================================================
 // Instruments
@@ -107,9 +105,7 @@ fn mk_sine(buf: &mut [f32], freq : usize) {
     for x in 0 .. buf.len() {
 	let pos = x;
 	let sine = f32::sin((pos as f32) * 2.0 * 3.1415 * (freq as f32) / (SAMPLE_RATE as f32));
-	for i in 0..NUM_OUTPUT_CHANNELS {
-	    buf[pos * NUM_OUTPUT_CHANNELS + i] = sine;
-	}
+	buf[pos] = sine;
     }
 }
 
@@ -119,6 +115,7 @@ trait ChannelPlayer<'a> {
     fn play(&mut self, dest: &mut [f32]);
     fn set_frequency(&mut self, freq: usize);
     fn set_instrument(&mut self, instr: Instrument<'a>);
+    fn set_volume(&mut self, volume: f32);
 }
 
 // ================================================================================
@@ -147,6 +144,9 @@ impl<'a> ChannelPlayer<'a> for SinePlayer {
 
     fn set_instrument(&mut self, _instr: Instrument) {
     }
+
+    fn set_volume(&mut self, _vol: f32) {
+    }
 }
 
 // ================================================================================
@@ -154,6 +154,7 @@ impl<'a> ChannelPlayer<'a> for SinePlayer {
 
 struct SincResamplingPlayer<'a> {
     freq: usize,
+    volume: f32,
     current_sample: Vec<f32>,
     current_resampled_sample: Vec<f32>,
     current_outpos: usize,
@@ -163,6 +164,7 @@ struct SincResamplingPlayer<'a> {
 impl<'a> SincResamplingPlayer<'a> {
     fn new() -> Self {
 	SincResamplingPlayer {
+	    volume: 0.0,
 	    freq: 0,
 	    current_sample: vec![0.0],
 	    current_resampled_sample: vec![0.0],
@@ -216,7 +218,8 @@ impl<'a> SincResamplingPlayer<'a> {
 
 impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
     fn play(&mut self, buf: &mut [f32]) {
-	if self.freq == 0 {
+	let volume = self.volume;
+	if self.freq == 0 || volume == 0.0 {
 	    return;
 	}
 
@@ -246,7 +249,7 @@ impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
 				      self.current_resampled_sample.len() - self.current_outpos);
 	    //buf[pos..pos+copy_len].copy_from_slice(&self.current_resampled_sample[self.current_outpos..self.current_outpos+copy_len]);
 	    for x in 0..copy_len {
-		buf[x + pos] = self.current_resampled_sample[x + self.current_outpos];
+		buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
 	    }
 	    pos += copy_len;
 	    self.current_outpos += copy_len;
@@ -261,70 +264,90 @@ impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
     fn set_instrument(&mut self, instr: Instrument<'a>) {
 	self.instrument = Some(instr.clone());
     }
+
+    fn set_volume(&mut self, volume: f32) {
+	self.volume = volume;
+    }
 }
 
 
 /// Iterate over the song's poly iterator until the buffer is full
 pub fn song_to_pcm(sample_data: &SampleData,
-		   buf: &mut [f32],
+		   buf_left: &mut [f32],
+		   buf_right: &mut [f32],
 		   song: &Song,
 		   sample_rate: usize) {
     let mut poly_it = SongIterator::new(&song,
 					song.songinfo.first_division,
 					song.songinfo.last_division);
 
-    let max_pos = buf.len();
+    let max_pos = buf_left.len();
     let duration_milliseconds = (max_pos * 1000) / sample_rate;
-    let mut buf_pos_ms = 0;
-    let channel_to_play = 0;
-    let mut player = SincResamplingPlayer::new();
+    let mut buf_pos_ms = [0, 0, 0, 0];
+    //let channel_to_play = 0;
+    let mut players = [
+	SincResamplingPlayer::new(),
+	SincResamplingPlayer::new(),
+	SincResamplingPlayer::new(),
+	SincResamplingPlayer::new(), ];
+
+    let channels = [0, -1, 1, -1];
 
     // FIXME: doesn't necessarily iterate until buffer is full
-    while buf_pos_ms < duration_milliseconds {
-	let mut d = VecDeque::<AQOp>::new();
-	let mut d2 = VecDeque::<AQOp>::new();
+    while buf_pos_ms[0] < duration_milliseconds {
+//	let mut d2 = VecDeque::<AQOp>::new();
+
+	println!("--- tick {buf_pos_ms:?}\n");
 
 	for i in 0..4 {
-	    if i == channel_to_play {
+	    let mut d = VecDeque::<AQOp>::new();
+	    let out_channel = channels[i];
+	    if out_channel < 0 {
+		// suppress
+		poly_it.channels[i].next(&mut d);
+	    } else {
 		poly_it.channels[i].next(&mut d);
 		if poly_it.channels[i].is_done() {
 		    // FIXME: this should happen when ALL channels are done
 		    // (though that should normally coincide.....)
 		    poly_it.next_division();
 		}
-	    } else {
-		poly_it.channels[i].next(&mut d2);
-	    }
-	}
 
-	println!("--- tick {buf_pos_ms:02x}\n");
-	for dd in d {
-	    println!("  {dd:?}\n");
-	    match dd {
-		AQOp::SetSamples(samples) => {
-		    player.set_instrument(Instrument::new(sample_data,
-							  samples));
-		},
-		AQOp::WaitMillis(ms) => {
-		    let start = (SAMPLE_RATE * buf_pos_ms) / 1000;
-		    buf_pos_ms += ms;
-		    let mut stop = (SAMPLE_RATE * buf_pos_ms) / 1000;
-		    if stop > max_pos {
-			stop = max_pos;
+		let buf = if out_channel == 0
+		    {&mut*buf_left } else { &mut*buf_right };
+
+		for dd in d {
+		    println!("  #i- {dd:?}\n");
+		    match dd {
+			AQOp::SetSamples(samples) => {
+			    players[i].set_instrument(Instrument::new(sample_data,
+								      samples));
+			},
+			AQOp::WaitMillis(ms) => {
+			    let start = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
+			    buf_pos_ms[i] += ms;
+			    let mut stop = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
+			    if stop > max_pos {
+				stop = max_pos;
+			    }
+			    players[i].play(&mut buf[start..stop]);
+			    // mk_audio(&sample_data,
+			    // 	     buf,
+			    // 	     &mut current_instrument,
+			    // 	     &mut last_instr_sample,
+			    // 	     start,
+			    // 	     stop - start,
+			    // 	     freq);
+			},
+			AQOp::SetVolume(v) => {
+			    players[i].set_volume(v);
+			},
+			AQOp::SetFreq(f) => // freq = f / 32,
+			    players[i].set_frequency(f), // FIXME: workaround for period_to_freq
+			//AQOp::Timeslice => poly_it.adv,
+			_ => {},
 		    }
-		    player.play(&mut buf[start..stop]);
-		    // mk_audio(&sample_data,
-		    // 	     buf,
-		    // 	     &mut current_instrument,
-		    // 	     &mut last_instr_sample,
-		    // 	     start,
-		    // 	     stop - start,
-		    // 	     freq);
-		},
-		AQOp::SetFreq(f) => // freq = f / 32,
-		    player.set_frequency(f), // FIXME: workaround for period_to_freq
-		//AQOp::Timeslice => poly_it.adv,
-		_ => {},
+		}
 	    }
 	    //println!(" {dd:?}\n");
 	}

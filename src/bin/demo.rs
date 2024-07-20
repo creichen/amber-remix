@@ -603,15 +603,27 @@ fn print_iter_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
 }
 
 const SAMPLE_RATE : usize = audio::experiments::SAMPLE_RATE;
-const NUM_OUTPUT_CHANNELS : usize = audio::experiments::NUM_OUTPUT_CHANNELS;
+
+fn float_to_i16(x: f32) -> i16 {
+    if x > 1.0 { 0x3fff } else
+    { if x < -1.0 { -0x4000 } else { (x * 32767.0) as i16 }}
+}
 
 fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
     let mut result = Vec::new();
     for xr in input {
 	// FIXME: why can't I iterate more elegantly?
 	let x = *xr;
-	result.push(if x > 1.0 { 0x3fff } else
-		    { if x < -1.0 { -0x4000 } else { (x * 32767.0) as i16 }});
+	result.push(float_to_i16(x));
+    }
+    result
+}
+
+fn float_buffers_merge_to_i16(input_l : &[f32], input_r: &[f32]) -> Vec<i16> {
+    let mut result = Vec::new();
+    for xr in 0..input_l.len() {
+	result.push(float_to_i16(input_l[xr]));
+	result.push(float_to_i16(input_r[xr]));
     }
     result
 }
@@ -625,22 +637,24 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     //instr.play_song_fg();
     let audio = sdl_context.audio()?;
 
-    const DURATION_SECONDS : usize = 6;
+    const DURATION_SECONDS : usize = 1;
 
     let desired_spec = AudioSpecDesired {
         freq: Some(SAMPLE_RATE as i32),
-        channels: Some(1),
+        channels: Some(2),
         samples: None,
     };
 
     let device = audio.open_queue::<i16, _>(None, &desired_spec)?;
 
     //let target_bytes = SAMPLE_RATE * 4;
-    const BUF_SIZE : usize = SAMPLE_RATE * DURATION_SECONDS * NUM_OUTPUT_CHANNELS;
-    let mut buf : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
+    const BUF_SIZE : usize = SAMPLE_RATE * DURATION_SECONDS;
+    let mut buf_left : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
+    let mut buf_right : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
 
     audio::experiments::song_to_pcm(&data.sample_data,
-				    &mut buf,
+				    &mut buf_left,
+				    &mut buf_right,
 				    song,
 				    SAMPLE_RATE);
 
@@ -660,7 +674,7 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     // 	}
     // }
     //let wave = gen_wave(target_bytes);
-    let wave = float_buffer_to_i16(&buf);
+    let wave = float_buffers_merge_to_i16(&buf_left, &buf_right);
     device.queue_audio(&wave)?;
     // Start playback
     device.resume();
