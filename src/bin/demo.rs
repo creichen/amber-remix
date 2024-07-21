@@ -658,6 +658,18 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
 				    song,
 				    SAMPLE_RATE);
 
+    // let n = (48000*4) + 24780;
+    // // let v = buf_left[n];
+    // // buf_left[n..(48000*5)].fill(v);
+
+    // for i in n..n+40 {
+    // 	let tick = (i * 50) / 48000;
+    // 	let tickd = i - ((tick * 48000) / 50);
+    // 	println!("  {i} [time:{:8}, tick:{tick}+{tickd:4}] : {:?}",
+    // 		 (i * 1000) / 48000,
+    // 		 &buf_left[i]);
+    // }
+
     // mk_sine(&mut buf, 0,
     // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
     // 	    1000);
@@ -675,11 +687,11 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     // }
     //let wave = gen_wave(target_bytes);
     let wave = float_buffers_merge_to_i16(&buf_left, &buf_right);
+
     device.queue_audio(&wave)?;
     // Start playback
     device.resume();
 
-    // Play for 2 seconds
     std::thread::sleep(Duration::from_millis(1000 * DURATION_SECONDS as u64));
 
     // Device is automatically closed when dropped

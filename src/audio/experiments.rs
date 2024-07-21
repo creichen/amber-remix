@@ -1,5 +1,6 @@
 
 #[allow(unused)]
+use lazy_static::lazy_static;
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
@@ -7,6 +8,7 @@ use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
 use std::collections::VecDeque;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
 use super::{amber::SongIterator, AQSample, SampleRange};
+use super::blep::BLEP;
 
 // fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
 //     // Generate a square wave
@@ -101,14 +103,14 @@ impl<'a> Instrument<'a> {
 	    return InstrumentUpdate::None;
 	}
 	if new_range == self.last_range {
-	    //println!("    -> looping sample: {:?}", self.current_sample_range());
+	    println!("    -> looping sample: {:?}", self.current_sample_range());
 	    return InstrumentUpdate::Loop;
 	}
 	// otherwise we have an actual update
 	let sample = self.current_sample();
-	//println!("    -> single sample: {:?}", self.current_sample_range());
+	println!("    -> single sample: {:?}", self.current_sample_range());
 	if !self.is_looping() {
-	    self.ops.pop();
+	    self.ops = self.ops[1..self.ops.len()].to_vec();
 	}
 	return InstrumentUpdate::New(sample);
     }
@@ -124,8 +126,9 @@ fn mk_sine(buf: &mut [f32], freq : usize) {
     }
 }
 
-
-
+lazy_static! {
+    static ref BLEPPER: BLEP = BLEP::new();
+}
 
 // ================================================================================
 struct ChannelState<'a> {
@@ -141,6 +144,18 @@ impl<'a> ChannelState<'a> {
 	    volume: 0.0,
 	    instrument: Instrument::empty(),
 	}
+    }
+
+    fn resample_ratio(&self) -> f64 {
+	let sample_rate = SAMPLE_RATE as f64;
+	let frequency = self.freq as f64;
+	return sample_rate / frequency;
+    }
+
+    fn inv_resample_ratio(&self) -> f64 {
+	let sample_rate = SAMPLE_RATE as f64;
+	let frequency = self.freq as f64;
+	return frequency / sample_rate;
     }
 }
 
@@ -217,7 +232,7 @@ impl<'a> ChannelResampler<'a> for SineResampler {
 struct SincResampler {
     current_sample: Vec<f32>,
     current_resampled_sample: Vec<f32>,
-    current_outpos: usize,
+    current_inpos: usize,
 }
 
 impl SincResampler {
@@ -225,12 +240,12 @@ impl SincResampler {
 	SincResampler {
 	    current_sample: vec![],
 	    current_resampled_sample: vec![],
-	    current_outpos: 0,
+	    current_inpos: 0,
 	}
     }
 
     fn resample(&mut self, channel: &ChannelState) {
-	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
+	let relative_inpos = self.current_inpos as f64 / self.current_resampled_sample.len() as f64;
 
 	let params = SincInterpolationParameters {
 	    sinc_len: 2,
@@ -239,12 +254,7 @@ impl SincResampler {
 	    oversampling_factor: 16,
 	    window: WindowFunction::Hann,
 	};
-	let sample_rate = SAMPLE_RATE as f64;
-	let frequency = channel.freq as f64;
-	//let pcm_len = self.current_sample.len() as f64;
-
-	//let resample_ratio = sample_rate / (pcm_len * frequency);
-	let resample_ratio = 1.0 / (frequency / sample_rate);
+	let resample_ratio = channel.resample_ratio();
 
 	let mut resampler = SincFixedIn::<f32>::new(
 	    resample_ratio,
@@ -262,7 +272,7 @@ impl SincResampler {
 		 waves_out[0].len()
 	);
 	self.current_resampled_sample = waves_out[0].clone();
-	self.current_outpos = (self.current_resampled_sample.len() as f64 * relative_outpos) as usize;
+	self.current_inpos = (self.current_resampled_sample.len() as f64 * relative_inpos) as usize;
 	// let pcm_resampled = &waves_out[0];
 	// for x in 0 .. duration {
 	//     let pos = start + x;
@@ -277,29 +287,29 @@ impl<'a> ChannelResampler<'a> for SincResampler {
 	let volume = channel.volume;
 	let mut pos = 0;
 	while pos < buf.len() {
-	    if self.current_outpos >= self.current_resampled_sample.len() {
+	    if self.current_inpos >= self.current_resampled_sample.len() {
 		match channel.instrument.next_sample() {
 		    InstrumentUpdate::None => {
 			return;
 		    },
 		    InstrumentUpdate::Loop => {
-			self.current_outpos = 0;
+			self.current_inpos = 0;
 		    },
 		    InstrumentUpdate::New(sample) => {
 			self.current_sample = sample;
 			self.resample(channel);
-			self.current_outpos = 0;
+			self.current_inpos = 0;
 		    },
 		}
 	    }
 	    let copy_len = usize::min(buf.len() - pos,
-				      self.current_resampled_sample.len() - self.current_outpos);
-	    //buf[pos..pos+copy_len].copy_from_slice(&self.current_resampled_sample[self.current_outpos..self.current_outpos+copy_len]);
+				      self.current_resampled_sample.len() - self.current_inpos);
+	    //buf[pos..pos+copy_len].copy_from_slice(&self.current_resampled_sample[self.current_inpos..self.current_inpos+copy_len]);
 	    for x in 0..copy_len {
-		buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
+		buf[x + pos] += self.current_resampled_sample[x + self.current_inpos] * volume;
 	    }
 	    pos += copy_len;
-	    self.current_outpos += copy_len;
+	    self.current_inpos += copy_len;
 	}
     }
 
@@ -315,7 +325,7 @@ struct DirectFFTResampler {
     current_freq_sample: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
     current_resampled_sample: Vec<f32>,
-    current_outpos: usize,
+    current_inpos: usize,
     planner: FftPlanner<f32>,
 }
 
@@ -325,17 +335,15 @@ impl DirectFFTResampler {
 	    current_freq_sample: vec![],
 	    scratch: vec![],
 	    current_resampled_sample: vec![],
-	    current_outpos: 0,
+	    current_inpos: 0,
 	    planner: FftPlanner::new(),
 	}
     }
 
     fn resample(&mut self, channel: &ChannelState) {
-	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
+	let relative_inpos = self.current_inpos as f64 / self.current_resampled_sample.len() as f64;
 
-	let sample_rate = SAMPLE_RATE as f64;
-	let frequency = channel.freq as f64;
-	let resample_ratio = 1.0 / (frequency / sample_rate);
+	let resample_ratio = channel.resample_ratio();
 
 	let input_len = self.current_freq_sample.len();
 	let output_len = (resample_ratio * input_len as f64) as usize;
@@ -354,7 +362,7 @@ impl DirectFFTResampler {
 				 &mut self.scratch);
 
 	self.current_resampled_sample = complex_sample.iter().map(|&c| c.re).collect();
-	self.current_outpos = (self.current_resampled_sample.len() as f64 * relative_outpos) as usize;
+	self.current_inpos = (self.current_resampled_sample.len() as f64 * relative_inpos) as usize;
     }
 
     fn ensure_scratch(&mut self, len: usize) {
@@ -402,33 +410,33 @@ impl DirectFFTResampler {
 
 impl<'a> ChannelResampler<'a> for DirectFFTResampler {
     fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
-       let volume = channel.volume;
-       let mut pos = 0;
-       while pos < buf.len() {
-           if self.current_outpos >= self.current_resampled_sample.len() {
-               match channel.instrument.next_sample() {
-                   InstrumentUpdate::None => {
-                       return;
-                   },
-                   InstrumentUpdate::Loop => {
-                       self.current_outpos = 0;
-                   },
-                   InstrumentUpdate::New(sample) => {
-                       self.set_current_sample(&sample);
-                       self.resample(channel);
-                       self.current_outpos = 0;
-                   },
-               }
-           }
-           let copy_len = usize::min(buf.len() - pos,
-                                     self.current_resampled_sample.len() - self.current_outpos);
-           for x in 0..copy_len {
-               buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
-           }
-           pos += copy_len;
-           self.current_outpos += copy_len;
+	let volume = channel.volume;
+	let mut pos = 0;
+	while pos < buf.len() {
+            if self.current_inpos >= self.current_resampled_sample.len() {
+		match channel.instrument.next_sample() {
+                    InstrumentUpdate::None => {
+			return;
+                    },
+                    InstrumentUpdate::Loop => {
+			self.current_inpos = 0;
+                    },
+                    InstrumentUpdate::New(sample) => {
+			self.set_current_sample(&sample);
+			self.resample(channel);
+			self.current_inpos = 0;
+                    },
+		}
+            }
+            let copy_len = usize::min(buf.len() - pos,
+                                      self.current_resampled_sample.len() - self.current_inpos);
+            for x in 0..copy_len {
+		buf[x + pos] += self.current_resampled_sample[x + self.current_inpos] * volume;
+            }
+            pos += copy_len;
+            self.current_inpos += copy_len;
         }
-     }
+    }
 
     fn updated_frequency(&mut self, channel: &mut ChannelState) {
 	self.resample(channel);
@@ -436,19 +444,111 @@ impl<'a> ChannelResampler<'a> for DirectFFTResampler {
 }
 
 // ================================================================================
-// DirectFFTPlayer
+// NearestResampler
+
+struct NearestResampler {
+    current_sample: Vec<f32>,
+    current_inpos: f32,
+}
+
+impl NearestResampler {
+    fn new() -> Self {
+	NearestResampler {
+	    current_sample: vec![],
+	    current_inpos: 0.0,
+	}
+    }
+}
+
+
+impl<'a> ChannelResampler<'a> for NearestResampler {
+    fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
+	let volume = channel.volume;
+	let mut pos = 0;
+	let stride = channel.inv_resample_ratio() as f32;
+	println!(" stride={stride}");
+	while pos < buf.len() {
+	    let mut inpos = self.current_inpos as usize;
+            if inpos >= self.current_sample.len() {
+		match channel.instrument.next_sample() {
+                    InstrumentUpdate::None => {
+			return;
+                    },
+                    InstrumentUpdate::Loop => {
+			self.current_inpos = 0.0;
+			inpos = 0;
+                    },
+                    InstrumentUpdate::New(sample) => {
+			self.current_sample = sample;
+			self.current_inpos = 0.0;
+			inpos = 0;
+                    },
+		}
+            }
+	    let v = self.current_sample[inpos];
+	    //BLEPPER.apply_blep(buf, pos, v * volume);
+	    buf[pos] += v * volume;
+	    pos += 1;
+            self.current_inpos += stride;
+        }
+    }
+}
+
+// ================================================================================
+// LinearResampler
 
 struct LinearResampler {
     current_sample: Vec<f32>,
-    current_outpos: f32,
+    current_inpos: f32,
+    prev: f32,
 }
 
 impl LinearResampler {
     fn new() -> Self {
 	LinearResampler {
 	    current_sample: vec![],
-	    current_outpos: 0.0,
+	    current_inpos: 0.0,
+	    prev: 0.0,
 	}
+    }
+
+    fn ensure_sample(&mut self, channel: &mut ChannelState, inpos_delta: usize) -> Option<usize> {
+	let inpos = self.current_inpos as usize + inpos_delta;
+        if inpos >= self.current_sample.len() {
+	    match channel.instrument.next_sample() {
+                InstrumentUpdate::None => {
+		    println!("  <none>");
+		    return None;
+                },
+                InstrumentUpdate::Loop => {
+		    self.current_inpos -= self.current_sample.len() as f32;
+		    println!("  <loop>");
+		    return Some(self.current_inpos as usize + inpos_delta);
+                },
+                InstrumentUpdate::New(sample) => {
+		    println!("  <new sample>");
+		    if self.current_sample.len() > 0 {
+			println!("   -- Old:");
+			for i in 0..10 {
+			    println!("      {i:8}: {:}", self.current_sample[i]);
+			}
+			for i in self.current_sample.len() - 10..self.current_sample.len() {
+			    println!("      {i:8}: {:}", self.current_sample[i]);
+			}
+		    }
+		    self.current_sample = sample;
+		    if self.current_sample.len() > 0 {
+			println!("   -- New:");
+			for i in 0..10 {
+			    println!("      {i:8}: {:}", self.current_sample[i]);
+			}
+		    }
+		    self.current_inpos = 0.0;
+		    return Some(0);
+                    },
+		}
+        }
+	return Some(inpos);
     }
 }
 
@@ -456,10 +556,62 @@ impl LinearResampler {
 impl<'a> ChannelResampler<'a> for LinearResampler {
     fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
 	let volume = channel.volume;
-	if channel.freq == 0 || volume == 0.0 {
-	    return;
+	let mut pos = 0;
+	let stride = channel.inv_resample_ratio() as f32;
+	println!(" stride={stride}");
+	while pos < buf.len() {
+	    let inpos_i = match self.ensure_sample(channel, 0) {
+		None => return,
+		Some(v) => v,
+	    };
+
+	    let base_v = self.current_sample[inpos_i];
+	    let inpos_frac = self.current_inpos.fract();
+	    let v = base_v * inpos_frac + (self.prev * (1.0 - inpos_frac));
+	    let next_inpos_f = self.current_inpos + stride;
+	    self.current_inpos = next_inpos_f;
+	    if next_inpos_f as usize > inpos_i {
+		let last_sample = if self.current_sample.len() > 0 { self.current_sample[self.current_sample.len() - 1] } else { v };
+		self.ensure_sample(channel, 0);
+		self.prev = if self.current_sample.len() == 0 || self.current_inpos as usize == 0 {
+		    last_sample
+		} else { self.current_sample[self.current_inpos as usize - 1] };
+	    }
+
+	    // if (next_inpos_f as usize) == inpos_i {
+	    // 	v = base_v;
+	    // } else {
+	    // 	let current_inpos_fraction = self.current_inpos.fract();
+	    // 	v = base_v * (1.0 - current_inpos_fraction);
+
+	    // 	let stride_len = (stride + current_inpos_fraction) as usize;
+	    // 	let mut no_final = false;
+	    // 	for i in 0..stride_len {
+	    // 	    inpos_i = match self.ensure_sample(channel, i) {
+	    // 		None => { no_final = true; break;},
+	    // 		Some(v) => v,
+	    // 	    };
+	    // 	    v += self.current_sample[inpos_i];
+	    // 	}
+	    // 	let next_inpos_fraction = next_inpos_f.fract();
+	    // 	if !no_final {
+	    // 	    v += self.current_sample[inpos_i] * next_inpos_fraction;
+	    // 	}
+	    // 	v /= stride;
+	    // }
+
+
+	    //BLEPPER.apply_blep(buf, pos, v * volume);
+	    buf[pos] += v * volume;
+	    pos += 1;
+        }
+    }
+
+    fn updated_instrument(&mut self, _channel: &mut ChannelState<'a>) {
+	if self.current_sample.len() > 0 {
+	    self.current_inpos = 0.5;
 	}
-	
+	self.current_sample = vec![];
     }
 }
 
@@ -467,8 +619,9 @@ impl<'a> ChannelResampler<'a> for LinearResampler {
 // ================================================================================
 
 //fn mk_player<'a>() -> ChannelPlayer<'a, SincResampler> {  ChannelPlayer::new(SincResampler::new()) }
-fn mk_player<'a>() -> ChannelPlayer<'a, DirectFFTResampler> {  ChannelPlayer::new(DirectFFTResampler::new()) }
-//fn mk_player<'a>() -> ChannelPlayer<'a, LinearResampler> {  ChannelPlayer::new(LinearResampler::new()) }
+//fn mk_player<'a>() -> ChannelPlayer<'a, DirectFFTResampler> {  ChannelPlayer::new(DirectFFTResampler::new()) }
+//fn mk_player<'a>() -> ChannelPlayer<'a, NearestResampler> {  ChannelPlayer::new(NearestResampler::new()) }
+fn mk_player<'a>() -> ChannelPlayer<'a, LinearResampler> {  ChannelPlayer::new(LinearResampler::new()) }
 
 /// Iterate over the song's poly iterator until the buffer is full
 pub fn song_to_pcm(sample_data: &SampleData,
