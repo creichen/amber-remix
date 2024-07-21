@@ -3,6 +3,7 @@
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
+//use sdl2::libc::STA_FREQHOLD;
 use std::collections::VecDeque;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
 use super::{amber::SongIterator, AQSample, SampleRange};
@@ -37,7 +38,7 @@ enum InstrumentUpdate {
 
 #[derive(Clone)]
 struct Instrument<'a> {
-    sample_data: &'a SampleData,
+    sample_data: Option<&'a SampleData>,
     ops: Vec<AQSample>,
     last_range: Option<SampleRange>,
 }
@@ -47,7 +48,15 @@ impl<'a> Instrument<'a> {
 	   ops: Vec<AQSample>) -> Self {
 	Instrument {
 	    ops,
-	    sample_data,
+	    sample_data: Some(sample_data),
+	    last_range: None,
+	}
+    }
+
+    fn empty() -> Self {
+	Instrument {
+	    sample_data: None,
+	    ops: vec![],
 	    last_range: None,
 	}
     }
@@ -71,7 +80,10 @@ impl<'a> Instrument<'a> {
     fn current_sample_raw(&self) -> Option<&'a [i8]> {
 	match self.current_sample_range() {
 	    None => None,
-	    Some(r) => Some(&self.sample_data[r]),
+	    Some(r) => match self.sample_data {
+		None => None,
+		Some(d) => Some(&d[r]),
+	    }
 	}
     }
 
@@ -89,12 +101,12 @@ impl<'a> Instrument<'a> {
 	    return InstrumentUpdate::None;
 	}
 	if new_range == self.last_range {
-	    print!("    -> looping sample: {:?}", self.current_sample_range());
+	    //println!("    -> looping sample: {:?}", self.current_sample_range());
 	    return InstrumentUpdate::Loop;
 	}
 	// otherwise we have an actual update
 	let sample = self.current_sample();
-	print!("    -> single sample: {:?}", self.current_sample_range());
+	//println!("    -> single sample: {:?}", self.current_sample_range());
 	if !self.is_looping() {
 	    self.ops.pop();
 	}
@@ -112,82 +124,123 @@ fn mk_sine(buf: &mut [f32], freq : usize) {
     }
 }
 
-// ================================================================================
 
-trait ChannelPlayer<'a> {
-    fn play(&mut self, dest: &mut [f32]);
-    fn set_frequency(&mut self, freq: usize);
-    fn set_instrument(&mut self, instr: Instrument<'a>);
-    fn set_volume(&mut self, volume: f32);
-}
+
 
 // ================================================================================
-// SinePlayer
-
-struct SinePlayer {
+struct ChannelState<'a> {
     freq : usize,
+    volume: f32,
+    instrument: Instrument<'a>,
 }
 
-impl SinePlayer {
+impl<'a> ChannelState<'a> {
     fn new() -> Self {
-	SinePlayer {
-	    freq: 1
+	ChannelState {
+	    freq: 0,
+	    volume: 0.0,
+	    instrument: Instrument::empty(),
 	}
     }
 }
 
-impl<'a> ChannelPlayer<'a> for SinePlayer {
-    fn play(&mut self, buf: &mut [f32]) {
-	mk_sine(buf, self.freq);
+// --------------------------------------------------------------------------------
+
+trait ChannelResampler<'a> {
+    fn play(&mut self, dest: &mut [f32], channel: &mut ChannelState<'a>);
+    // Called after a frequency change
+    fn updated_frequency(&mut self, channel: &mut ChannelState<'a>) {}
+    fn updated_instrument(&mut self, channel: &mut ChannelState<'a>) {}
+}
+
+
+// ================================================================================
+// ChannelPlayer
+struct ChannelPlayer<'a, T: ChannelResampler<'a>> {
+    state: ChannelState<'a>,
+    resampler: T,
+}
+
+impl<'a, T : ChannelResampler<'a>> ChannelPlayer<'a, T> {
+    fn new(resampler: T) -> Self {
+	ChannelPlayer {
+	    state: ChannelState::new(),
+	    resampler,
+	}
+    }
+
+    fn play(&mut self, dest: &mut [f32]) {
+	if self.state.volume == 0.0 || self.state.freq == 0 {
+	    return;
+	}
+	self.resampler.play(dest, &mut self.state);
     }
 
     fn set_frequency(&mut self, freq: usize) {
-	self.freq = freq / 32; // Really depends on the instrument
+	self.state.freq = freq;
+	self.resampler.updated_frequency(&mut self.state);
     }
 
-    fn set_instrument(&mut self, _instr: Instrument) {
+    fn set_instrument(&mut self, instr: Instrument<'a>) {
+	self.state.instrument = instr.clone();
+	self.resampler.updated_instrument(&mut self.state);
     }
 
-    fn set_volume(&mut self, _vol: f32) {
+    fn set_volume(&mut self, volume: f32) {
+	self.state.volume = volume;
+    }
+}
+
+
+// ================================================================================
+// SinePlayer
+
+struct SineResampler {
+}
+
+impl SineResampler {
+    fn new() -> Self {
+	SineResampler {
+	}
+    }
+}
+
+impl<'a> ChannelResampler<'a> for SineResampler {
+    fn play(&mut self, buf: &mut [f32], state: &mut ChannelState) {
+	mk_sine(buf, state.freq);
     }
 }
 
 // ================================================================================
 // SincResamplingPlayer
 
-struct SincResamplingPlayer<'a> {
-    freq: usize,
-    volume: f32,
+struct SincResampler {
     current_sample: Vec<f32>,
     current_resampled_sample: Vec<f32>,
     current_outpos: usize,
-    instrument: Option<Instrument<'a>>,
 }
 
-impl<'a> SincResamplingPlayer<'a> {
+impl SincResampler {
     fn new() -> Self {
-	SincResamplingPlayer {
-	    volume: 0.0,
-	    freq: 0,
+	SincResampler {
 	    current_sample: vec![],
 	    current_resampled_sample: vec![],
 	    current_outpos: 0,
-	    instrument: None,
 	}
     }
 
-    fn resample(&mut self) {
+    fn resample(&mut self, channel: &ChannelState) {
 	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
 
 	let params = SincInterpolationParameters {
-	    sinc_len: 32,
+	    sinc_len: 2,
 	    f_cutoff: 0.95,
 	    interpolation: SincInterpolationType::Linear,
 	    oversampling_factor: 16,
-	    window: WindowFunction::BlackmanHarris2,
+	    window: WindowFunction::Hann,
 	};
 	let sample_rate = SAMPLE_RATE as f64;
-	let frequency = self.freq as f64;
+	let frequency = channel.freq as f64;
 	//let pcm_len = self.current_sample.len() as f64;
 
 	//let resample_ratio = sample_rate / (pcm_len * frequency);
@@ -205,7 +258,7 @@ impl<'a> SincResamplingPlayer<'a> {
 	let waves_out = resampler.process(&waves_in, None).unwrap();
 	println!("    #<resample># Converted {} samples at freq {} to length {}, ratio={resample_ratio}",
 		 self.current_sample.len(),
-		 self.freq,
+		 channel.freq,
 		 waves_out[0].len()
 	);
 	self.current_resampled_sample = waves_out[0].clone();
@@ -219,33 +272,24 @@ impl<'a> SincResamplingPlayer<'a> {
     }
 }
 
-impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
-    fn play(&mut self, buf: &mut [f32]) {
-	let volume = self.volume;
-	if self.freq == 0 || volume == 0.0 {
-	    return;
-	}
-
+impl<'a> ChannelResampler<'a> for SincResampler {
+    fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
+	let volume = channel.volume;
 	let mut pos = 0;
 	while pos < buf.len() {
 	    if self.current_outpos >= self.current_resampled_sample.len() {
-		if let Some(ref mut instr) = self.instrument {
-		    match instr.next_sample() {
-			InstrumentUpdate::None => {
-			    self.instrument = None;
-			    return;
-			},
-			InstrumentUpdate::Loop => {
-			    self.current_outpos = 0;
-			},
-			InstrumentUpdate::New(sample) => {
-			    self.current_sample = sample;
-			    self.resample();
-			    self.current_outpos = 0;
-			},
-		    }
-		} else {
-		    return;
+		match channel.instrument.next_sample() {
+		    InstrumentUpdate::None => {
+			return;
+		    },
+		    InstrumentUpdate::Loop => {
+			self.current_outpos = 0;
+		    },
+		    InstrumentUpdate::New(sample) => {
+			self.current_sample = sample;
+			self.resample(channel);
+			self.current_outpos = 0;
+		    },
 		}
 	    }
 	    let copy_len = usize::min(buf.len() - pos,
@@ -259,60 +303,44 @@ impl<'a> ChannelPlayer<'a> for SincResamplingPlayer<'a> {
 	}
     }
 
-    fn set_frequency(&mut self, freq: usize) {
-	self.freq = freq;
-	self.resample();
-    }
-
-    fn set_instrument(&mut self, instr: Instrument<'a>) {
-	self.instrument = Some(instr.clone());
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-	self.volume = volume;
+    fn updated_frequency(&mut self, channel: &mut ChannelState) {
+	self.resample(channel);
     }
 }
 
 // ================================================================================
 // DirectFFTPlayer
 
-struct DirectFFTPlayer<'a> {
-    freq: usize,
-    volume: f32,
+struct DirectFFTResampler {
     current_freq_sample: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
     current_resampled_sample: Vec<f32>,
     current_outpos: usize,
-    instrument: Option<Instrument<'a>>,
     planner: FftPlanner<f32>,
 }
 
-impl<'a> DirectFFTPlayer<'a> {
+impl DirectFFTResampler {
     fn new() -> Self {
-	DirectFFTPlayer {
-	    volume: 0.0,
-	    freq: 0,
+	DirectFFTResampler {
 	    current_freq_sample: vec![],
 	    scratch: vec![],
 	    current_resampled_sample: vec![],
 	    current_outpos: 0,
-	    instrument: None,
 	    planner: FftPlanner::new(),
 	}
     }
 
-    fn resample(&mut self) {
+    fn resample(&mut self, channel: &ChannelState) {
 	let relative_outpos = self.current_outpos as f64 / self.current_resampled_sample.len() as f64;
 
 	let sample_rate = SAMPLE_RATE as f64;
-	let frequency = self.freq as f64;
+	let frequency = channel.freq as f64;
 	let resample_ratio = 1.0 / (frequency / sample_rate);
 
 	let input_len = self.current_freq_sample.len();
 	let output_len = (resample_ratio * input_len as f64) as usize;
 	let fft = self.planner.plan_fft(output_len, FftDirection::Inverse);
 
-	println!("input_len={input_len}, output_len={output_len}, scratchsize={}", self.scratch.len());
 	let mut complex_sample = if input_len < output_len {
 	    let mut c = self.current_freq_sample.clone();
 	    c.resize(output_len, Complex::new(0.0, 0.0));
@@ -330,9 +358,7 @@ impl<'a> DirectFFTPlayer<'a> {
     }
 
     fn ensure_scratch(&mut self, len: usize) {
-	println!("  Ensuring scratch space: is {}, needed {len}", self.scratch.len());
 	if self.scratch.len() < len {
-	    println!("   -> resized");
 	    self.scratch = vec![Complex::new(0.0, 0.0); len];
 	}
     }
@@ -348,67 +374,101 @@ impl<'a> DirectFFTPlayer<'a> {
     }
 
     fn filter_sample(&mut self) {
+	// let len = self.current_freq_sample.len();
+	// let filter_start = len / 5;
+	// self.current_freq_sample[filter_start..len].fill(Complex::new(0.0,0.0));
+	self.butterworth_filter(3, 12500.0);
+    }
+
+    fn butterworth_filter(&mut self,
+			  order: usize, cutoff_freq: f32) {
+	let sample_rate = SAMPLE_RATE as f32;
+	let nyquist = sample_rate / 2.0;
+	let normalized_cutoff = cutoff_freq / nyquist;
+
 	let len = self.current_freq_sample.len();
-	let filter_start = len / 5;
-	self.current_freq_sample[filter_start..len].fill(Complex::new(0.0,0.0));
+	for (i, freq_bin) in self.current_freq_sample.iter_mut().enumerate() {
+            let frequency = (i as f32 / len as f32) * sample_rate;
+            let normalized_frequency = frequency / nyquist;
+
+            // Calculate the Butterworth response
+            let response = 1.0 / (1.0 + (normalized_frequency / normalized_cutoff).powi(2 * order as i32) as f32).sqrt();
+
+            // Apply the filter
+            *freq_bin = *freq_bin * Complex::new(response, 0.0);
+	}
     }
 }
 
-impl<'a> ChannelPlayer<'a> for DirectFFTPlayer<'a> {
-    fn play(&mut self, buf: &mut [f32]) {
-	let volume = self.volume;
-	if self.freq == 0 || volume == 0.0 {
+impl<'a> ChannelResampler<'a> for DirectFFTResampler {
+    fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
+       let volume = channel.volume;
+       let mut pos = 0;
+       while pos < buf.len() {
+           if self.current_outpos >= self.current_resampled_sample.len() {
+               match channel.instrument.next_sample() {
+                   InstrumentUpdate::None => {
+                       return;
+                   },
+                   InstrumentUpdate::Loop => {
+                       self.current_outpos = 0;
+                   },
+                   InstrumentUpdate::New(sample) => {
+                       self.set_current_sample(&sample);
+                       self.resample(channel);
+                       self.current_outpos = 0;
+                   },
+               }
+           }
+           let copy_len = usize::min(buf.len() - pos,
+                                     self.current_resampled_sample.len() - self.current_outpos);
+           for x in 0..copy_len {
+               buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
+           }
+           pos += copy_len;
+           self.current_outpos += copy_len;
+        }
+     }
+
+    fn updated_frequency(&mut self, channel: &mut ChannelState) {
+	self.resample(channel);
+    }
+}
+
+// ================================================================================
+// DirectFFTPlayer
+
+struct LinearResampler {
+    current_sample: Vec<f32>,
+    current_outpos: f32,
+}
+
+impl LinearResampler {
+    fn new() -> Self {
+	LinearResampler {
+	    current_sample: vec![],
+	    current_outpos: 0.0,
+	}
+    }
+}
+
+
+impl<'a> ChannelResampler<'a> for LinearResampler {
+    fn play(&mut self, buf: &mut [f32], channel: &mut ChannelState) {
+	let volume = channel.volume;
+	if channel.freq == 0 || volume == 0.0 {
 	    return;
 	}
-
-	let mut pos = 0;
-	while pos < buf.len() {
-	    if self.current_outpos >= self.current_resampled_sample.len() {
-		if let Some(ref mut instr) = self.instrument {
-		    match instr.next_sample() {
-			InstrumentUpdate::None => {
-			    self.instrument = None;
-			    return;
-			},
-			InstrumentUpdate::Loop => {
-			    self.current_outpos = 0;
-			},
-			InstrumentUpdate::New(sample) => {
-			    self.set_current_sample(&sample);
-			    self.resample();
-			    self.current_outpos = 0;
-			},
-		    }
-		} else {
-		    return;
-		}
-	    }
-	    let copy_len = usize::min(buf.len() - pos,
-				      self.current_resampled_sample.len() - self.current_outpos);
-	    for x in 0..copy_len {
-		buf[x + pos] += self.current_resampled_sample[x + self.current_outpos] * volume;
-	    }
-	    pos += copy_len;
-	    self.current_outpos += copy_len;
-	}
-    }
-
-    fn set_frequency(&mut self, freq: usize) {
-	self.freq = freq;
-	self.resample();
-    }
-
-    fn set_instrument(&mut self, instr: Instrument<'a>) {
-	self.instrument = Some(instr.clone());
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-	self.volume = volume;
+	
     }
 }
 
 
 // ================================================================================
+
+//fn mk_player<'a>() -> ChannelPlayer<'a, SincResampler> {  ChannelPlayer::new(SincResampler::new()) }
+fn mk_player<'a>() -> ChannelPlayer<'a, DirectFFTResampler> {  ChannelPlayer::new(DirectFFTResampler::new()) }
+//fn mk_player<'a>() -> ChannelPlayer<'a, LinearResampler> {  ChannelPlayer::new(LinearResampler::new()) }
 
 /// Iterate over the song's poly iterator until the buffer is full
 pub fn song_to_pcm(sample_data: &SampleData,
@@ -424,15 +484,11 @@ pub fn song_to_pcm(sample_data: &SampleData,
     let duration_milliseconds = (max_pos * 1000) / sample_rate;
     let mut buf_pos_ms = [0, 0, 0, 0];
     let mut players = [
-	SincResamplingPlayer::new(),
-	SincResamplingPlayer::new(),
-	SincResamplingPlayer::new(),
-	SincResamplingPlayer::new(), ];
-    // let mut players = [
-    // 	DirectFFTPlayer::new(),
-    // 	DirectFFTPlayer::new(),
-    // 	DirectFFTPlayer::new(),
-    // 	DirectFFTPlayer::new(), ];
+	mk_player(),
+	mk_player(),
+	mk_player(),
+	mk_player(),
+    ];
 
     let channels = [0, 1, 1, 0];
 
