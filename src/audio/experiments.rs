@@ -1,11 +1,12 @@
 
+use std::collections::VecDeque;
+
 #[allow(unused)]
 use lazy_static::lazy_static;
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
 //use sdl2::libc::STA_FREQHOLD;
-use std::collections::VecDeque;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
 use super::{amber::SongIterator, AQSample, SampleRange};
 use super::blep::BLEP;
@@ -189,6 +190,29 @@ impl<'a, T : ChannelResampler<'a>> ChannelPlayer<'a, T> {
 	    return;
 	}
 	self.resampler.play(dest, &mut self.state);
+    }
+
+
+    /// Like play, but fade volume to zero at the end of dest.
+    /// Does not update the channel volume.
+    fn play_fadeout(&mut self, dest: &mut [f32]) {
+	if dest.len() == 0 {
+	    return;
+	}
+	let mut tmp = vec![0.0; dest.len()];
+	self.play(&mut tmp);
+	let volume_fraction = 1.0 / dest.len() as f32;
+	let mut volume = 1.0;
+	println!("\x1b[41m----------- Fade out\x1b[0m:   {}", dest.len());
+	for i in 0..dest.len() {
+	    let volume_weight = volume * volume;
+	    volume -= volume_fraction;
+	    dest[i] += tmp[i] * volume_weight;
+	    if i < 10 || i + 10 > dest.len() {
+		println!("        {i:3}:{volume:.2} ({:.3} -> {:.3})", tmp[i], tmp[i] * volume_weight);
+	    }
+
+	}
     }
 
     fn set_frequency(&mut self, freq: usize) {
@@ -609,7 +633,8 @@ impl<'a> ChannelResampler<'a> for LinearResampler {
 
     fn updated_instrument(&mut self, _channel: &mut ChannelState<'a>) {
 	if self.current_sample.len() > 0 {
-	    self.current_inpos = 0.5;
+	    self.current_inpos = 0.0;
+	    self.prev = 0.0;
 	}
 	self.current_sample = vec![];
     }
@@ -643,6 +668,10 @@ pub fn song_to_pcm(sample_data: &SampleData,
 	mk_player(),
     ];
 
+    let mut new_instruments: [Option<Instrument>; 4] = [
+	None, None, None, None,
+    ];
+
     let channels = [0, 1, 1, 0];
 
     // FIXME: doesn't necessarily iterate until buffer is full
@@ -672,8 +701,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 		    println!("  #{i}- {dd:?}");
 		    match dd {
 			AQOp::SetSamples(samples) => {
-			    players[i].set_instrument(Instrument::new(sample_data,
-								      samples));
+			    new_instruments[i] = Some(Instrument::new(sample_data, samples));
 			},
 			AQOp::WaitMillis(ms) => {
 			    let start = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
@@ -682,14 +710,22 @@ pub fn song_to_pcm(sample_data: &SampleData,
 			    if stop > max_pos {
 				stop = max_pos;
 			    }
+
+			    let mut isfade = false;
+			    if let Some(instr) = &new_instruments[i] {
+				// Fade out old instrument
+				// FIXME if we want to make this incremental: always want the same fade-out
+				let fade_end = usize::min(stop, start + SAMPLE_RATE / 50);
+				players[i].play_fadeout(&mut buf[start..fade_end]);
+				println!("  after fade at zero: {}", buf[start]);
+				players[i].set_instrument(instr.clone());
+				isfade = true;
+				new_instruments[i] = None;
+			    }
 			    players[i].play(&mut buf[start..stop]);
-			    // mk_audio(&sample_data,
-			    // 	     buf,
-			    // 	     &mut current_instrument,
-			    // 	     &mut last_instr_sample,
-			    // 	     start,
-			    // 	     stop - start,
-			    // 	     freq);
+			    if isfade {
+				println!("  after adding new instr: {}", buf[start]);
+			    }
 			},
 			AQOp::SetVolume(v) => {
 			    players[i].set_volume(v);

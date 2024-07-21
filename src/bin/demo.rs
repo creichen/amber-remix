@@ -637,7 +637,7 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     //instr.play_song_fg();
     let audio = sdl_context.audio()?;
 
-    const DURATION_SECONDS : usize = 2;
+    const DURATION_SECONDS : usize = 20;
 
     let desired_spec = AudioSpecDesired {
         freq: Some(SAMPLE_RATE as i32),
@@ -662,13 +662,14 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     // // let v = buf_left[n];
     // // buf_left[n..(48000*5)].fill(v);
 
-    // for i in n..n+40 {
-    // 	let tick = (i * 50) / 48000;
-    // 	let tickd = i - ((tick * 48000) / 50);
-    // 	println!("  {i} [time:{:8}, tick:{tick}+{tickd:4}] : {:?}",
-    // 		 (i * 1000) / 48000,
-    // 		 &buf_left[i]);
-    // }
+    let n = (480 * SAMPLE_RATE) / 1000 - 10;
+    for i in n..n+40 {
+	let tick = (i * 50) / 48000;
+	let tickd = i - ((tick * 48000) / 50);
+	println!("  {i} [time:{:8}, tick:{tick}+{tickd:4}] : {:?}",
+		 (i * 1000) / 48000,
+		 &buf_left[i]);
+    }
 
     // mk_sine(&mut buf, 0,
     // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
