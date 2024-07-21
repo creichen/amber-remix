@@ -1,6 +1,7 @@
 
 use std::collections::VecDeque;
 
+use hound::{WavWriter, WavSpec, SampleFormat};
 #[allow(unused)]
 use lazy_static::lazy_static;
 use log::{Level, log_enabled, trace, debug, info, warn, error};
@@ -49,6 +50,23 @@ struct Instrument<'a> {
 impl<'a> Instrument<'a> {
     fn new(sample_data: &'a SampleData,
 	   ops: Vec<AQSample>) -> Self {
+
+	// println!("WRITING");
+	// let pcm_data = &sample_data[0xd7b2..0xe0b8];
+	//     let spec = WavSpec {
+	// 	channels: 1,
+	// 	sample_rate: 20000,
+	// 	bits_per_sample: 16,
+	// 	sample_format: SampleFormat::Int,
+	//     };
+	// println!("foo");
+	// let mut writer = WavWriter::create("instr.wav", spec).unwrap();
+	// println!("bar");
+	// for &sample in pcm_data {
+        //     writer.write_sample(sample as i16 * 256).unwrap();
+	// }
+	// println!("quux");
+	// writer.finalize().unwrap();
 	Instrument {
 	    ops,
 	    sample_data: Some(sample_data),
@@ -204,7 +222,7 @@ impl<'a, T : ChannelResampler<'a>> ChannelPlayer<'a, T> {
 	let volume_fraction = 1.0 / dest.len() as f32;
 	let mut volume = 1.0;
 	for i in 0..dest.len() {
-	    let volume_weight = volume * volume;
+	    let volume_weight = volume;// * volume;
 	    volume -= volume_fraction;
 	    dest[i] += tmp[i] * volume_weight;
 	}
@@ -651,6 +669,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 		   buf_left: &mut [f32],
 		   buf_right: &mut [f32],
 		   channel_mask: usize,
+		   start_at_tick: usize,
 		   song: &Song,
 		   sample_rate: usize) {
     let mut poly_it = SongIterator::new(&song,
@@ -678,14 +697,15 @@ pub fn song_to_pcm(sample_data: &SampleData,
 	}
     }
 
+    let mut tick = 0;
+
     // FIXME: doesn't necessarily iterate until buffer is full
     while buf_pos_ms[0] < duration_milliseconds
 	&& buf_pos_ms[1] < duration_milliseconds
 	&& buf_pos_ms[2] < duration_milliseconds
 	&& buf_pos_ms[3] < duration_milliseconds {
-//	let mut d2 = VecDeque::<AQOp>::new();
 
-	println!("--- tick {buf_pos_ms:?}\n");
+	    println!("--- tick {buf_pos_ms:?} {tick} >= {start_at_tick}\n");
 
 	for i in 0..4 {
 	    let mut d = VecDeque::<AQOp>::new();
@@ -712,7 +732,9 @@ pub fn song_to_pcm(sample_data: &SampleData,
 			},
 			AQOp::WaitMillis(ms) => {
 			    let start = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
-			    buf_pos_ms[i] += ms;
+			    if tick >= start_at_tick {
+				buf_pos_ms[i] += ms;
+			    }
 			    let mut stop = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
 			    if stop > max_pos {
 				stop = max_pos;
@@ -721,12 +743,16 @@ pub fn song_to_pcm(sample_data: &SampleData,
 			    if let Some(instr) = &new_instruments[i] {
 				// Fade out old instrument
 				// FIXME if we want to make this incremental: always want the same fade-out
-				let fade_end = usize::min(stop, start + SAMPLE_RATE / 100);
-				players[i].play_fadeout(&mut buf[start..fade_end]);
+				let fade_end = usize::min(stop, start + SAMPLE_RATE / 4000);
+				if tick >= start_at_tick {
+				    players[i].play_fadeout(&mut buf[start..fade_end]);
+				}
 				players[i].set_instrument(instr.clone());
 				new_instruments[i] = None;
 			    }
-			    players[i].play(&mut buf[start..stop]);
+			    if tick >= start_at_tick {
+				players[i].play(&mut buf[start..stop]);
+			    }
 			},
 			AQOp::SetVolume(v) => {
 			    players[i].set_volume(v);
@@ -738,7 +764,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 		    }
 		}
 	    }
-	    //println!(" {dd:?}\n");
 	}
+	    tick += 1;
     }
 }

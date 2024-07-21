@@ -628,7 +628,8 @@ fn float_buffers_merge_to_i16(input_l : &[f32], input_r: &[f32]) -> Vec<i16> {
     result
 }
 
-fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_seconds: usize, channel_mask: usize) -> Result<(), String> {
+fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_seconds: usize,
+		channel_mask: usize, start_at_tick: usize) -> Result<(), String> {
     let song = &data.songs[song_nr];
     println!("{}", song);
     let sdl_context = sdl2::init().unwrap();
@@ -654,6 +655,7 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
 				    &mut buf_left,
 				    &mut buf_right,
 				    channel_mask,
+				    start_at_tick,
 				    song,
 				    SAMPLE_RATE);
 
@@ -661,13 +663,14 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
     // // let v = buf_left[n];
     // // buf_left[n..(48000*5)].fill(v);
 
-    let n = (480 * SAMPLE_RATE) / 1000 - 10;
+    //let n = (480 * SAMPLE_RATE) / 1000 - 10;
+    let n = (960 * SAMPLE_RATE) / 1000 - 10;
     for i in n..n+40 {
 	let tick = (i * 50) / 48000;
 	let tickd = i - ((tick * 48000) / 50);
 	println!("  {i} [time:{:8}, tick:{tick}+{tickd:4}] : {:?}",
 		 (i * 1000) / 48000,
-		 &buf_left[i]);
+		 &buf_right[i]);
     }
 
     // mk_sine(&mut buf, 0,
@@ -746,7 +749,10 @@ fn main() -> io::Result<()> {
 		let channels = if args.len() > 4 {
 		    str::parse::<usize>(&args[4]).unwrap()
 		} else { 15 };
-		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap(), duration, channels);
+		let start_at_tick = if args.len() > 5 {
+		    str::parse::<usize>(&args[5]).unwrap()
+		} else { 0 };
+		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap(), duration, channels, start_at_tick);
 	    },
 	    "iter-song"	=> {
 		let source = &args[2];
