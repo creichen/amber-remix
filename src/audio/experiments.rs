@@ -203,15 +203,10 @@ impl<'a, T : ChannelResampler<'a>> ChannelPlayer<'a, T> {
 	self.play(&mut tmp);
 	let volume_fraction = 1.0 / dest.len() as f32;
 	let mut volume = 1.0;
-	println!("\x1b[41m----------- Fade out\x1b[0m:   {}", dest.len());
 	for i in 0..dest.len() {
 	    let volume_weight = volume * volume;
 	    volume -= volume_fraction;
 	    dest[i] += tmp[i] * volume_weight;
-	    if i < 10 || i + 10 > dest.len() {
-		println!("        {i:3}:{volume:.2} ({:.3} -> {:.3})", tmp[i], tmp[i] * volume_weight);
-	    }
-
 	}
     }
 
@@ -625,8 +620,11 @@ impl<'a> ChannelResampler<'a> for LinearResampler {
 	    // }
 
 
-	    //BLEPPER.apply_blep(buf, pos, v * volume);
-	    buf[pos] += v * volume;
+	    if false {
+		BLEPPER.apply_blep(buf, pos, v * volume);
+	    } else {
+		buf[pos] += v * volume;
+	    }
 	    pos += 1;
         }
     }
@@ -652,6 +650,7 @@ fn mk_player<'a>() -> ChannelPlayer<'a, LinearResampler> {  ChannelPlayer::new(L
 pub fn song_to_pcm(sample_data: &SampleData,
 		   buf_left: &mut [f32],
 		   buf_right: &mut [f32],
+		   channel_mask: usize,
 		   song: &Song,
 		   sample_rate: usize) {
     let mut poly_it = SongIterator::new(&song,
@@ -672,10 +671,18 @@ pub fn song_to_pcm(sample_data: &SampleData,
 	None, None, None, None,
     ];
 
-    let channels = [0, 1, 1, 0];
+    let mut channels = [0, 1, 1, 0];
+    for i in 0..4 {
+	if channel_mask & (1 << i) == 0 {
+	    channels[i] = -1;
+	}
+    }
 
     // FIXME: doesn't necessarily iterate until buffer is full
-    while buf_pos_ms[0] < duration_milliseconds {
+    while buf_pos_ms[0] < duration_milliseconds
+	&& buf_pos_ms[1] < duration_milliseconds
+	&& buf_pos_ms[2] < duration_milliseconds
+	&& buf_pos_ms[3] < duration_milliseconds {
 //	let mut d2 = VecDeque::<AQOp>::new();
 
 	println!("--- tick {buf_pos_ms:?}\n");
@@ -711,21 +718,15 @@ pub fn song_to_pcm(sample_data: &SampleData,
 				stop = max_pos;
 			    }
 
-			    let mut isfade = false;
 			    if let Some(instr) = &new_instruments[i] {
 				// Fade out old instrument
 				// FIXME if we want to make this incremental: always want the same fade-out
-				let fade_end = usize::min(stop, start + SAMPLE_RATE / 50);
+				let fade_end = usize::min(stop, start + SAMPLE_RATE / 100);
 				players[i].play_fadeout(&mut buf[start..fade_end]);
-				println!("  after fade at zero: {}", buf[start]);
 				players[i].set_instrument(instr.clone());
-				isfade = true;
 				new_instruments[i] = None;
 			    }
 			    players[i].play(&mut buf[start..stop]);
-			    if isfade {
-				println!("  after adding new instr: {}", buf[start]);
-			    }
 			},
 			AQOp::SetVolume(v) => {
 			    players[i].set_volume(v);

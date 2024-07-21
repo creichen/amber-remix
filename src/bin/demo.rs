@@ -628,7 +628,7 @@ fn float_buffers_merge_to_i16(input_l : &[f32], input_r: &[f32]) -> Vec<i16> {
     result
 }
 
-fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
+fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_seconds: usize, channel_mask: usize) -> Result<(), String> {
     let song = &data.songs[song_nr];
     println!("{}", song);
     let sdl_context = sdl2::init().unwrap();
@@ -636,8 +636,6 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     //let mut audiocore = audio::init(&sdl_context);
     //instr.play_song_fg();
     let audio = sdl_context.audio()?;
-
-    const DURATION_SECONDS : usize = 20;
 
     let desired_spec = AudioSpecDesired {
         freq: Some(SAMPLE_RATE as i32),
@@ -648,13 +646,14 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     let device = audio.open_queue::<i16, _>(None, &desired_spec)?;
 
     //let target_bytes = SAMPLE_RATE * 4;
-    const BUF_SIZE : usize = SAMPLE_RATE * DURATION_SECONDS;
-    let mut buf_left : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
-    let mut buf_right : [f32; BUF_SIZE] = [0.0; BUF_SIZE];
+    let buf_size : usize = SAMPLE_RATE * duration_seconds;
+    let mut buf_left = vec![0.0; buf_size];
+    let mut buf_right = vec![0.0; buf_size];
 
     audio::experiments::song_to_pcm(&data.sample_data,
 				    &mut buf_left,
 				    &mut buf_right,
+				    channel_mask,
 				    song,
 				    SAMPLE_RATE);
 
@@ -693,7 +692,7 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<()
     // Start playback
     device.resume();
 
-    std::thread::sleep(Duration::from_millis(1000 * DURATION_SECONDS as u64));
+    std::thread::sleep(Duration::from_millis(1000 * duration_seconds as u64));
 
     // Device is automatically closed when dropped
 
@@ -741,7 +740,13 @@ fn main() -> io::Result<()> {
 	    },
 	    "fg-song"	=> {
 		let source = &args[2];
-		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap());
+		let duration = if args.len() > 3 {
+		    str::parse::<usize>(&args[3]).unwrap()
+		} else { 1 };
+		let channels = if args.len() > 4 {
+		    str::parse::<usize>(&args[4]).unwrap()
+		} else { 15 };
+		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap(), duration, channels);
 	    },
 	    "iter-song"	=> {
 		let source = &args[2];
