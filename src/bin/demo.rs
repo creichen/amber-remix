@@ -651,12 +651,16 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
     let mut buf_left = vec![0.0; buf_size];
     let mut buf_right = vec![0.0; buf_size];
 
+    let mut poly_it = SongIterator::new(&song,
+					song.songinfo.first_division,
+					song.songinfo.last_division);
+
     audio::experiments::song_to_pcm(&data.sample_data,
 				    &mut buf_left,
 				    &mut buf_right,
 				    channel_mask,
 				    start_at_tick,
-				    song,
+				    &mut poly_it,
 				    SAMPLE_RATE);
 
     // let n = (48000*4) + 24780;

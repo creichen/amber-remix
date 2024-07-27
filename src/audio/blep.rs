@@ -4,7 +4,7 @@ use rustfft::{FftPlanner, num_complex::Complex};
 use std::f32::consts::PI;
 
 // Parameters
-const BLEP_TABLE_SIZE: usize = 2048;
+const BLEP_TABLE_SIZE: usize = 4096;
 const SAMPLE_RATE: f32 = 25000.0;
 const CUTOFF_FREQ: f32 = 12500.0;
 
