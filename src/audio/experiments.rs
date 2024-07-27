@@ -38,7 +38,7 @@ pub const SAMPLE_RATE : usize = 48_000;
 // Instruments
 #[derive(Clone, Debug)]
 enum InstrumentUpdate {
-    New(Vec<f32>),
+    New(Vec<f32>, bool), // bool: sliding (i.e., preserve offset)
     Loop,
     None
 }
@@ -47,8 +47,8 @@ enum InstrumentUpdate {
 struct Instrument {
     ops: Vec<AQSample>,
     last_range: Option<SampleRange>,
-    // NOT embedding sample data reference to avoid polluting with lifetime modifier
-    // (which would then mess up memory management later)
+    // Deliberately NOT embedding sample data reference to avoid polluting with
+    // a lifetime modifier (which would then mess up memory management later)
 }
 
 impl Instrument {
@@ -69,6 +69,13 @@ impl Instrument {
     fn is_looping(&self) -> bool {
 	match self.ops.as_slice() {
 	    [AQSample::Loop(_), ..] => true,
+	    _ => false,
+	}
+    }
+
+    fn is_sliding(&self) -> bool {
+	match self.ops.as_slice() {
+	    [AQSample::OnceAtOffset(_, _), ..] => true,
 	    _ => false,
 	}
     }
@@ -112,7 +119,7 @@ impl Instrument {
 	if !self.is_looping() {
 	    self.ops = self.ops[1..self.ops.len()].to_vec();
 	}
-	return InstrumentUpdate::New(sample);
+	return InstrumentUpdate::New(sample, self.is_sliding());
     }
 }
 
@@ -313,10 +320,12 @@ impl ChannelResampler for SincResampler {
 		    InstrumentUpdate::Loop => {
 			self.current_inpos = 0;
 		    },
-		    InstrumentUpdate::New(sample) => {
+		    InstrumentUpdate::New(sample, is_sliding) => {
 			self.current_sample = sample;
 			self.resample(channel);
-			self.current_inpos = 0;
+			if !is_sliding || self.current_inpos >= self.current_sample.len() {
+			    self.current_inpos = 0;
+			}
 		    },
 		}
 	    }
@@ -439,10 +448,12 @@ impl ChannelResampler for DirectFFTResampler {
                     InstrumentUpdate::Loop => {
 			self.current_inpos = 0;
                     },
-                    InstrumentUpdate::New(sample) => {
+                    InstrumentUpdate::New(sample, is_sliding) => {
 			self.set_current_sample(&sample);
 			self.resample(channel);
-			self.current_inpos = 0;
+			if !is_sliding || self.current_inpos >= sample.len() {
+			    self.current_inpos = 0;
+			}
                     },
 		}
             }
@@ -496,10 +507,12 @@ impl ChannelResampler for NearestResampler {
 			self.current_inpos = 0.0;
 			inpos = 0;
                     },
-                    InstrumentUpdate::New(sample) => {
+                    InstrumentUpdate::New(sample, is_sliding) => {
 			self.current_sample = sample;
 			self.current_inpos = 0.0;
-			inpos = 0;
+			if !is_sliding || inpos >= self.current_sample.len() {
+			    inpos = 0;
+			}
                     },
 		}
             }
@@ -543,7 +556,7 @@ impl LinearResampler {
 		    trace!("  <loop>");
 		    return Some(self.current_inpos as usize + inpos_delta);
                 },
-                InstrumentUpdate::New(sample) => {
+                InstrumentUpdate::New(sample, is_sliding) => {
 		    trace!("  <new sample>");
 		    if self.current_sample.len() > 0 {
 			trace!("   -- Old:");
@@ -561,8 +574,10 @@ impl LinearResampler {
 			    trace!("      {i:8}: {:}", self.current_sample[i]);
 			}
 		    }
-		    self.current_inpos = 0.0;
-		    return Some(0);
+		    if !is_sliding || self.current_inpos as usize >= self.current_sample.len() {
+			self.current_inpos = 0.0;
+		    }
+		    return Some(inpos as usize);
                     },
 		}
         }

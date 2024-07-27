@@ -847,6 +847,36 @@ impl ArcDemoSongTracer {
 	}
     }
 
+    fn draw_song_info(&self,  canvas: &mut Canvas<Window>,
+		      pos: Rect,
+		      _start_tick: usize,
+		      song_nr: usize,
+		      song: &Song,
+		      font: &Font) {
+	let max_lines = pos.h / 15;
+	let mut num_lines = 0;
+	let mut xoffset = 0;
+	let mut yoffset = 0;
+	let s = format!("Song: {song_nr}");
+	font.draw_to(canvas, &s,
+		     pos.x as isize, (pos.y + yoffset) as isize,
+		     Color::RGBA(0x80, 0xff, 0x80, 0xff));
+
+	for (i, div) in song.divisions.iter().enumerate() {
+	    let s = format!("D{i:02x} {div}");
+	    yoffset += 15;
+	    font.draw_to(canvas, &s,
+			 pos.x as isize + xoffset, (pos.y + yoffset) as isize,
+			 Color::RGBA(0xff, 0xff, 0x20, 0xff));
+	    num_lines += 1;
+	    if num_lines > max_lines {
+		yoffset = 0;
+		num_lines = 0;
+		xoffset += 600;
+	    }
+	}
+    }
+
     fn draw_audio_track(&self, canvas: &mut Canvas<Window>,
 			pos: Rect,
 			channel: u8,
@@ -854,8 +884,6 @@ impl ArcDemoSongTracer {
 			downscale: i32,
 			font: &Font,
     ) {
-	println!("------------ {start_tick}");
-
 	let tick_length = self.tick_length();
 	let height = pos.h;
 	let y_baseline = pos.y + height / 2;
@@ -981,8 +1009,7 @@ impl<'a> Font<'a> {
 
 
 fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
-    let song = &data.songs[song_nr];
-    println!("{}", song);
+    let mut song = &data.songs[song_nr];
     let sdl_context = sdl2::init().unwrap();
 
     let audiocore = audio::acore::init(&sdl_context);
@@ -1002,7 +1029,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
     let mut scale : usize = 8;
 
 
-    let window = video_subsystem.window("amber-remix", 3000, 2000)
+    let window = video_subsystem.window("amber-remix", 3000, 2100)
         .position_centered()
         .build()
         .unwrap();
@@ -1010,7 +1037,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
     let mut canvas = window.into_canvas().build().unwrap();
     //let creator = canvas.texture_creator();
 
-    let mut new_song_nr = None;
+    let mut new_song_nr = Some(song_nr);
     let mut current_song_nr = song_nr;
     let mut start_tick: usize = 0;
     let mut following_tick = true;
@@ -1045,9 +1072,17 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 	    }
 	}
 
+	song_tracer.draw_song_info(&mut canvas,
+				   sdl2::rect::Rect::new(100, 10,
+							 waveform_pixel_width, 450),
+				   start_tick,
+				   current_song_nr,
+				   song,
+				   &font);
+
 	for c in 0..4 {
 	    song_tracer.draw_audio_track(&mut canvas,
-					 sdl2::rect::Rect::new(100, 400 + (c as i32 * 400),
+					 sdl2::rect::Rect::new(100, 500 + (c as i32 * 400),
 							       waveform_pixel_width, 256),
 					 c,
 					 start_tick,
@@ -1087,7 +1122,8 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 	if let Some(nr) = new_song_nr {
 	    new_song_nr = None;
 	    current_song_nr = nr;
-	    let song = &data.songs[nr];
+	    song = &data.songs[nr];
+	    println!("{}", song);
 	    poly_it = SongIterator::new(&song,
 					song.songinfo.first_division,
 					song.songinfo.last_division);
