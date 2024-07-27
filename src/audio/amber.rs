@@ -888,7 +888,7 @@ pub fn play_monopattern(song : &Song, pat : &Monopattern, note : Note) -> ArcIt 
 //
 // Handles a polyphonic song
 
-
+#[derive(Clone)]
 pub struct SongIterator {
     songdb : ArcSDB,
     monopatterns : Vec<Monopattern>,

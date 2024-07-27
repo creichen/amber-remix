@@ -1,6 +1,7 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+use amber_remix::audio::experiments::SongPlayerAudioSource;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use sdl2::audio::AudioSpecDesired;
@@ -609,15 +610,15 @@ fn float_to_i16(x: f32) -> i16 {
     { if x < -1.0 { -0x4000 } else { (x * 32767.0) as i16 }}
 }
 
-fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
-    let mut result = Vec::new();
-    for xr in input {
-	// FIXME: why can't I iterate more elegantly?
-	let x = *xr;
-	result.push(float_to_i16(x));
-    }
-    result
-}
+// fn float_buffer_to_i16(input : &[f32]) -> Vec<i16> {
+//     let mut result = Vec::new();
+//     for xr in input {
+// 	// FIXME: why can't I iterate more elegantly?
+// 	let x = *xr;
+// 	result.push(float_to_i16(x));
+//     }
+//     result
+// }
 
 fn float_buffers_merge_to_i16(input_l : &[f32], input_r: &[f32]) -> Vec<i16> {
     let mut result = Vec::new();
@@ -651,16 +652,12 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
     let mut buf_left = vec![0.0; buf_size];
     let mut buf_right = vec![0.0; buf_size];
 
-    let mut poly_it = SongIterator::new(&song,
-					song.songinfo.first_division,
-					song.songinfo.last_division);
-
     audio::experiments::song_to_pcm(&data.sample_data,
 				    &mut buf_left,
 				    &mut buf_right,
 				    channel_mask,
 				    start_at_tick,
-				    &mut poly_it,
+				    song,
 				    SAMPLE_RATE);
 
     // let n = (48000*4) + 24780;
@@ -707,6 +704,85 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
 }
 
 
+fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
+    let song = &data.songs[song_nr];
+    println!("{}", song);
+    let sdl_context = sdl2::init().unwrap();
+
+    let audiocore = audio::acore::init(&sdl_context);
+    let mut mixer = audiocore.mixer();
+    let mut song_player = SongPlayerAudioSource::new(&data.sample_data);
+    mixer.add_source(song_player.player());
+    let mut poly_it = SongIterator::new(&song,
+				    song.songinfo.first_division,
+				    song.songinfo.last_division);
+
+
+    // Graphics
+
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+
+    let window = video_subsystem.window("amber-remix", 3000, 1600)
+        .position_centered()
+        .build()
+        .unwrap();
+
+    let mut canvas = window.into_canvas().build().unwrap();
+    //let creator = canvas.texture_creator();
+
+    let mut new_song_nr = None;
+    let mut current_song_nr = song_nr;
+
+    song_player.play(&poly_it);
+
+    canvas.set_draw_color(Color::RGBA(0, 0, 255, 255));
+    canvas.clear();
+    canvas.present();
+    let mut event_pump = sdl_context.event_pump().unwrap();
+    'running: loop {
+        canvas.set_draw_color(Color::RGBA(0, 0, 255, 0xff));
+        canvas.clear();
+
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit {..} |
+                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+		    break 'running
+                },
+                Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
+		    match kc {
+			Keycode::BACKSPACE => { new_song_nr = Some(current_song_nr) },
+			Keycode::LEFT =>  { if current_song_nr > 0 { new_song_nr = Some(current_song_nr - 1); } },
+			Keycode::RIGHT => { if current_song_nr < data.songs.len() - 1 { new_song_nr = Some(current_song_nr + 1); } },
+			Keycode::Return => {},
+			Keycode::SPACE  => { song_player.stop(); }
+			_ => {
+			}
+		    }
+                },
+                _ => {}
+            }
+        }
+
+	if let Some(nr) = new_song_nr {
+	    new_song_nr = None;
+	    current_song_nr = nr;
+	    let song = &data.songs[nr];
+	    poly_it = SongIterator::new(&song,
+					song.songinfo.first_division,
+					song.songinfo.last_division);
+	    song_player.play(&poly_it);
+	}
+
+        canvas.present();
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 50));
+    }
+
+    Ok(())
+}
+
+
 fn play_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
     let sdl_context = sdl2::init().unwrap();
 
@@ -744,6 +820,10 @@ fn main() -> io::Result<()> {
 	    "song"	=> {
 		let source = &args[2];
 		play_song(&data, str::parse::<usize>(source).unwrap());
+	    },
+	    "song2"	=> {
+		let source = &args[2];
+		play_song2(&data, str::parse::<usize>(source).unwrap()).unwrap();
 	    },
 	    "fg-song"	=> {
 		let source = &args[2];

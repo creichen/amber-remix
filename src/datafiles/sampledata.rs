@@ -5,6 +5,7 @@ use core::fmt;
 use std::ops::Index;
 
 /// PCM sample data (for the entire samples file)
+#[derive(Clone)]
 pub struct SampleData {
     pub data : Vec<i8>,
 }
