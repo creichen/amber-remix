@@ -1,12 +1,15 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
-use amber_remix::audio::experiments::SongPlayerAudioSource;
+use amber_remix::audio::experiments::{SongPlayerAudioSource, SongTracer};
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use sdl2::audio::AudioSpecDesired;
+use sdl2::video::Window;
+use sdl2::ttf::Sdl2TtfContext;
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::{time::Duration, io, env, fs, path::Path};
 
 use amber_remix::audio::{Mixer, AQOp, SampleRange, AudioIterator};
@@ -704,6 +707,279 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
 }
 
 
+#[derive(Clone)]
+struct ChannelTraceFrame {
+    messages: Vec<Vec<(String, String)>>,
+    data: Vec<f32>,
+}
+
+impl ChannelTraceFrame {
+    fn new() -> ChannelTraceFrame {
+	ChannelTraceFrame {
+	    messages: vec![Vec::new(), Vec::new(), Vec::new()],
+	    data: Vec::new(),
+	}
+    }
+
+    fn subsystem_index(s: &'static str) -> usize {
+	match s {
+	    "chanit" => 0,
+	    _ => 2,
+	}
+    }
+}
+
+struct TraceFrame {
+    channels: [ChannelTraceFrame; 4],
+}
+
+impl TraceFrame {
+    fn new() -> TraceFrame {
+	TraceFrame {
+	    channels: [
+		ChannelTraceFrame::new(),
+		ChannelTraceFrame::new(),
+		ChannelTraceFrame::new(),
+		ChannelTraceFrame::new(),
+	    ]
+	}
+    }
+}
+
+struct DemoSongTracer {
+    info: Vec<TraceFrame>,
+    latest_tick: usize,
+}
+
+impl DemoSongTracer {
+    fn new() -> DemoSongTracer {
+	DemoSongTracer {
+	    info: Vec::new(),
+	    latest_tick: 0,
+	}
+    }
+
+    fn ensure_info(&mut self, tick: usize) {
+	while self.info.len() < tick + 1 {
+	    self.info.push(TraceFrame::new());
+	}
+    }
+}
+
+impl SongTracer for DemoSongTracer {
+    fn trace_buf(&mut self, tick: usize, channel: u8, buf: Vec<f32>) {
+	self.ensure_info(tick);
+	self.info[tick].channels[channel as usize].data = buf;
+	self.latest_tick = usize::max(tick, self.latest_tick);
+    }
+
+    fn change_song(&mut self) {
+	self.info = Vec::new();
+	self.latest_tick = 0;
+    }
+
+    fn trace_message(&mut self, tick: usize, channel: u8,
+		     subsystem: &'static str,
+		     category: &'static str,
+		     message: String) {
+	self.ensure_info(tick);
+	self.info[tick].channels[channel as usize].messages[ChannelTraceFrame::subsystem_index(subsystem)].push(
+	    (category.into(), message));
+    }
+}
+
+struct ArcDemoSongTracer {
+    t : Arc<Mutex<DemoSongTracer>>,
+}
+
+impl ArcDemoSongTracer {
+    fn new() -> ArcDemoSongTracer {
+	ArcDemoSongTracer {
+	    t: Arc::new(Mutex::new(DemoSongTracer::new()))
+	}
+    }
+
+    fn tracer(&self) -> Arc<Mutex<DemoSongTracer>> {
+	return self.t.clone();
+    }
+
+    fn frame(&self, channel: u8, tick: usize) -> ChannelTraceFrame {
+	let guard = self.t.lock().unwrap();
+	if guard.info.len() <= tick {
+	    return ChannelTraceFrame::new();
+	}
+	return guard.info[tick].channels[channel as usize].clone();
+    }
+
+    fn latest_tick(&self) -> usize {
+	let guard = self.t.lock().unwrap();
+	return guard.latest_tick;
+    }
+
+    fn tick_length(&self) -> usize {
+	let t = self.frame(0, 0);
+	return t.data.len();
+    }
+
+
+    fn draw_channel_info_at(&self,
+			    data: &ChannelTraceFrame,
+			    canvas: &mut Canvas<Window>,
+			    tick: usize,
+			    pos: Rect,
+			    font: &Font) {
+	let mut yoffset = 0;
+	let s = format!("{tick}");
+	font.draw_to(canvas, &s,
+		     pos.x as isize, (pos.y + yoffset) as isize,
+		     Color::RGBA(0x00, 0xff, 0x20, 0xff));
+	yoffset += 15;
+
+	for (_i, vecs) in data.messages.iter().enumerate() {
+	    for (t, v) in vecs {
+		let s = format!("{} {}", t, v);
+		font.draw_to(canvas, &s,
+			     pos.x as isize, (pos.y + yoffset) as isize,
+			     Color::RGBA(0xff, 0xff, 0x20, 0xff));
+
+		yoffset += 15;
+	    }
+	}
+    }
+
+    fn draw_audio_track(&self, canvas: &mut Canvas<Window>,
+			pos: Rect,
+			channel: u8,
+			start_tick: usize,
+			downscale: i32,
+			font: &Font,
+    ) {
+	println!("------------ {start_tick}");
+
+	let tick_length = self.tick_length();
+	let height = pos.h;
+	let y_baseline = pos.y + height / 2;
+	canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+	canvas.fill_rect(pos).unwrap();
+	canvas.set_draw_color(Color::RGBA(0, 0, 128, 255));
+	canvas.draw_line(sdl2::rect::Point::new(pos.x, y_baseline),
+			 sdl2::rect::Point::new(pos.x + pos.w - 1, y_baseline)).unwrap();
+	let mut last_y = 0.0;
+	let mut xpos = 0;
+
+	let mut tick = start_tick + 1; // fake value to force update
+	let mut next_tick = start_tick;
+	let mut data = ChannelTraceFrame::new();
+
+	let mut sample_within_tick = 0;
+	let xfrac = 1.0 / downscale as f32;
+	let y_baseline = y_baseline as f32;
+	let mut last_ypos = y_baseline;
+	let xoffset = pos.x as f32;
+	while xpos < pos.w * downscale {
+	    let last_xpos = if xpos == 0 { 0 } else { xpos - 1 };
+	    if next_tick != tick {
+		tick = next_tick;
+		data = self.frame(channel, tick);
+		self.draw_channel_info_at(&data, canvas,
+					  tick,
+					  sdl2::rect::Rect::new(xoffset as i32 + (xpos / downscale), pos.y + pos.h,
+								// no idea what to putthere yet
+								100, 100),
+					  font);
+	    }
+	    let y = if sample_within_tick >= data.data.len() { 0.0 } else {data.data[sample_within_tick]};
+	    let ypos = y_baseline + ((y * height as f32) * 0.49);
+	    if y == last_y {
+		// single pixel
+		canvas.set_draw_color(Color::RGBA(0xa0, 0xa0, 0xa0, 0xff));
+		canvas.draw_fpoint(sdl2::rect::FPoint::new(xoffset + xpos as f32 * xfrac, ypos)).unwrap();
+	    } else {
+		if y > last_y {
+		    canvas.set_draw_color(Color::RGBA(0x00, 0x80 + ((((y - last_y) / 4.0) * 255.0) as u8), 0, 0x7f));
+		} else {
+		    canvas.set_draw_color(Color::RGBA(0x80 + (((last_y - y) / 4.0) * 255.0) as u8, 0, 0, 0x7f));
+		}
+		canvas.draw_fline(sdl2::rect::FPoint::new(xoffset + last_xpos as f32 * xfrac, last_ypos),
+				  sdl2::rect::FPoint::new(xoffset + xpos as f32 * xfrac, ypos)).unwrap();
+	    }
+
+	    sample_within_tick += 1;
+	    xpos += 1;
+	    last_y = y;
+	    last_ypos = ypos;
+	    if sample_within_tick == tick_length {
+		next_tick = tick + 1;
+		sample_within_tick = 0;
+	    }
+	}
+    }
+}
+
+
+struct Font<'a> {
+    font : sdl2::ttf::Font<'a, 'a>,
+}
+
+impl<'a> Font<'a> {
+    pub fn new_ttf(ttf_context : &'a Sdl2TtfContext, path : &str, size : usize) -> Font<'a> {
+	// TODO: include font or use the existing one
+	let mut font = ttf_context.load_font(path, size as u16).unwrap();
+	font.set_style(sdl2::ttf::FontStyle::NORMAL);
+	Font {
+	    font
+	}
+    }
+
+    pub fn draw_to(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color) {
+	let creator = canvas.texture_creator();
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+    }
+    pub fn draw_to_with_outline(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color, outline_color : Color) {
+	let creator = canvas.texture_creator();
+
+	let outline_surface = self.font
+	    .render(text)
+	    .blended(outline_color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let outline_texture = creator
+	    .create_texture_from_surface(&outline_surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = outline_texture.query();
+	for xdelta in [-1, 1] {
+	    for ydelta in [-1, 1] {
+		let target = Rect::new(xdelta + x as i32, ydelta + y as i32, width, height);
+		canvas.copy(&outline_texture, None, Some(target)).unwrap();
+	    }
+	}
+
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+    }
+}
+
+
 fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
     let song = &data.songs[song_nr];
     println!("{}", song);
@@ -712,6 +988,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
     let audiocore = audio::acore::init(&sdl_context);
     let mut mixer = audiocore.mixer();
     let mut song_player = SongPlayerAudioSource::new(&data.sample_data);
+    let song_tracer = ArcDemoSongTracer::new();
     mixer.add_source(song_player.player());
     let mut poly_it = SongIterator::new(&song,
 				    song.songinfo.first_division,
@@ -722,8 +999,10 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+    let mut scale : usize = 8;
 
-    let window = video_subsystem.window("amber-remix", 3000, 1600)
+
+    let window = video_subsystem.window("amber-remix", 3000, 2000)
         .position_centered()
         .build()
         .unwrap();
@@ -733,16 +1012,49 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 
     let mut new_song_nr = None;
     let mut current_song_nr = song_nr;
+    let mut start_tick: usize = 0;
+    let mut following_tick = true;
 
     song_player.play(&poly_it);
+    song_player.set_tracer(song_tracer.tracer());
 
-    canvas.set_draw_color(Color::RGBA(0, 0, 255, 255));
+    let font_size=10;
+    // --------------------------------------------------------------------------------
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
+    let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", font_size);
+    // --------------------------------------------------------------------------------
+
+
+    canvas.set_draw_color(Color::RGBA(0, 0, 0x40, 255));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     'running: loop {
-        canvas.set_draw_color(Color::RGBA(0, 0, 255, 0xff));
+        canvas.set_draw_color(Color::RGBA(0, 0, 0x40, 0xff));
         canvas.clear();
+
+	let waveform_pixel_width: u32 = 2800;
+
+	if following_tick {
+	    let tick_pixel_width = (mixer.sample_rate / (50 * scale as usize)) as u32;
+	    let latest_tick = song_tracer.latest_tick() as u32;
+	    if latest_tick * tick_pixel_width < waveform_pixel_width {
+		start_tick = 0;
+	    } else {
+		start_tick = (latest_tick - (waveform_pixel_width / tick_pixel_width)) as usize;
+	    }
+	}
+
+	for c in 0..4 {
+	    song_tracer.draw_audio_track(&mut canvas,
+					 sdl2::rect::Rect::new(100, 400 + (c as i32 * 400),
+							       waveform_pixel_width, 256),
+					 c,
+					 start_tick,
+					 scale as i32,
+					 &font
+	    );
+	}
 
         for event in event_pump.poll_iter() {
             match event {
@@ -753,10 +1065,17 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
                 Event::KeyDown { keycode : Some(kc), repeat:false, .. } => {
 		    match kc {
 			Keycode::BACKSPACE => { new_song_nr = Some(current_song_nr) },
-			Keycode::LEFT =>  { if current_song_nr > 0 { new_song_nr = Some(current_song_nr - 1); } },
-			Keycode::RIGHT => { if current_song_nr < data.songs.len() - 1 { new_song_nr = Some(current_song_nr + 1); } },
+			Keycode::F11 =>  { if current_song_nr > 0 { new_song_nr = Some(current_song_nr - 1); } },
+			Keycode::F12 => { if current_song_nr < data.songs.len() - 1 { new_song_nr = Some(current_song_nr + 1); } },
 			Keycode::Return => {},
-			Keycode::SPACE  => { song_player.stop(); }
+			Keycode::SPACE  => { song_player.stop(); },
+			Keycode::RIGHTBRACKET => { scale <<= 1 },
+			Keycode::LEFTBRACKET => { if scale > 1 { scale >>= 1 } },
+			Keycode::KP_4 => { following_tick = false;
+					   start_tick = if start_tick < scale { 0 } else { start_tick - scale } },
+			Keycode::KP_6 => { following_tick = false;
+					    start_tick += scale },
+			Keycode::KP_ENTER => { following_tick = true; },
 			_ => {
 			}
 		    }
@@ -773,6 +1092,8 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 					song.songinfo.first_division,
 					song.songinfo.last_division);
 	    song_player.play(&poly_it);
+	    start_tick = 0;
+	    following_tick = true;
 	}
 
         canvas.present();
@@ -822,8 +1143,7 @@ fn main() -> io::Result<()> {
 		play_song(&data, str::parse::<usize>(source).unwrap());
 	    },
 	    "song2"	=> {
-		let source = &args[2];
-		play_song2(&data, str::parse::<usize>(source).unwrap()).unwrap();
+		play_song2(&data, 0).unwrap();
 	    },
 	    "fg-song"	=> {
 		let source = &args[2];

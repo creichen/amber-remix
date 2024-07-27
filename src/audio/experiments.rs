@@ -11,7 +11,7 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationPar
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
 //use sdl2::libc::STA_FREQHOLD;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
-use super::{amber::SongIterator, AQSample, SampleRange};
+use super::{amber::SongIterator, AQSample, SampleRange, dsp::streamlog::{StreamLogger, self, StreamLogClient}};
 use super::blep::BLEP;
 use super::acore::AudioSource;
 
@@ -103,12 +103,12 @@ impl Instrument {
 	    return InstrumentUpdate::None;
 	}
 	if new_range == self.last_range {
-	    println!("    -> looping sample: {:?}", self.current_sample_range());
+	    trace!("    -> looping sample: {:?}", self.current_sample_range());
 	    return InstrumentUpdate::Loop;
 	}
 	// otherwise we have an actual update
 	let sample = self.current_sample(sample_data);
-	println!("    -> single sample: {:?}", self.current_sample_range());
+	trace!("    -> single sample: {:?}", self.current_sample_range());
 	if !self.is_looping() {
 	    self.ops = self.ops[1..self.ops.len()].to_vec();
 	}
@@ -284,7 +284,7 @@ impl SincResampler {
 
 	let waves_in = vec![&self.current_sample];
 	let waves_out = resampler.process(&waves_in, None).unwrap();
-	println!("    #<resample># Converted {} samples at freq {} to length {}, ratio={resample_ratio}",
+	trace!("    #<resample># Converted {} samples at freq {} to length {}, ratio={resample_ratio}",
 		 self.current_sample.len(),
 		 channel.freq,
 		 waves_out[0].len()
@@ -484,7 +484,7 @@ impl ChannelResampler for NearestResampler {
 	let volume = channel.volume;
 	let mut pos = 0;
 	let stride = channel.inv_resample_ratio() as f32;
-	println!(" stride={stride}");
+	trace!(" stride={stride}");
 	while pos < buf.len() {
 	    let mut inpos = self.current_inpos as usize;
             if inpos >= self.current_sample.len() {
@@ -535,30 +535,30 @@ impl LinearResampler {
         if inpos >= self.current_sample.len() {
 	    match channel.instrument.next_sample(sample_data) {
                 InstrumentUpdate::None => {
-		    println!("  <none>");
+		    trace!("  <none>");
 		    return None;
                 },
                 InstrumentUpdate::Loop => {
 		    self.current_inpos -= self.current_sample.len() as f32;
-		    println!("  <loop>");
+		    trace!("  <loop>");
 		    return Some(self.current_inpos as usize + inpos_delta);
                 },
                 InstrumentUpdate::New(sample) => {
-		    println!("  <new sample>");
+		    trace!("  <new sample>");
 		    if self.current_sample.len() > 0 {
-			println!("   -- Old:");
+			trace!("   -- Old:");
 			for i in 0..10 {
-			    println!("      {i:8}: {:}", self.current_sample[i]);
+			    trace!("      {i:8}: {:}", self.current_sample[i]);
 			}
 			for i in self.current_sample.len() - 10..self.current_sample.len() {
-			    println!("      {i:8}: {:}", self.current_sample[i]);
+			    trace!("      {i:8}: {:}", self.current_sample[i]);
 			}
 		    }
 		    self.current_sample = sample;
 		    if self.current_sample.len() > 0 {
-			println!("   -- New:");
+			trace!("   -- New:");
 			for i in 0..10 {
-			    println!("      {i:8}: {:}", self.current_sample[i]);
+			    trace!("      {i:8}: {:}", self.current_sample[i]);
 			}
 		    }
 		    self.current_inpos = 0.0;
@@ -576,7 +576,7 @@ impl ChannelResampler for LinearResampler {
 	let volume = channel.volume;
 	let mut pos = 0;
 	let stride = channel.inv_resample_ratio() as f32;
-	println!(" stride={stride}");
+	trace!(" stride={stride}");
 	while pos < buf.len() {
 	    let inpos_i = match self.ensure_sample(sample_data, channel, 0) {
 		None => return,
@@ -688,7 +688,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 	&& buf_pos_ms[2] < duration_milliseconds
 	&& buf_pos_ms[3] < duration_milliseconds {
 
-	    println!("--- tick {buf_pos_ms:?} {tick} >= {start_at_tick}\n");
+	    trace!("--- tick {buf_pos_ms:?} {tick} >= {start_at_tick}\n");
 
 	for i in 0..4 {
 	    let mut d = VecDeque::<AQOp>::new();
@@ -708,7 +708,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
 		    {&mut*buf_left } else { &mut*buf_right };
 
 		for dd in d {
-		    println!("  #{i}- {dd:?}");
+		    trace!("  #{i}- {dd:?}");
 		    match dd {
 			AQOp::SetSamples(samples) => {
 			    new_instruments[i] = Some(Instrument::new(samples));
@@ -757,7 +757,6 @@ struct SingleSongPlayer {
     buf_pos_ms: [usize; 4],
     poly_it: SongIterator,
     new_instruments: [Option<Instrument>; 4],
-    channels: [i8; 4],
     players: [DefaultChannelPlayer; 4],
     tick: usize,
 }
@@ -768,7 +767,6 @@ impl SingleSongPlayer {
 	    buf_pos_ms: [0, 0, 0, 0],
 	    poly_it: (*poly_it).clone(),
 	    new_instruments: [None, None, None, None],
-	    channels: [0, 1, 1, 0],
 	    players: [
 		mk_player(),
 		mk_player(),
@@ -779,80 +777,117 @@ impl SingleSongPlayer {
 	}
     }
 
-    fn fill(&mut self, sample_data: &SampleData, buf_left: &mut [f32], buf_right: &mut [f32], sample_rate: usize) {
-	debug!("SingleSongPlayer::fill({}, {}, {sample_rate})", buf_left.len(), buf_right.len());
-	for i in 0..4 {
-	    let mut d = VecDeque::<AQOp>::new();
-	    let out_channel = self.channels[i];
-	    if out_channel < 0 {
-		// suppress
-		self.poly_it.channels[i].next(&mut d);
-	    } else {
-		self.poly_it.channels[i].next(&mut d);
-		if self.poly_it.channels[i].is_done() {
-		    // FIXME: this should happen when ALL channels are done
-		    // (though that should normally coincide.....)
-		    self.poly_it.next_division();
-		}
+    fn set_channel_logger(&mut self, channel: u8, logger: Arc<Mutex<dyn StreamLogger>>) {
+	self.poly_it.channels[channel as usize].set_logger(logger);
+    }
 
-		let buf = if out_channel == 0
-		    {&mut*buf_left } else { &mut*buf_right };
+    fn fill(&mut self, sample_data: &SampleData, channel: u8, buf: &mut [f32], sample_rate: usize) {
+	debug!("SingleSongPlayer::fill({}, {sample_rate})", buf.len());
+	let i = channel as usize;
+	let mut d = VecDeque::<AQOp>::new();
+	self.poly_it.channels[i].next(&mut d);
+	if self.poly_it.channels[i].is_done() {
+	    // FIXME: this should happen when ALL channels are done
+	    // (though that should normally coincide.....)
+	    self.poly_it.next_division();
+	}
 
-		for dd in d {
-		    println!("  #{i}- {dd:?}");
-		    match dd {
-			AQOp::SetSamples(samples) => {
-			    self.new_instruments[i] = Some(Instrument::new(samples));
-			},
-			AQOp::WaitMillis(ms) => {
-			    let start = 0;
-			    let stop = buf.len();
-			    // let start = (sample_rate * self.buf_pos_ms[i]) / 1000;
-			    self.buf_pos_ms[i] += ms;
-			    // let stop = (sample_rate * self.buf_pos_ms[i]) / 1000;
+	for dd in d {
+	    trace!("  #{i}- {dd:?}");
+	    match dd {
+		AQOp::SetSamples(samples) => {
+		    self.new_instruments[i] = Some(Instrument::new(samples));
+		},
+		AQOp::WaitMillis(ms) => {
+		    let start = 0;
+		    let stop = buf.len();
+		    // let start = (sample_rate * self.buf_pos_ms[i]) / 1000;
+		    self.buf_pos_ms[i] += ms;
+		    // let stop = (sample_rate * self.buf_pos_ms[i]) / 1000;
 
-			    if let Some(instr) = &self.new_instruments[i] {
-				// Fade out old instrument
-				// FIXME if we want to make this incremental: always want the same fade-out
-				let fade_end = usize::min(stop, start + sample_rate / 4000);
-				self.players[i].play_fadeout(sample_data, &mut buf[start..fade_end]);
-				self.players[i].set_instrument(instr.clone());
-				self.new_instruments[i] = None;
-			    }
-			    self.players[i].play(sample_data, &mut buf[start..stop]);
-			},
-			AQOp::SetVolume(v) => {
-			    self.players[i].set_volume(v);
-			},
-			AQOp::SetFreq(f) => // freq = f / 32,
-			    self.players[i].set_frequency(f), // FIXME: workaround for period_to_freq
-			//AQOp::Timeslice => poly_it.adv,
-			_ => {},
+		    if let Some(instr) = &self.new_instruments[i] {
+			// Fade out old instrument
+			// FIXME if we want to make this incremental: always want the same fade-out
+			let fade_end = usize::min(stop, start + sample_rate / 4000);
+			self.players[i].play_fadeout(sample_data, &mut buf[start..fade_end]);
+			self.players[i].set_instrument(instr.clone());
+			self.new_instruments[i] = None;
 		    }
-		}
+		    self.players[i].play(sample_data, &mut buf[start..stop]);
+		},
+		AQOp::SetVolume(v) => {
+		    self.players[i].set_volume(v);
+		},
+		AQOp::SetFreq(f) => // freq = f / 32,
+		    self.players[i].set_frequency(f), // FIXME: workaround for period_to_freq
+		//AQOp::Timeslice => poly_it.adv,
+		_ => {},
 	    }
 	}
-	self.tick += 1;
     }
 }
 
+// ================================================================================
+// ================================================================================
+
+pub trait SongTracer : Sync + Send {
+    /// Audio buffer for this tick
+    fn trace_buf(&mut self, tick: usize, channel: u8, buf: Vec<f32>);
+    fn change_song(&mut self) {}
+    fn trace_message(&mut self, tick: usize, channel: u8, subsystem: &'static str, category: &'static str, msg: String);
+}
+
+struct SongTracerStreamLogger {
+    tracer: Arc<Mutex<dyn SongTracer>>,
+    channel: u8,
+    tick: usize,
+}
+
+impl SongTracerStreamLogger {
+    fn new(tracer: Arc<Mutex<dyn SongTracer>>, channel: u8) -> Self {
+	SongTracerStreamLogger {
+	    tracer,
+	    channel,
+	    tick: 0,
+	}
+    }
+
+    fn set_tick(&mut self, new_tick: usize) {
+	self.tick = new_tick;
+    }
+}
+
+impl StreamLogger for SongTracerStreamLogger {
+    fn log(&mut self, subsystem : &'static str, category : &'static str, message : String) {
+	let mut guard = self.tracer.lock().unwrap();
+	guard.trace_message(self.tick, self.channel, subsystem, category, message);
+    }
+}
+
+// ----------------------------------------
+
+const BUF_SIZE : usize = 8000;
 
 pub struct SongPlayer {
     song: Option<SingleSongPlayer>,
+    tick: usize, // Song tick counter
     sample_data: SampleData,
     left_buf: Vec<f32>,
     right_buf: Vec<f32>,
-    buf_read_pos: usize,
+    tracer: Option<Arc<Mutex<dyn SongTracer>>>,
+    stream_loggers: Vec<Arc<Mutex<SongTracerStreamLogger>>>,
 }
 
 impl SongPlayer {
     fn new(sample_data: &SampleData) -> Self {
 	SongPlayer {
 	    song: None,
+	    tick: 0,
 	    sample_data: (*sample_data).clone(),
-	    left_buf: Vec::<f32>::with_capacity(8000),
-	    right_buf: Vec::<f32>::with_capacity(8000),
-	    buf_read_pos: 0,
+	    left_buf: Vec::<f32>::with_capacity(BUF_SIZE),
+	    right_buf: Vec::<f32>::with_capacity(BUF_SIZE),
+	    tracer: None,
+	    stream_loggers: Vec::new(),
 	}
     }
 
@@ -860,52 +895,156 @@ impl SongPlayer {
 	self.song = None;
 	self.left_buf.clear();
 	self.right_buf.clear();
-	self.buf_read_pos = 0;
+	self.report_change_song();
     }
 
     fn play(&mut self, song_it: &SongIterator) {
 	self.song = Some(SingleSongPlayer::new(song_it));
+	self.tick = 0;
+	self.report_change_song();
+	self.update_channel_loggers();
+    }
+
+    pub fn update_channel_loggers(&mut self) {
+	if let Some(ref mut song) = self.song {
+	    if self.stream_loggers.len() == 4 {
+		for n in 0..4 {
+		    song.set_channel_logger(n, self.stream_loggers[n as usize].clone());
+		}
+	    } else {
+		for n in 0..4 {
+		    song.set_channel_logger(n, streamlog::dummy());
+		}
+	    }
+	}
+    }
+
+    fn channel_loggers_update_tick(&mut self) {
+	for c in self.stream_loggers.iter_mut() {
+	    let mut guard = c.lock().unwrap();
+	    guard.set_tick(self.tick);
+	}
+    }
+
+    pub fn set_tracer(&mut self, tracer: Arc<Mutex<dyn SongTracer>>) {
+	self.tracer = Some(tracer.clone());
+	for c in 0..4 {
+	    let logger = Arc::new(Mutex::new(SongTracerStreamLogger::new(tracer.clone(), c)));
+	    self.stream_loggers.push(logger);
+	}
+	self.update_channel_loggers();
+    }
+
+    pub fn clear_tracer(&mut self) {
+	self.tracer = None;
+	self.stream_loggers.clear();
+	self.update_channel_loggers();
+    }
+
+    fn have_tracer(&self) -> bool {
+	self.tracer.is_some()
+    }
+
+    fn report_buf(&self, tick: usize, channel: u8, buf: &[f32]) {
+	match &self.tracer {
+	    None => {},
+	    Some(tracer) => {
+		let mut guard = tracer.lock().unwrap();
+		guard.trace_buf(tick, channel, buf.to_vec());
+	    }
+	}
+    }
+
+    fn report_change_song(&self) {
+	match &self.tracer {
+	    None => {},
+	    Some(tracer) => {
+		let mut guard = tracer.lock().unwrap();
+		guard.change_song();
+	    }
+	}
+    }
+
+    // buf_left and buf_right are guaranteed to have exactly one tick in length
+    fn fill_channels(&mut self, buf_left: &mut [f32], buf_right: &mut [f32], sample_rate: usize) {
+	let mut to_report = vec![];
+	let trace = self.have_tracer();
+
+	if let Some(ref mut sp) = self.song {
+	    let channels = [0, 1, 1, 0];
+
+	    for i in 0..4 {
+		let buf = if channels[i] == 1 { &mut* buf_right } else { &mut* buf_left };
+
+		if trace {
+		    let mut data: Vec<f32> = vec![0.0; buf.len()];
+		    sp.fill(&self.sample_data,
+			    i as u8,
+			    &mut data,
+			    sample_rate);
+		    for (d, &s) in buf.iter_mut().zip(data.iter()) {
+			*d += s;
+		    }
+		    to_report.push(data);
+		} else {
+		    sp.fill(&self.sample_data,
+			    i as u8,
+			    buf,
+			    sample_rate);
+		}
+	    }
+	}
+	if trace {
+	    for (i, buf) in to_report.iter().enumerate() {
+		self.report_buf(self.tick, i as u8, buf);
+	    }
+	}
+
+	if self.song.is_some() {
+	    self.tick += 1;
+	    self.channel_loggers_update_tick();
+	}
     }
 
     fn fill(&mut self, buf_left: &mut [f32], buf_right: &mut [f32], sample_rate: usize) {
 	info!("SongPlayer::fill({}, {}, {sample_rate})", buf_left.len(), buf_right.len());
 	let samples_per_tick = sample_rate / 50;
 	let mut pos = 0;
-	if self.left_buf.len() > self.buf_read_pos {
-	    let leftover_length = self.left_buf.len() - self.buf_read_pos;
+	if self.left_buf.len() > 0 {
+	    let leftover_length = self.left_buf.len();
 	    assert!(leftover_length < buf_left.len());
-	    buf_left[0..leftover_length].copy_from_slice(&self.left_buf[self.buf_read_pos..]);
-	    buf_right[0..leftover_length].copy_from_slice(&self.right_buf[self.buf_read_pos..]);
+	    buf_left[0..leftover_length].copy_from_slice(&self.left_buf);
+	    buf_right[0..leftover_length].copy_from_slice(&self.right_buf);
 
 	    pos += leftover_length;
 	    self.left_buf.clear();
 	    self.right_buf.clear();
-	    self.buf_read_pos = 0;
 
 	}
 	if let Some(ref mut sp) = self.song {
 	    while pos + samples_per_tick <= buf_left.len() {
 		debug!("  pos={pos}, += {samples_per_tick}");
 		let end = pos + samples_per_tick;
-		sp.fill(&self.sample_data,
-			&mut buf_left[pos..end],
-			&mut buf_right[pos..end],
-			sample_rate);
+		self.fill_channels(&mut buf_left[pos..end],
+				   &mut buf_right[pos..end],
+				   sample_rate);
+
 		pos += samples_per_tick
 	    }
 	    if pos < buf_left.len() {
 		let remaining = buf_left.len() - pos;
+		let mut local_left = [0.0; BUF_SIZE];
+		let mut local_right = [0.0; BUF_SIZE];
 		debug!("  special handler: pos={pos}, left = {}, remain={remaining}", buf_left.len());
 		// Partial write
-		self.left_buf.resize(samples_per_tick, 0.0);
-		self.right_buf.resize(samples_per_tick, 0.0);
-		sp.fill(&self.sample_data,
-			&mut self.left_buf[0..samples_per_tick],
-			&mut self.right_buf[0..samples_per_tick],
-			sample_rate);
-		buf_left[pos..].copy_from_slice(&self.left_buf[0..remaining]);
-		buf_right[pos..].copy_from_slice(&self.right_buf[0..remaining]);
-		self.buf_read_pos = remaining;
+		self.fill_channels(&mut local_left[0..samples_per_tick],
+				   &mut local_right[0..samples_per_tick],
+				   sample_rate);
+
+		buf_left[pos..].copy_from_slice(&local_left[0..remaining]);
+		buf_right[pos..].copy_from_slice(&local_right[0..remaining]);
+		self.left_buf.extend_from_slice(&local_left[remaining..samples_per_tick]);
+		self.right_buf.extend_from_slice(&local_right[remaining..samples_per_tick]);
 	    }
 	}
     }
@@ -928,6 +1067,16 @@ impl SongPlayerAudioSource {
 	SongPlayerAudioSource {
 	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data)))
 	}
+    }
+
+    pub fn set_tracer(&mut self, tracer: Arc<Mutex<dyn SongTracer>>) {
+	let mut guard = self.player.lock().unwrap();
+	guard.set_tracer(tracer);
+    }
+
+    pub fn clear_tracer(&mut self) {
+	let mut guard = self.player.lock().unwrap();
+	guard.clear_tracer();
     }
 
     pub fn stop(&mut self) {

@@ -30,7 +30,7 @@ pub trait AudioSource : Sync + Send {
 // Mixer
 #[derive(Clone)]
 pub struct Mixer {
-    sample_rate: usize,
+    pub sample_rate: usize,
     sources: Arc<Mutex<Vec<Arc<Mutex<dyn AudioSource>>>>>,
 }
 
