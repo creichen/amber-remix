@@ -2,10 +2,11 @@
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 
+use hound::WavWriter;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use std::{collections::VecDeque, sync::{Mutex, Arc}};
+use std::{collections::VecDeque, sync::{Mutex, Arc}, fs::File, io::BufWriter, mem};
 use lazy_static::lazy_static;
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
@@ -916,6 +917,8 @@ pub struct SongPlayer {
     right_buf: Vec<f32>,
     tracer: Option<Arc<Mutex<dyn SongTracer>>>,
     stream_loggers: Vec<Arc<Mutex<SongTracerStreamLogger>>>,
+    record: bool,
+    writer: Option<WavWriter<BufWriter<File>>>,
 }
 
 impl SongPlayer {
@@ -928,7 +931,26 @@ impl SongPlayer {
 	    right_buf: Vec::<f32>::with_capacity(BUF_SIZE),
 	    tracer: None,
 	    stream_loggers: Vec::new(),
+	    record: false,
+	    writer: None,
 	}
+    }
+
+    fn start_recording(&mut self) {
+	self.stop_recording();
+	let spec = hound::WavSpec {
+	    channels: 2,
+	    sample_rate: 48000, // FIXME
+	    bits_per_sample: 16,
+	    sample_format: hound::SampleFormat::Int,
+	};
+	let writer = hound::WavWriter::create(format!("song.wav"), spec).unwrap();
+	self.writer = Some(writer);
+    }
+
+    fn stop_recording(&mut self) {
+	let w = mem::replace(&mut self.writer, None);
+	w.map(|x| x.finalize().unwrap());
     }
 
     fn stop(&mut self) {
@@ -936,6 +958,7 @@ impl SongPlayer {
 	self.left_buf.clear();
 	self.right_buf.clear();
 	self.report_change_song();
+	self.stop_recording();
     }
 
     fn play(&mut self, song_it: &SongIterator) {
@@ -945,6 +968,9 @@ impl SongPlayer {
 	self.update_channel_loggers();
 	if let Some(ref mut song) = self.song {
 	    song.reset();
+	}
+	if self.record {
+	    self.start_recording();
 	}
     }
 
@@ -1088,6 +1114,13 @@ impl SongPlayer {
 		buf_right[pos..].copy_from_slice(&local_right[0..remaining]);
 		self.left_buf.extend_from_slice(&local_left[remaining..samples_per_tick]);
 		self.right_buf.extend_from_slice(&local_right[remaining..samples_per_tick]);
+	    }
+
+	    if let Some(ref mut writer) = self.writer {
+		for t in 0..buf_left.len() {
+		    writer.write_sample((buf_left[t] * 32767.0) as i16).unwrap();
+		    writer.write_sample((buf_right[t] * 32767.0) as i16).unwrap();
+		}
 	    }
 	}
     }
