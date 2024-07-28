@@ -800,12 +800,13 @@ impl SingleSongPlayer {
 	debug!("SingleSongPlayer::fill({}, {sample_rate})", buf.len());
 	let i = channel as usize;
 	let mut d = VecDeque::<AQOp>::new();
-	self.poly_it.channels[i].next(&mut d);
 	if self.poly_it.channels[i].is_done() {
+	    self.poly_it.channels[channel as usize].logger.log("X", "D", format!("done"));
 	    // FIXME: this should happen when ALL channels are done
 	    // (though that should normally coincide.....)
 	    self.poly_it.next_division();
 	}
+	self.poly_it.channels[i].next(&mut d);
 
 	for dd in d {
 	    trace!("  #{i}- {dd:?}");
@@ -850,6 +851,7 @@ pub trait SongTracer : Sync + Send {
     fn trace_buf(&mut self, tick: usize, channel: u8, buf: Vec<f32>);
     fn change_song(&mut self) {}
     fn trace_message(&mut self, tick: usize, channel: u8, subsystem: &'static str, category: &'static str, msg: String);
+    fn trace_message_num(&mut self, tick: usize, channel: u8, subsystem: &'static str, category: &'static str, msg: isize);
 }
 
 struct SongTracerStreamLogger {
@@ -876,6 +878,10 @@ impl StreamLogger for SongTracerStreamLogger {
     fn log(&mut self, subsystem : &'static str, category : &'static str, message : String) {
 	let mut guard = self.tracer.lock().unwrap();
 	guard.trace_message(self.tick, self.channel, subsystem, category, message);
+    }
+    fn log_num(&mut self, subsystem : &'static str, category : &'static str, message : isize) {
+	let mut guard = self.tracer.lock().unwrap();
+	guard.trace_message_num(self.tick, self.channel, subsystem, category, message);
     }
 }
 
@@ -1036,7 +1042,7 @@ impl SongPlayer {
 	    self.right_buf.clear();
 
 	}
-	if let Some(ref mut sp) = self.song {
+	if let Some(ref mut _sp) = self.song {
 	    while pos + samples_per_tick <= buf_left.len() {
 		debug!("  pos={pos}, += {samples_per_tick}");
 		let end = pos + samples_per_tick;

@@ -48,6 +48,77 @@ fn print_strings(data : &datafiles::AmberstarFiles) {
 
 }
 
+// ================================================================================
+
+const FONT_SIZE : usize = 12;
+
+struct Font<'a> {
+    font : sdl2::ttf::Font<'a, 'a>,
+    pub size : usize,
+}
+
+impl<'a> Font<'a> {
+    pub fn new_ttf(ttf_context : &'a Sdl2TtfContext, path : &str, size : usize) -> Font<'a> {
+	// TODO: include font or use the existing one
+	let mut font = ttf_context.load_font(path, size as u16).unwrap();
+	font.set_style(sdl2::ttf::FontStyle::NORMAL);
+	Font {
+	    font,
+	    size,
+	}
+    }
+
+    pub fn draw_to(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color) -> (usize, usize) {
+	let creator = canvas.texture_creator();
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+	(width as usize, height as usize)
+    }
+
+    pub fn draw_to_with_outline(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color, outline_color : Color) -> (usize, usize) {
+	let creator = canvas.texture_creator();
+
+	let outline_surface = self.font
+	    .render(text)
+	    .blended(outline_color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let outline_texture = creator
+	    .create_texture_from_surface(&outline_surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+	let TextureQuery { width, height, .. } = outline_texture.query();
+	for xdelta in [-1, 1] {
+	    for ydelta in [-1, 1] {
+		let target = Rect::new(xdelta + x as i32, ydelta + y as i32, width, height);
+		canvas.copy(&outline_texture, None, Some(target)).unwrap();
+	    }
+	}
+
+	let surface = self.font
+	    .render(text)
+	    .blended(color)
+	    .map_err(|e| e.to_string()).unwrap();
+	let texture = creator
+	    .create_texture_from_surface(&surface)
+	    .map_err(|e| e.to_string()).unwrap();
+
+
+	let TextureQuery { width, height, .. } = texture.query();
+	let target = Rect::new(x as i32, y as i32, width, height);
+	canvas.copy(&texture, None, Some(target)).unwrap();
+	(width as usize, height as usize)
+    }
+}
+
 // ----------------------------------------
 // Audio
 
@@ -706,11 +777,258 @@ fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_sec
     Ok(())
 }
 
+// --------------------------------------------------------------------------------
+
+type InfoFunction = fn(&mut PaginatedWriter, &ArcDemoSongTracer, CurrentSongInfo) -> ();
+
+struct CurrentSongInfo<'a> {
+    song: &'a Song,
+    tick: usize,
+    song_nr: usize,
+    info_functions: &'a [(Keycode, &'a str, InfoFunction)],
+}
+
+const COLOR_WHITE : Color = Color::RGBA(0xff, 0xff, 0xff, 0xff);
+const COLOR_GREEN : Color = Color::RGBA(0, 0xff, 0, 0xff);
+const COLOR_CYAN : Color = Color::RGBA(0, 0xff, 0xff, 0xff);
+const COLOR_YELLOW : Color = Color::RGBA(0xff, 0xff, 0, 0xff);
+
+const COLOR_CHANNEL_SEP : Color = Color::RGBA(0, 0x80, 0xff, 0xff);
+const COLOR_CHANNEL : Color = COLOR_CYAN;
+
+struct PaginatedWriter<'a> {
+    base_xpos: isize,
+    base_ypos: isize,
+    xpos: isize,
+    ypos: isize,
+    max_height: isize,
+    max_xwidth_current: isize,
+    max_ywidth_current: isize,
+    font: &'a Font<'a>,
+    canvas: &'a mut Canvas<Window>,
+    pub color: Color,
+}
+
+impl<'a> PaginatedWriter<'a> {
+    fn new(xpos: isize, ypos: isize, max_height: isize,
+	   font: &'a Font<'a>,
+	   canvas: &'a mut Canvas<Window>) -> Self {
+	PaginatedWriter {
+	    base_xpos: xpos,
+	    base_ypos: ypos,
+	    xpos,
+	    ypos,
+	    max_height,
+	    max_xwidth_current: 0,
+	    max_ywidth_current: 0,
+	    font,
+	    canvas,
+	    color: COLOR_WHITE,
+	}
+    }
+
+    fn font_size(&self) -> isize {
+	return self.font.size as isize;
+    }
+
+    fn line_height(&self) -> isize {
+	return self.font_size() + 1;
+    }
+
+    fn column_width(&self) -> isize {
+	return self.font_size() * 4;
+    }
+
+    fn print(&mut self, s: &str) {
+	let (width, height) = self.font.draw_to(&mut self.canvas, s,
+						self.xpos as isize, self.ypos as isize,
+						self.color);
+	self.xpos += width as isize;
+	self.max_xwidth_current = isize::max(self.max_xwidth_current, width as isize);
+	self.max_ywidth_current = isize::max(self.max_ywidth_current, height as isize);
+    }
+
+    fn new_column(&mut self) {
+	self.ypos = self.base_ypos;
+	self.base_xpos = self.base_xpos + self.max_xwidth_current + self.column_width();
+	self.xpos = self.base_xpos;
+    }
+
+    fn newline(&mut self) {
+	self.ypos += self.line_height();
+	if self.ypos - self.base_ypos + self.line_height() < self.max_height {
+	    self.xpos = self.base_xpos;
+	} else {
+	    self.new_column();
+	}
+    }
+
+    fn println(&mut self, s: &str) {
+	self.print(s);
+	self.newline();
+    }
+
+    fn set_color(&mut self, c: Color) {
+	self.color = c;
+    }
+}
+
+fn songinfo_help(wr: &mut PaginatedWriter, _tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    wr.println("[F11] / [F12]  : Change song");
+    wr.println("[ / ]          : Zoom");
+    wr.println("KPad   <- ->   : move in song");
+    wr.println("KPad End  PgDn : move in song (single step)");
+    wr.println("Enter          : Follow song");
+    for (kc, description, _) in song_info.info_functions.iter() {
+	wr.println(&format!("{:15}: {description}", format!("{kc}")));
+    }
+}
+
+fn songinfo_divisions(wr: &mut PaginatedWriter, tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    let status = tracer.get_channel_updates("division", song_info.tick);
+
+    wr.set_color(COLOR_YELLOW);
+    wr.println(" --- [Divisions] ---");
+    for (i, div) in song_info.song.divisions.iter().enumerate() {
+	wr.set_color(COLOR_WHITE);
+	status.highlight_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.print(&format!("D{i:02x} {div}"));
+	status.print_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.newline();
+    }
+}
+
+fn songinfo_monopatterns(wr: &mut PaginatedWriter, tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    let status = tracer.get_channel_updates("monopattern", song_info.tick);
+
+    wr.set_color(COLOR_YELLOW);
+    wr.println(" --- [Monopatterns] ---");
+    for (i, pat) in song_info.song.monopatterns.iter().enumerate() {
+	wr.set_color(COLOR_WHITE);
+	status.highlight_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.print(&format!("P#{i:02x} {pat}"));
+	status.print_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.newline();
+    }
+}
+
+fn songinfo_timbres(wr: &mut PaginatedWriter, tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    let status = tracer.get_channel_updates("timbre", song_info.tick);
+
+    wr.set_color(COLOR_YELLOW);
+    wr.println(" --- [Timbres] ---");
+    wr.set_color(COLOR_WHITE);
+    for (i, timbre) in song_info.song.timbres.iter().enumerate() {
+	wr.set_color(COLOR_WHITE);
+	status.highlight_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.print(&format!("T:{i:02x} {timbre}"));
+	status.print_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.newline();
+    }
+}
+
+fn songinfo_instruments_samples(wr: &mut PaginatedWriter, tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    let status = tracer.get_channel_updates("instrument", song_info.tick);
+
+    wr.set_color(COLOR_YELLOW);
+    wr.println(" --- [Instruments] ---");
+    wr.set_color(COLOR_WHITE);
+    for (i, instr) in song_info.song.instruments.iter().enumerate() {
+	wr.set_color(COLOR_WHITE);
+	status.highlight_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.print(&format!("I#{i:02x} {instr}"));
+	status.print_if_match(i as isize, wr, COLOR_YELLOW);
+	wr.newline();
+    }
+    wr.set_color(COLOR_YELLOW);
+    wr.println(" --- [Samples] ---");
+    wr.set_color(COLOR_WHITE);
+    for (i, s) in song_info.song.basic_samples.iter().enumerate() {
+	wr.println(&format!("S:{i:02x} {s}"));
+    }
+}
+
+fn songinfo_channel_stat(wr: &mut PaginatedWriter, tracer: &ArcDemoSongTracer, song_info: CurrentSongInfo) {
+    wr.new_column();
+    for i in 0..4 {
+	wr.set_color(COLOR_CHANNEL);
+	wr.println(&format!(" --- [Channel #{i}] ---"));
+	let frame = tracer.frame(i, song_info.tick);
+	let mut updates = frame.updates.clone();
+	updates.sort_by(|a, b| a.0.cmp(b.0));
+	for (n, v) in updates {
+	    wr.set_color(COLOR_YELLOW);
+	    wr.print(&format!("{n:14}: "));
+	    wr.set_color(COLOR_WHITE);
+	    wr.println(&format!("{v}"));
+	}
+	wr.new_column();
+    }
+}
+
+/// Generic channel status info used by the visualisers
+struct ChannelStatusInfo {
+    info: [Option<isize>; 4],
+}
+
+impl ChannelStatusInfo {
+    fn new(info: [Option<isize>; 4]) -> Self {
+	ChannelStatusInfo {
+	    info,
+	}
+    }
+
+    fn matches(&self, pos: isize) -> Vec<u8> {
+	let mut result = vec![];
+	for (i, c) in self.info.iter().enumerate() {
+	    if let Some(v) = c {
+		if *v == pos {
+		    result.push(i as u8);
+		}
+	    }
+	}
+	result
+    }
+
+    fn highlight_if_match(&self,
+			  pos: isize,
+			  wr: &mut PaginatedWriter,
+			  highlight_color: Color) {
+	let matches = self.matches(pos);
+	if matches.is_empty() {
+	    return;
+	}
+	wr.set_color(highlight_color);
+    }
+
+    fn print_if_match(&self,
+		      pos: isize,
+		      wr: &mut PaginatedWriter,
+		      highlight_color: Color) {
+	let matches = self.matches(pos);
+	if matches.is_empty() {
+	    return;
+	}
+	wr.set_color(COLOR_CHANNEL_SEP);
+	wr.print("[");
+	wr.set_color(COLOR_CHANNEL);
+	if matches.len() == 4 {
+	    wr.print("*");
+	} else {
+	    for c in matches {
+		wr.print(&format!("{c}"));
+	    }
+	}
+	wr.set_color(COLOR_CHANNEL_SEP);
+	wr.print("]");
+    }
+}
 
 #[derive(Clone)]
 struct ChannelTraceFrame {
-    messages: Vec<Vec<(String, String)>>,
+    messages: Vec<Vec<String>>,
     data: Vec<f32>,
+    updates: Vec<(&'static str, isize)>,
 }
 
 impl ChannelTraceFrame {
@@ -718,12 +1036,16 @@ impl ChannelTraceFrame {
 	ChannelTraceFrame {
 	    messages: vec![Vec::new(), Vec::new(), Vec::new()],
 	    data: Vec::new(),
+	    updates: Vec::new(),
 	}
     }
 
-    fn subsystem_index(s: &'static str) -> usize {
+    fn category_index(s: &'static str) -> usize {
 	match s {
-	    "chanit" => 0,
+	    "monopattern" => 0,
+	    "note" => 1,
+	    "speed" => 1,
+	    "avolume" => 1,
 	    _ => 2,
 	}
     }
@@ -779,12 +1101,20 @@ impl SongTracer for DemoSongTracer {
     }
 
     fn trace_message(&mut self, tick: usize, channel: u8,
-		     subsystem: &'static str,
+		     _subsystem: &'static str,
 		     category: &'static str,
 		     message: String) {
 	self.ensure_info(tick);
-	self.info[tick].channels[channel as usize].messages[ChannelTraceFrame::subsystem_index(subsystem)].push(
-	    (category.into(), message));
+	self.info[tick].channels[channel as usize].messages[ChannelTraceFrame::category_index(category)].push(
+	    format!("{category}: {message}"));
+    }
+    fn trace_message_num(&mut self, tick: usize, channel: u8,
+			 _subsystem: &'static str,
+			 category: &'static str,
+			 message: isize) {
+	self.ensure_info(tick);
+	self.info[tick].channels[channel as usize].updates.push((category.into(), message));
+	//println!("============= NUM {channel}:{tick}:{category}:{message} ==========");
     }
 }
 
@@ -801,6 +1131,28 @@ impl ArcDemoSongTracer {
 
     fn tracer(&self) -> Arc<Mutex<DemoSongTracer>> {
 	return self.t.clone();
+    }
+
+    // Get most recent numeric logger info
+    fn get_latest_update_for_channel(&self, channel: u8, category: &'static str, from_tick: usize) -> Option<isize> {
+	for i in (0..=from_tick).rev() {
+	    let frame = self.frame(channel, i);
+	    for (n, value) in frame.updates {
+		if n == category {
+		    return Some(value);
+		}
+	    }
+	}
+	None
+    }
+
+    fn get_channel_updates(&self, category: &'static str, from_tick: usize) -> ChannelStatusInfo {
+	return ChannelStatusInfo::new([
+	    self.get_latest_update_for_channel(0, category, from_tick),
+	    self.get_latest_update_for_channel(1, category, from_tick),
+	    self.get_latest_update_for_channel(2, category, from_tick),
+	    self.get_latest_update_for_channel(3, category, from_tick),
+	]);
     }
 
     fn frame(&self, channel: u8, tick: usize) -> ChannelTraceFrame {
@@ -822,6 +1174,26 @@ impl ArcDemoSongTracer {
     }
 
 
+    fn draw_info<F>(&self,
+		    canvas: &mut Canvas<Window>,
+		    pos: Rect,
+		    font: &Font,
+		    current_song_info: CurrentSongInfo,
+		    song_info_fn: F)
+	where F: Fn(&mut PaginatedWriter, &ArcDemoSongTracer, CurrentSongInfo) -> () {
+
+	let mut pw = PaginatedWriter::new(pos.x as isize, pos.y as isize,
+					  pos.h as isize,
+					  font,
+					  &mut* canvas);
+	pw.set_color(COLOR_GREEN);
+	pw.print(&format!("Song {:02x}", current_song_info.song_nr));
+	pw.set_color(COLOR_YELLOW);
+	pw.println("  [F1] for help");
+	pw.set_color(COLOR_WHITE);
+	song_info_fn(&mut pw, &self, current_song_info);
+    }
+
     fn draw_channel_info_at(&self,
 			    data: &ChannelTraceFrame,
 			    canvas: &mut Canvas<Window>,
@@ -833,46 +1205,15 @@ impl ArcDemoSongTracer {
 	font.draw_to(canvas, &s,
 		     pos.x as isize, (pos.y + yoffset) as isize,
 		     Color::RGBA(0x00, 0xff, 0x20, 0xff));
-	yoffset += 15;
+	yoffset += 13;
 
 	for (_i, vecs) in data.messages.iter().enumerate() {
-	    for (t, v) in vecs {
-		let s = format!("{} {}", t, v);
+	    for s in vecs {
 		font.draw_to(canvas, &s,
 			     pos.x as isize, (pos.y + yoffset) as isize,
 			     Color::RGBA(0xff, 0xff, 0x20, 0xff));
 
-		yoffset += 15;
-	    }
-	}
-    }
-
-    fn draw_song_info(&self,  canvas: &mut Canvas<Window>,
-		      pos: Rect,
-		      _start_tick: usize,
-		      song_nr: usize,
-		      song: &Song,
-		      font: &Font) {
-	let max_lines = pos.h / 15;
-	let mut num_lines = 0;
-	let mut xoffset = 0;
-	let mut yoffset = 0;
-	let s = format!("Song: {song_nr}");
-	font.draw_to(canvas, &s,
-		     pos.x as isize, (pos.y + yoffset) as isize,
-		     Color::RGBA(0x80, 0xff, 0x80, 0xff));
-
-	for (i, div) in song.divisions.iter().enumerate() {
-	    let s = format!("D{i:02x} {div}");
-	    yoffset += 15;
-	    font.draw_to(canvas, &s,
-			 pos.x as isize + xoffset, (pos.y + yoffset) as isize,
-			 Color::RGBA(0xff, 0xff, 0x20, 0xff));
-	    num_lines += 1;
-	    if num_lines > max_lines {
-		yoffset = 0;
-		num_lines = 0;
-		xoffset += 600;
+		yoffset += 13;
 	    }
 	}
     }
@@ -945,69 +1286,6 @@ impl ArcDemoSongTracer {
 }
 
 
-struct Font<'a> {
-    font : sdl2::ttf::Font<'a, 'a>,
-}
-
-impl<'a> Font<'a> {
-    pub fn new_ttf(ttf_context : &'a Sdl2TtfContext, path : &str, size : usize) -> Font<'a> {
-	// TODO: include font or use the existing one
-	let mut font = ttf_context.load_font(path, size as u16).unwrap();
-	font.set_style(sdl2::ttf::FontStyle::NORMAL);
-	Font {
-	    font
-	}
-    }
-
-    pub fn draw_to(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color) {
-	let creator = canvas.texture_creator();
-	let surface = self.font
-	    .render(text)
-	    .blended(color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let texture = creator
-	    .create_texture_from_surface(&surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-	let TextureQuery { width, height, .. } = texture.query();
-	let target = Rect::new(x as i32, y as i32, width, height);
-	canvas.copy(&texture, None, Some(target)).unwrap();
-    }
-    pub fn draw_to_with_outline(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color, outline_color : Color) {
-	let creator = canvas.texture_creator();
-
-	let outline_surface = self.font
-	    .render(text)
-	    .blended(outline_color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let outline_texture = creator
-	    .create_texture_from_surface(&outline_surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-	let TextureQuery { width, height, .. } = outline_texture.query();
-	for xdelta in [-1, 1] {
-	    for ydelta in [-1, 1] {
-		let target = Rect::new(xdelta + x as i32, ydelta + y as i32, width, height);
-		canvas.copy(&outline_texture, None, Some(target)).unwrap();
-	    }
-	}
-
-	let surface = self.font
-	    .render(text)
-	    .blended(color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let texture = creator
-	    .create_texture_from_surface(&surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-
-	let TextureQuery { width, height, .. } = texture.query();
-	let target = Rect::new(x as i32, y as i32, width, height);
-	canvas.copy(&texture, None, Some(target)).unwrap();
-    }
-}
-
-
 fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), String> {
     let mut song = &data.songs[song_nr];
     let sdl_context = sdl2::init().unwrap();
@@ -1045,7 +1323,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
     song_player.play(&poly_it);
     song_player.set_tracer(song_tracer.tracer());
 
-    let font_size=10;
+    let font_size = FONT_SIZE;
     // --------------------------------------------------------------------------------
     let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string()).unwrap();
     let font = Font::new_ttf(&ttf_context, "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", font_size);
@@ -1055,6 +1333,18 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
     canvas.set_draw_color(Color::RGBA(0, 0, 0x40, 255));
     canvas.clear();
     canvas.present();
+
+    let mut current_info_function: InfoFunction = songinfo_help;
+
+    let info_functions: Vec<(Keycode, &str, InfoFunction)> = vec![
+	(Keycode::F1, "Help", songinfo_help),
+	(Keycode::F2, "Divisions", songinfo_divisions),
+	(Keycode::F3, "Monopatterns", songinfo_monopatterns),
+	(Keycode::F4, "Timbres", songinfo_timbres),
+	(Keycode::F5, "Instruments", songinfo_instruments_samples),
+	(Keycode::F6, "Channels", songinfo_channel_stat),
+    ];
+
     let mut event_pump = sdl_context.event_pump().unwrap();
     'running: loop {
         canvas.set_draw_color(Color::RGBA(0, 0, 0x40, 0xff));
@@ -1072,13 +1362,19 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 	    }
 	}
 
-	song_tracer.draw_song_info(&mut canvas,
-				   sdl2::rect::Rect::new(100, 10,
-							 waveform_pixel_width, 450),
-				   start_tick,
-				   current_song_nr,
-				   song,
-				   &font);
+	let current_song_info = CurrentSongInfo {
+	    song: &song,
+	    tick: start_tick,
+	    song_nr: current_song_nr,
+	    info_functions: &info_functions,
+	};
+
+	song_tracer.draw_info(&mut canvas,
+			      sdl2::rect::Rect::new(100, 10,
+						    waveform_pixel_width, 450),
+			      &font,
+			      current_song_info,
+			      current_info_function);
 
 	for c in 0..4 {
 	    song_tracer.draw_audio_track(&mut canvas,
@@ -1110,8 +1406,18 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 					   start_tick = if start_tick < scale { 0 } else { start_tick - scale } },
 			Keycode::KP_6 => { following_tick = false;
 					    start_tick += scale },
+			Keycode::KP_1 => { following_tick = false;
+					   start_tick = if start_tick < 1 { 0 } else { start_tick - 1 } },
+			Keycode::KP_3 => { following_tick = false;
+					    start_tick += 1 },
 			Keycode::KP_ENTER => { following_tick = true; },
 			_ => {
+			    for (k, _, f) in info_functions.iter() {
+				if *k == kc {
+				    current_info_function = *f;
+				    break;
+				}
+			    }
 			}
 		    }
                 },

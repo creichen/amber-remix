@@ -38,6 +38,7 @@ use super::SampleRange;
 use super::dsp::streamlog;
 use super::dsp::streamlog::ArcStreamLogger;
 use super::dsp::streamlog::StreamLogClient;
+use super::dsp::streamlog::StreamLogger;
 use super::iterator::AQOp;
 use super::iterator::ArcPoly;
 use super::iterator::AudioIterator;
@@ -113,6 +114,8 @@ struct InstrumentIterator {
     sample : IISample, // Active sample
 
     queue : VecDeque<InstrumentOp>,
+
+    logger: ArcStreamLogger,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -231,6 +234,7 @@ impl InstrumentIterator {
 	    sample : IISample::None,
 
 	    queue,
+	    logger: streamlog::dummy(),
 	}
     }
 
@@ -247,6 +251,9 @@ impl InstrumentIterator {
     fn process_queue(&mut self,
 		     reset_volume: &mut bool,
 		     out_queue: &mut VecDeque<AQOp>) {
+	if DEBUG {
+	    self.streamlog("IOp", format!("{:?}", self.queue.get(0)));
+	}
         match self.queue.pop_front() {
 	    Some(InstrumentOp::WaitTicks(t)) => {
 		self.remaining_ticks = Some(t);
@@ -333,7 +340,18 @@ impl InstrumentIterator {
 	    InstrumentNote::Absolute(_) => channel_state.note = self.base_note,
 	}
     }
+
+    pub fn streamlog(&mut self, topic : &'static str, message : String) {
+	self.logger.log("instrument", topic, message);
+    }
 }
+
+impl StreamLogClient for InstrumentIterator {
+    fn set_logger(&mut self, logger : ArcStreamLogger) {
+	self.logger = logger;
+    }
+}
+
 
 // ================================================================================
 // Timbre Iterator
@@ -381,6 +399,8 @@ struct TimbreIterator {
     delay : Option<Ticks>,
 
     vibrato : VibratoState,
+
+    logger: ArcStreamLogger,
 }
 
 impl TimbreIterator {
@@ -399,7 +419,8 @@ impl TimbreIterator {
 		spec : timbre.vibrato,
 		depth : timbre.vibrato.depth,
 		direction : -1,
-	    }
+	    },
+	    logger: streamlog::dummy(),
 	}
     }
 
@@ -430,6 +451,9 @@ impl TimbreIterator {
 	loop {
 	    match self.volume_queue.pop_front() {
 		Some(vs) => {
+		    if DEBUG {
+			self.streamlog("vol", format!("{vs}"));
+		    }
 		    self.delay = Some(vs.duration);
 		    self.current_avolume = vs.volume;
 		    state.avolume = vs.volume;
@@ -439,10 +463,16 @@ impl TimbreIterator {
 		    if self.volume_sustain.len() == 0 {
 			// We are done
 			self.delay = None;
+			if DEBUG {
+			    self.streamlog("vol", format!("-"));
+			}
 			return;
 		    }
 		    let vq = (&self.volume_sustain[..]).to_vec();
 		    self.volume_queue = VecDeque::from(vq);
+		    if DEBUG {
+			self.streamlog("vol", format!("sustain"));
+		    }
 		},
 	    }
 	}
@@ -457,6 +487,12 @@ impl TimbreIterator {
 	state.period = self.vibrato.vibrate_period(state.period);
     }
 
+    pub fn streamlog(&mut self, topic : &'static str, message : String) {
+	self.logger.log("timbre", topic, message);
+    }
+    pub fn streamlog_num(&mut self, topic : &'static str, message : isize) {
+	self.logger.log_num("timbre", topic, message);
+    }
 }
 
 lazy_static! {
@@ -469,13 +505,20 @@ lazy_static! {
     };
 }
 
+impl StreamLogClient for TimbreIterator {
+    fn set_logger(&mut self, logger : ArcStreamLogger) {
+	self.logger = logger;
+    }
+}
+
 // ================================================================================
 // Monopattern Iterator
 
 enum MPStep {
     OK,
     Stop, // Done playing the pattern
-    SetTimbre(TimbreIterator, Option<InstrumentIterator>),
+    SetTimbre(TimbreIterator, usize,
+	      Option<InstrumentIterator>, Option<usize>),
 }
 
 #[derive(Clone)]
@@ -507,6 +550,7 @@ struct MonopatternIterator {
     timbre_adjust : usize,
 
     delay : Option<Ticks>,
+    logger : ArcStreamLogger,
 }
 
 impl MonopatternIterator {
@@ -518,6 +562,7 @@ impl MonopatternIterator {
 	    channel_note : 0,
 	    timbre_adjust : 0,
 	    delay : Some(0),
+	    logger: streamlog::dummy(),
 	}
     }
 
@@ -548,6 +593,12 @@ impl MonopatternIterator {
     pub fn tick(&mut self,
 		state : &mut ChannelState,
 		songdb : &Arc<dyn SongDataBank>) -> MPStep {
+	if DEBUG {
+	    match self.delay {
+		None    => self.streamlog_num("delay", -1),
+		Some(n) => self.streamlog_num("delay", n as isize),
+	    }
+	}
 	match self.delay {
 	    None    => return MPStep::Stop, // indefinite hiatus
 	    Some(0) => {},
@@ -559,6 +610,9 @@ impl MonopatternIterator {
 	}
 
 	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
+	    if DEBUG {
+		self.streamlog("MPOp", format!("{}", MPOp{pticks, note}));
+	    }
 	    self.delay = Some((pticks * state.channel_speed) - 1);
 	    match note {
 		None => return MPStep::OK,
@@ -579,14 +633,18 @@ impl MonopatternIterator {
 		    match timbre {
 			None => { return MPStep::OK; },
 			Some (MPTimbre { timbre, instrument }) => {
-			    let timbre = songdb.get_timbre(timbre + self.timbre_adjust);
-			    let instrument = if let Some(instrument_index) = instrument {
-				Some(&songdb.get_instrument(instrument_index).ops)
-			    } else {
-				timbre.instrument.map(|index| &songdb.get_instrument(index as usize).ops)
-			    };
+			    let timbre_index = timbre + self.timbre_adjust;
+			    let timbre = songdb.get_timbre(timbre_index);
+			    let instrument_index = if instrument.is_some() {
+				instrument
+			    } else { timbre.instrument.map(|x| x as usize) };
+			    let instrument =
+				instrument_index.map(|index| &songdb.get_instrument(index as usize).ops);
 			    return MPStep::SetTimbre(TimbreIterator::new(&timbre),
-						     instrument.map(|instrop| InstrumentIterator::simple(&instrop)));
+						     timbre_index,
+						     instrument.map(|instrop| InstrumentIterator::simple(&instrop)),
+						     instrument_index,
+			    );
 			},
 		    }
 		}
@@ -596,60 +654,6 @@ impl MonopatternIterator {
 	    return MPStep::Stop;
 	}
     }
-
-    // pub fn tick<SDB>(&mut self,
-    // 		     state : &mut ChannelState,
-    // 		     songdb : SDB) -> MPStep where SDB : SongDataBank {
-    // 	return self.tick_dyn(state, songdb);
-    // }
-    // 	match self.delay {
-    // 	    None    => return MPStep::Stop, // indefinite hiatus
-    // 	    Some(0) => {},
-    // 	    Some(n) => { self.delay = Some(n-1);
-    // 			 return MPStep::OK; }
-    // 	}
-    // 	if let Some(n) = self.ops.front() {
-    // 	    pdebug!("  Monopattern: play {n}");
-    // 	}
-
-    // 	if let Some(MPOp { pticks, note }) = self.ops.pop_front() {
-    // 	    self.delay = Some((pticks * state.channel_speed) - 1);
-    // 	    match note {
-    // 		None => return MPStep::OK,
-    // 		Some(MPNote { note, timbre, portando }) => {
-    // 		    self.channel_note = note;
-    // 		    match portando {
-    // 			None        => {
-    // 			    if self.portando.current != 0 {
-    // 				pdebug!{"  MP: portando completed"};
-    // 			    }
-    // 			    self.portando = PortandoState::empty();
-    // 			},
-    // 			Some(delta) => {
-    // 			    pdebug!{"  MP: portando~{delta}"};
-    // 			    self.portando = PortandoState { current : 0, delta };
-    // 			},
-    // 		    }
-    // 		    match timbre {
-    // 			None => { return MPStep::OK; },
-    // 			Some (MPTimbre { timbre, instrument }) => {
-    // 			    let timbre = songdb.get_timbre(timbre + self.timbre_adjust);
-    // 			    let instrument = if let Some(instrument_index) = instrument {
-    // 				Some(&songdb.get_instrument(instrument_index).ops)
-    // 			    } else {
-    // 				timbre.instrument.map(|index| &songdb.get_instrument(index as usize).ops)
-    // 			    };
-    // 			    return MPStep::SetTimbre(TimbreIterator::new(&timbre),
-    // 						     instrument.map(|instrop| InstrumentIterator::simple(&instrop)));
-    // 			},
-    // 		    }
-    // 		}
-    // 	    }
-    // 	} else {
-    // 	    self.delay = None;
-    // 	    return MPStep::Stop;
-    // 	}
-    // }
 
     /// May update state.note
     pub fn tick_note(&mut self, state : &mut ChannelState) {
@@ -665,7 +669,22 @@ impl MonopatternIterator {
 	ptrace!("    MP: portando: {}, hence {} -> {p2}", self.portando.current, state.period);
 	state.period = p2;
     }
+
+    pub fn streamlog(&mut self, topic : &'static str, message : String) {
+	self.logger.log("monopattern", topic, message);
+    }
+    pub fn streamlog_num(&mut self, topic : &'static str, message : isize) {
+	self.logger.log_num("monopattern", topic, message);
+    }
 }
+
+impl StreamLogClient for MonopatternIterator {
+    fn set_logger(&mut self, logger : ArcStreamLogger) {
+	self.logger = logger;
+    }
+}
+
+
 
 // ================================================================================
 // Song data storage
@@ -733,7 +752,7 @@ pub struct ChannelIterator {
     instrument : InstrumentIterator,
     timbre : TimbreIterator,
     monopattern : MonopatternIterator,
-    logger : ArcStreamLogger,
+    pub logger : ArcStreamLogger,
 }
 
 impl ChannelIterator {
@@ -771,35 +790,52 @@ impl ChannelIterator {
 
     pub fn set_monopattern(&mut self, pat : &Monopattern, timbre_tune : usize) {
 	self.monopattern = MonopatternIterator::new(&pat.ops);
+	if DEBUG {
+	    self.monopattern.set_logger(self.logger.clone());
+	}
 	self.monopattern.timbre_tune(timbre_tune);
-	self.streamlog("monopattern", format!("{} / tune={}", pat, timbre_tune));
+	if DEBUG {
+	    self.streamlog("monopattern", format!("{} / tune={}", pat, timbre_tune));
+	    self.streamlog_num("timbre-tune", timbre_tune as isize);
+	}
     }
 
     pub fn set_base_note(&mut self, note : isize) {
 	self.state.note = InstrumentNote::Relative(note);
-	self.streamlog("note", format!("{note}"));
+	if DEBUG {
+	    self.streamlog("note", format!("{note}"));
+	    self.streamlog_num("note", note);
+	}
     }
 
     pub fn set_channel_speed(&mut self, speed : usize) {
 	self.state.channel_speed = speed;
-	self.streamlog("speed", format!("{speed}"));
+	if DEBUG {
+	    self.streamlog("speed", format!("{speed}"));
+	    self.streamlog_num("speed", speed as isize);
+	}
     }
 
     pub fn set_channel_volume(&mut self, avolume : AVolume) {
 	self.channel_avolume = avolume;
-	self.streamlog("avolume", format!("{avolume}"));
+	if DEBUG {
+	    self.streamlog("avolume", format!("{avolume}"));
+	    self.streamlog_num("avolume", avolume as isize);
+	}
     }
 
     pub fn streamlog(&mut self, topic : &'static str, message : String) {
-	if DEBUG {
-	    streamlog::log(&mut self.logger, "chanit", topic, message);
-	}
+	self.logger.log("chanit", topic, message);
+    }
+    pub fn streamlog_num(&mut self, topic : &'static str, message : isize) {
+	self.logger.log_num("chanit", topic, message);
     }
 }
 
 impl StreamLogClient for ChannelIterator {
     fn set_logger(&mut self, logger : ArcStreamLogger) {
-	self.logger = logger;
+	self.logger = logger.clone();
+	self.monopattern.set_logger(logger.clone());
     }
 }
 
@@ -814,8 +850,14 @@ impl AudioIterator for ChannelIterator {
 	match self.monopattern.tick(&mut self.state, &self.songdb) {
 	    MPStep::OK              => {},
 	    MPStep::Stop            => pdebug!("  : Finished Monopattern"),
-	    MPStep::SetTimbre(ti, instr_opt) => {
+	    MPStep::SetTimbre(ti, ti_index, instr_opt, instr_index_opt) => {
 		pdebug!("  : Timbre/Instrument switch");
+		if DEBUG {
+		    self.streamlog_num("timbre", ti_index as isize);
+		    if let Some(instr_index) = instr_index_opt {
+			self.streamlog_num("instrument", instr_index as isize);
+		    }
+		}
 		self.timbre = ti;
 		if let Some(instr) = instr_opt {
 		    self.instrument = instr;
@@ -966,6 +1008,8 @@ impl SongIterator {
 	    let s = format!("{monopat}");
 	    let count = mono_it.count_length(ch.state.clone(), &self.songdb);
 	    pinfo!("ch #{index:x}, P#{:02x}: [len {count}] {s}", div_chan.monopat);
+	    ch.logger.log_num("chanit", "division", div as isize);
+	    ch.logger.log_num("chanit", "monopattern", div_chan.monopat as isize);
 	    ch.set_monopattern(&self.monopatterns[div_chan.monopat], timbre_tune);
 	}
 	for ch in self.channels.iter_mut() {
@@ -983,12 +1027,12 @@ impl SongIterator {
 	    }
 	}
 	if self.division_index == self.division_last {
-	    pwarn!("---- Finished playing song ---"); // Make this pinfo! later
+	    pinfo!("---- Finished playing song ---"); // Make this pinfo! later
 	    self.stopped = true;
 	    return;
 	}
 	self.set_division(self.division_index + 1);
-	pwarn!("-- division: {}/{}", self.division_index, self.division_last);
+	pinfo!("-- division: {}/{}", self.division_index, self.division_last);
     }
 
     pub fn end(&self, queue : &mut VecDeque<AQOp>) {

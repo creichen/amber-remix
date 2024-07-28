@@ -14,7 +14,7 @@ fn fmt_slice<T>(v : &[T]) -> String where T : fmt::Display  {
     let mut s = "".to_string();
     for o in v {
 	if s.len() > 0 {
-	    s.push_str("   ");
+	    s.push_str(" ");
 	}
 	let str = format!("{}", o);
 	s.push_str(&str);
@@ -25,7 +25,7 @@ fn fmt_slice<T>(v : &[T]) -> String where T : fmt::Display  {
 // ================================================================================
 // Samples
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct BasicSample {
     pub attack : SampleRange,            // First sample to play
     pub looping : Option<SampleRange>,   // Then loop over this sample, if present
@@ -41,7 +41,7 @@ impl fmt::Display for BasicSample {
 }
 
 /// Multiple samples that we "slide through" while playing
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SlidingSample {
     pub bounds : SampleRange, // Will stop once it moves into those bounds
     pub subsample_start : SampleRange,
@@ -59,7 +59,7 @@ impl fmt::Display for SlidingSample {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum InstrumentOp {
     WaitTicks(usize),        // delay before next step
     Loop(Vec<InstrumentOp>),
@@ -155,9 +155,9 @@ impl fmt::Display for Timbre {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	let insn = match self.instrument {
 	    None    => "_".to_string(),
-	    Some(n) => format!("{}",n),
+	    Some(n) => format!("{:02x}",n),
 	};
-	write!(f, "insn#{insn} {} after {} {}",
+	write!(f, "I#{insn} {} after {} {}",
 	       self.vibrato, self.vibrato_delay, self.vol)
     }
 }
@@ -165,20 +165,20 @@ impl fmt::Display for Timbre {
 // ================================================================================
 // Monopatterns
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MPTimbre {
     pub timbre : usize,
     pub instrument : Option<usize>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MPNote {
     pub note : isize,
     pub timbre : Option<MPTimbre>,
     pub portando : Option<isize>
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MPOp {
     pub note : Option<MPNote>,       // Hold, if None
     pub pticks : usize,
