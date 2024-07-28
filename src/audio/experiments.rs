@@ -138,6 +138,7 @@ lazy_static! {
 }
 
 // ================================================================================
+#[derive(Clone)]
 struct ChannelState {
     freq : usize,
     volume: f32,
@@ -178,6 +179,8 @@ trait ChannelResampler {
 
 // ================================================================================
 // ChannelPlayer
+
+#[derive(Clone)]
 struct ChannelPlayer<T: ChannelResampler> {
     state: ChannelState,
     resampler: T,
@@ -528,6 +531,7 @@ impl ChannelResampler for NearestResampler {
 // ================================================================================
 // LinearResampler
 
+#[derive(Clone)]
 struct LinearResampler {
     current_sample: Vec<f32>,
     current_inpos: f32,
@@ -767,7 +771,7 @@ pub fn song_to_pcm(sample_data: &SampleData,
     }
 }
 
-
+#[derive(Clone)]
 struct SingleSongPlayer {
     buf_pos_ms: [usize; 4],
     poly_it: SongIterator,
@@ -777,12 +781,14 @@ struct SingleSongPlayer {
 }
 
 impl SingleSongPlayer {
+
     fn new(poly_it: &SongIterator) -> Self {
 	SingleSongPlayer {
 	    buf_pos_ms: [0, 0, 0, 0],
 	    poly_it: (*poly_it).clone(),
 	    new_instruments: [None, None, None, None],
-	    players: [
+	    players:
+	    [
 		mk_player(),
 		mk_player(),
 		mk_player(),
@@ -790,6 +796,19 @@ impl SingleSongPlayer {
 	    ],
 	    tick: 0,
 	}
+    }
+
+    fn reset(&mut self) {
+	self.buf_pos_ms = [0, 0, 0, 0];
+	self.poly_it.reset();
+	self.new_instruments = [None, None, None, None];
+	self.players = [
+	    mk_player(),
+	    mk_player(),
+	    mk_player(),
+	    mk_player(),
+	];
+	self.tick = 0;
     }
 
     fn set_channel_logger(&mut self, channel: u8, logger: Arc<Mutex<dyn StreamLogger>>) {
@@ -924,6 +943,9 @@ impl SongPlayer {
 	self.tick = 0;
 	self.report_change_song();
 	self.update_channel_loggers();
+	if let Some(ref mut song) = self.song {
+	    song.reset();
+	}
     }
 
     pub fn update_channel_loggers(&mut self) {

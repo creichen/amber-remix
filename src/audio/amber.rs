@@ -83,7 +83,7 @@ pub fn get_min_max_freq() -> (Freq, Freq) {
 }
 
 pub fn period_to_freq(period : APeriod) -> Freq {
-    return (2.0 * 3546894.6 / period as f32) as Freq;
+    return (3546894.6 / period as f32) as Freq;
 }
 
 pub fn note_to_period(note : Note) -> APeriod {
@@ -108,7 +108,7 @@ pub fn volume(avol : AVolume) -> f32 {
 
 #[derive(Clone)]
 struct InstrumentIterator {
-    base_note : InstrumentNote,
+    pub base_note : InstrumentNote,
 
     remaining_ticks : Option<usize>, // in case we can't wait all at once
     sample : IISample, // Active sample
@@ -211,8 +211,22 @@ impl InstrumentNote {
 	}
     }
 
+    pub fn is_relative(&self) -> bool {
+	match self {
+	    InstrumentNote::Relative(_) => true,
+	    _ => false,
+	}
+    }
+
     pub fn to_period(&self) -> APeriod {
 	note_to_period(self.get())
+    }
+
+    pub fn plus_relative(&self, other: InstrumentNote) -> InstrumentNote {
+	match (self, other) {
+	    (InstrumentNote::Relative(n), InstrumentNote::Relative(i)) => InstrumentNote::Relative(*n + i),
+	    _ => panic!("Invalid note combination: {self:?}, {other:?}"),
+	}
     }
 
     pub fn modify(&mut self, change : isize) {
@@ -733,7 +747,7 @@ impl SongDataBank for InlineSDB {
 #[derive(Clone)]
 struct ChannelState {
     // Persistent state (carried across iterations)
-    base_note : Note, // Note requested for manual play
+    base_note : isize,
     channel_speed : usize,
 
     // Transient state (reset every iteration)
@@ -763,7 +777,7 @@ impl ChannelIterator {
 	   monopattern : MonopatternIterator) -> ChannelIterator {
 	ChannelIterator {
 	    state : ChannelState {
-		base_note,
+		base_note: base_note as isize,
 		note : InstrumentNote::Relative(0),
 		channel_speed : 5,
 
@@ -801,10 +815,11 @@ impl ChannelIterator {
     }
 
     pub fn set_base_note(&mut self, note : isize) {
-	self.state.note = InstrumentNote::Relative(note);
+	self.state.base_note = note;
+	//self.state.note = InstrumentNote::Relative(note);
 	if DEBUG {
-	    self.streamlog("note", format!("{note}"));
-	    self.streamlog_num("note", note);
+	    self.streamlog("note[base]", format!("{note}"));
+	    self.streamlog_num("base-note", note);
 	}
     }
 
@@ -847,6 +862,8 @@ impl AudioIterator for ChannelIterator {
 	ptrace!("  : initial note {:?}", self.state.note);
 	let last_period = self.state.period;
 
+	//let mut instrument_update = true;
+
 	match self.monopattern.tick(&mut self.state, &self.songdb) {
 	    MPStep::OK              => {},
 	    MPStep::Stop            => pdebug!("  : Finished Monopattern"),
@@ -866,11 +883,17 @@ impl AudioIterator for ChannelIterator {
 	}
 	self.instrument.tick(&mut self.state, &mut self.timbre, out_queue);
 	self.timbre.tick(&mut self.state, out_queue);
+	// self.streamlog("note[post-timbre]", format!("{:?}", self.state.note));
 
 	self.instrument.tick_note(&mut self.state);
+	// self.streamlog("note[post-instr]", format!("{:?}", self.state.note));
 	self.monopattern.tick_note(&mut self.state);
+	// self.streamlog("note[post-monopat]", format!("{:?}", self.state.note));
 
 	let note = self.state.note;
+	// if note.is_relative() {
+	//     note.modify(self.state.base_note);
+	// }
 
 	// Compute the Amiga "period", which then translates to the frequency
 	self.state.period = note.to_period();
@@ -878,12 +901,30 @@ impl AudioIterator for ChannelIterator {
 	self.monopattern.tick_portando(&mut self.state);
 
 	// Done with updating, send updates downstream
-	// Send updates downstream
-	if last_period != self.state.period {
-	    out_queue.push_back(AQOp::SetFreq(period_to_freq((self.state.period) as Note)));
+	if note.get() > PERIODS.len() {
+	    // out of range, make quiet
+	    out_queue.push_back(AQOp::SetVolume(volume(0)));
+	    if DEBUG {
+		self.streamlog("note[base]", format!("{}", self.state.base_note));
+		self.streamlog("+note[instr]", format!("{:?}", self.instrument.base_note));
+		self.streamlog("note[final]", format!("invalid ({:?}), muted", note));
+	    }
+	} else {
+	    if last_period != self.state.period {
+		let freq = period_to_freq((self.state.period) as Note);
+		if DEBUG {
+		    self.streamlog("note[base]", format!("{}", self.state.base_note));
+		    self.streamlog("+note[instr]", format!("{:?}", self.instrument.base_note));
+		    self.streamlog("note[final]", format!("{note:?}"));
+		    self.streamlog("Period", format!("{}", self.state.period));
+		    self.streamlog("Freq", format!("{} Hz", freq));
+		}
+		out_queue.push_back(AQOp::SetFreq(freq));
+	    }
+	    let avolume = (((self.state.avolume as usize) * (self.channel_avolume as usize)) >> 6) as AVolume;
+	    out_queue.push_back(AQOp::SetVolume(volume(avolume)));
 	}
-	let avolume = (((self.state.avolume as usize) * (self.channel_avolume as usize)) >> 6) as AVolume;
-	out_queue.push_back(AQOp::SetVolume(volume(avolume)));
+
 	out_queue.push_back(AQOp::WaitMillis(TICK_DURATION_MILLIS));
 	out_queue.push_back(AQOp::Timeslice(self.state.num_ticks));
 	pdebug!("   : note={:?}, period={}", note, self.state.period);
@@ -974,8 +1015,13 @@ impl SongIterator {
 					       MonopatternIterator::default());
 	    songit.channels.push(chan_it);
 	}
-	songit.set_division(div_first);
 	return songit;
+    }
+
+    pub fn reset(&mut self) {
+	let div_first = self.division_first;
+	self.division_index = div_first;
+	self.set_division(div_first);
     }
 
     pub fn set_division(&mut self, div : usize) {
@@ -1008,8 +1054,10 @@ impl SongIterator {
 	    let s = format!("{monopat}");
 	    let count = mono_it.count_length(ch.state.clone(), &self.songdb);
 	    pinfo!("ch #{index:x}, P#{:02x}: [len {count}] {s}", div_chan.monopat);
-	    ch.logger.log_num("chanit", "division", div as isize);
-	    ch.logger.log_num("chanit", "monopattern", div_chan.monopat as isize);
+	    if DEBUG {
+		ch.logger.log_num("chanit", "division", div as isize);
+		ch.logger.log_num("chanit", "monopattern", div_chan.monopat as isize);
+	    }
 	    ch.set_monopattern(&self.monopatterns[div_chan.monopat], timbre_tune);
 	}
 	for ch in self.channels.iter_mut() {

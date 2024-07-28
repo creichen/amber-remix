@@ -1485,7 +1485,10 @@ fn main() -> io::Result<()> {
 		play_song(&data, str::parse::<usize>(source).unwrap());
 	    },
 	    "song2"	=> {
-		play_song2(&data, 0).unwrap();
+		let song_nr = if args.len() > 2 {
+		    str::parse::<usize>(&args[2]).unwrap()
+		} else { 0 };
+		play_song2(&data, song_nr).unwrap();
 	    },
 	    "fg-song"	=> {
 		let source = &args[2];
