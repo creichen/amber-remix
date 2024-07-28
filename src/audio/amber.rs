@@ -385,7 +385,7 @@ impl VibratoState {
 	    return;
 	}
 
-	let max = self.spec.depth;
+	let max = self.spec.depth >> 1;
 	let min = -max;
 
 	self.depth += self.direction * self.spec.slope;
@@ -578,6 +578,14 @@ impl MonopatternIterator {
 	    delay : Some(0),
 	    logger: streamlog::dummy(),
 	}
+    }
+
+    pub fn make_successor(&self, ops : &[MPOp]) -> MonopatternIterator {
+	let mut result = MonopatternIterator::new(ops);
+	result.portando = self.portando.clone();
+	result.channel_note = self.channel_note;
+	result.timbre_adjust = self.timbre_adjust;
+	result
     }
 
     // run to completion, count ticks
@@ -803,7 +811,7 @@ impl ChannelIterator {
     }
 
     pub fn set_monopattern(&mut self, pat : &Monopattern, timbre_tune : usize) {
-	self.monopattern = MonopatternIterator::new(&pat.ops);
+	self.monopattern = self.monopattern.make_successor(&pat.ops);
 	if DEBUG {
 	    self.monopattern.set_logger(self.logger.clone());
 	}
@@ -882,13 +890,14 @@ impl AudioIterator for ChannelIterator {
 	    }
 	}
 	self.instrument.tick(&mut self.state, &mut self.timbre, out_queue);
+	//self.streamlog("note[post-instr]", format!("{:?}", self.state.note));
 	self.timbre.tick(&mut self.state, out_queue);
-	// self.streamlog("note[post-timbre]", format!("{:?}", self.state.note));
+	//self.streamlog("note[post-timbre]", format!("{:?}", self.state.note));
 
 	self.instrument.tick_note(&mut self.state);
-	// self.streamlog("note[post-instr]", format!("{:?}", self.state.note));
+	//self.streamlog("note[post-instr-note]", format!("{:?}", self.state.note));
 	self.monopattern.tick_note(&mut self.state);
-	// self.streamlog("note[post-monopat]", format!("{:?}", self.state.note));
+	//self.streamlog("note[post-monopat]", format!("{:?}", self.state.note));
 
 	let note = self.state.note;
 	// if note.is_relative() {
