@@ -2,7 +2,7 @@
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 use core::fmt;
-use std::ops::Index;
+use std::{ops::Index, cmp::Ordering};
 
 /// PCM sample data (for the entire samples file)
 #[derive(Clone)]
@@ -17,10 +17,16 @@ impl SampleData {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd)]
 pub struct SampleRange {
     pub start : usize,
     pub len : usize,
+}
+
+impl Ord for SampleRange {
+    fn cmp(&self, other: &Self) -> Ordering {
+	(self.start).cmp(&other.start).then(self.len.cmp(&other.len))
+    }
 }
 
 impl SampleRange {
@@ -30,6 +36,15 @@ impl SampleRange {
 	} else {
 	    SampleRange { start : self.start + n, len : self.len - n }
 	}
+    }
+
+    pub fn shift_start(&self, n: isize) -> SampleRange {
+	SampleRange { start : ((self.start as isize) + n) as usize,
+		      len : self.len }
+    }
+
+    pub fn show(&self) -> String {
+	format!("[{:x}..{:x}]", self.start, self.start + self.len)
     }
 }
 

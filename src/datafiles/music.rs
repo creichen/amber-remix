@@ -7,7 +7,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use core::fmt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::{datafiles::decode, audio::SampleRange};
 
 fn fmt_slice<T>(v : &[T]) -> String where T : fmt::Display  {
@@ -72,6 +72,58 @@ pub enum InstrumentOp {
     Unsupported(String),
 }
 
+impl InstrumentOp {
+    /// Returns (non-looping samples, looping samples)
+    /// May return duplicates
+    fn samples(&self) -> (Vec<SampleRange>, Vec<SampleRange>) {
+	let mut non_looping: Vec<SampleRange> = vec![];
+	let mut looping: Vec<SampleRange> = vec![];
+
+	match self {
+	    InstrumentOp::Sample(BasicSample { attack, looping: None }) => {
+		non_looping.push(*attack);
+	    },
+	    InstrumentOp::Sample(BasicSample { attack, looping: Some (loopy) }) => {
+		if *loopy == *attack {
+		    looping.push(*attack);
+		} else {
+		    non_looping.push(*attack);
+		    looping.push(*loopy);
+		}},
+	    InstrumentOp::Loop(loopy) => {
+		for op in loopy {
+		    let (v1, v2) = op.samples();
+		    non_looping.extend(v1);
+		    looping.extend(v2);
+		}
+	    }
+	    InstrumentOp::Slide(SlidingSample { bounds, subsample_start, delta, .. }) => {
+		let mut sample = *subsample_start;
+		looping.push(sample);
+		if *delta != 0 {
+		    let last_start = if *delta > 0 {
+			((bounds.start + bounds.len) as isize - *delta) as usize
+		    } else {
+			bounds.start
+		    };
+
+		    while sample.start != last_start {
+			sample = sample.shift_start(*delta);
+			if *delta > 0 {
+			    sample.start = usize::min(last_start, sample.start);
+			} else {
+			    sample.start = usize::max(last_start, sample.start);
+			}
+			looping.push(sample);
+		    }
+		}
+	    }
+	    _ => {},
+	};
+	return (non_looping, looping);
+    }
+}
+
 impl fmt::Display for InstrumentOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	match self {
@@ -91,6 +143,21 @@ impl fmt::Display for InstrumentOp {
 #[derive(Clone)]
 pub struct Instrument {
     pub ops : Vec<InstrumentOp>,
+}
+
+impl Instrument {
+    /// Returns (non-looping samples, looping samples)
+    /// May return duplicates
+    fn samples(&self) -> (Vec<SampleRange>, Vec<SampleRange>) {
+	let mut non_looping: Vec<SampleRange> = vec![];
+	let mut looping: Vec<SampleRange> = vec![];
+	for op in self.ops.iter() {
+	    let (nl, l) = op.samples();
+	    non_looping.extend(nl);
+	    looping.extend(l);
+	}
+	return (non_looping, looping);
+    }
 }
 
 impl fmt::Display for Instrument {
@@ -309,6 +376,19 @@ pub struct Song {
     pub monopatterns : Vec<Monopattern>,
     pub divisions : Vec<Division>,
     pub songinfo : SongInfo,
+}
+
+impl Song {
+    pub fn samples(&self) -> (HashSet<SampleRange>, HashSet<SampleRange>) {
+	let mut non_looping: Vec<SampleRange> = vec![];
+	let mut looping: Vec<SampleRange> = vec![];
+	for instr in self.instruments.iter() {
+	    let (nl, l) = instr.samples();
+	    non_looping.extend(nl);
+	    looping.extend(l);
+	}
+	return (HashSet::from_iter(non_looping), HashSet::from_iter(looping));
+    }
 }
 
 impl fmt::Display for Song {

@@ -6,7 +6,7 @@ use hound::WavWriter;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use std::{collections::VecDeque, sync::{Mutex, Arc}, fs::File, io::BufWriter, mem};
+use std::{collections::{VecDeque, HashSet}, sync::{Mutex, Arc}, fs::File, io::BufWriter, mem, fmt::Display};
 use lazy_static::lazy_static;
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
@@ -923,6 +923,7 @@ pub struct SongPlayer {
 
 impl SongPlayer {
     fn new(sample_data: &SampleData) -> Self {
+	// FIXME: use SampleProvider instead of SampleData
 	SongPlayer {
 	    song: None,
 	    tick: 0,
@@ -1134,12 +1135,58 @@ impl AudioSource for SongPlayer {
     }
 }
 
+struct SampleProvider {
+    looping_samples: Vec<SampleRange>,
+    nonlooping_samples: Vec<SampleRange>,
+}
+
+impl SampleProvider {
+    fn new(_sample_data: &SampleData, songs: &[Song]) -> Self {
+	let mut non_looping_samples = HashSet::new();
+	let mut looping_samples = HashSet::new();
+	for song in songs {
+	    let (nl, l) = song.samples();
+	    for s in nl {
+		non_looping_samples.insert(s);
+	    }
+	    for s in l {
+		looping_samples.insert(s);
+	    }
+	}
+	let mut nl_samples : Vec<SampleRange> = non_looping_samples.iter().map(|x| *x).collect();
+	let mut l_samples : Vec<SampleRange> = looping_samples.iter().map(|x| *x).collect();
+	nl_samples.sort();
+	l_samples.sort();
+
+	SampleProvider {
+	    nonlooping_samples: nl_samples,
+	    looping_samples: l_samples,
+	}
+    }
+}
+
+impl Display for SampleProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	//let sep: String = ", ".into();
+	let l : String = self.looping_samples.iter().map(|x| x.show()).collect();
+	let nl : String = self.nonlooping_samples.iter().map(|x| x.show()).collect();
+	writeln!(f, "[SampleProvider]\n      looping: ({}) {l}\n  non-looping: ({}) {nl}",
+		 self.looping_samples.len(),
+		 self.nonlooping_samples.len(),
+	)
+    }
+}
+
 pub struct SongPlayerAudioSource {
     player: Arc<Mutex<SongPlayer>>,
 }
 
 impl SongPlayerAudioSource {
-    pub fn new(sample_data: &SampleData) -> Self {
+    pub fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
+	let sample_provider = SampleProvider::new(sample_data, songs);
+	// TODO: migrate to sample_provider as sample source for SongPlayer
+	println!("{sample_provider}");
+
 	SongPlayerAudioSource {
 	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data)))
 	}

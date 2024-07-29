@@ -1292,7 +1292,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 
     let audiocore = audio::acore::init(&sdl_context);
     let mut mixer = audiocore.mixer();
-    let mut song_player = SongPlayerAudioSource::new(&data.sample_data);
+    let mut song_player = SongPlayerAudioSource::new(&data.sample_data, &data.songs);
     let song_tracer = ArcDemoSongTracer::new();
     mixer.add_source(song_player.player());
     let mut poly_it = SongIterator::new(&song,
@@ -1480,11 +1480,11 @@ fn main() -> io::Result<()> {
     if args.len() >= 2 {
 	match args[1].as_str() {
 	    "strings"	=> print_strings(&data),
-	    "song"	=> {
+	    "song-old"	=> {
 		let source = &args[2];
 		play_song(&data, str::parse::<usize>(source).unwrap());
 	    },
-	    "song2"	=> {
+	    "song"	=> {
 		let song_nr = if args.len() > 2 {
 		    str::parse::<usize>(&args[2]).unwrap()
 		} else { 0 };

@@ -13,7 +13,7 @@ To compile and run, use the Rust `cargo` tool.
 The current run modes are supported:
 - `cargo run strings`: Dump out all text strings
 - `cargo run graphics`: Shows some graphics
-- `cargo run song $X`: Tries to play in-game song `${X}` (will likely crash sooner or later).
+- `cargo run song $X`: Plays the in-game song `${X}` (no looping)
 - `cargo run maps`: Map demo, allows walking through first-person dungeons
 
 ## Why?
