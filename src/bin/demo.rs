@@ -703,80 +703,6 @@ fn float_buffers_merge_to_i16(input_l : &[f32], input_r: &[f32]) -> Vec<i16> {
     result
 }
 
-fn play_song_fg(data : &datafiles::AmberstarFiles, song_nr : usize, duration_seconds: usize,
-		channel_mask: usize, start_at_tick: usize) -> Result<(), String> {
-    let song = &data.songs[song_nr];
-    println!("{}", song);
-    let sdl_context = sdl2::init().unwrap();
-
-    //let mut audiocore = audio::init(&sdl_context);
-    //instr.play_song_fg();
-    let audio = sdl_context.audio()?;
-
-    let desired_spec = AudioSpecDesired {
-        freq: Some(SAMPLE_RATE as i32),
-        channels: Some(2),
-        samples: None,
-    };
-
-    let device = audio.open_queue::<i16, _>(None, &desired_spec)?;
-
-    //let target_bytes = SAMPLE_RATE * 4;
-    let buf_size : usize = SAMPLE_RATE * duration_seconds;
-    let mut buf_left = vec![0.0; buf_size];
-    let mut buf_right = vec![0.0; buf_size];
-
-    audio::experiments::song_to_pcm(&data.sample_data,
-				    &mut buf_left,
-				    &mut buf_right,
-				    channel_mask,
-				    start_at_tick,
-				    song,
-				    SAMPLE_RATE);
-
-    // let n = (48000*4) + 24780;
-    // // let v = buf_left[n];
-    // // buf_left[n..(48000*5)].fill(v);
-
-    //let n = (480 * SAMPLE_RATE) / 1000 - 10;
-    let n = (960 * SAMPLE_RATE) / 1000 - 10;
-    for i in n..n+40 {
-	let tick = (i * 50) / 48000;
-	let tickd = i - ((tick * 48000) / 50);
-	println!("  {i} [time:{:8}, tick:{tick}+{tickd:4}] : {:?}",
-		 (i * 1000) / 48000,
-		 &buf_right[i]);
-    }
-
-    // mk_sine(&mut buf, 0,
-    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
-    // 	    1000);
-    // mk_sine(&mut buf,
-    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
-    // 	    SAMPLE_RATE * DURATION_SECONDS / 2,
-    // 	    500);
-    // for x in 0 .. BUF_SIZE {
-    // 	let k = x as u32;
-    // 	if ((k >> 8) & 1) == 1 {
-    // 	    buf[x] = -1.0;
-    // 	} else {
-    // 	    buf[x] = 1.0;
-    // 	}
-    // }
-    //let wave = gen_wave(target_bytes);
-    let wave = float_buffers_merge_to_i16(&buf_left, &buf_right);
-
-    device.queue_audio(&wave)?;
-    // Start playback
-    device.resume();
-
-    std::thread::sleep(Duration::from_millis(1000 * duration_seconds as u64));
-
-    // Device is automatically closed when dropped
-
-    Ok(())
-}
-
 // --------------------------------------------------------------------------------
 
 type InfoFunction = fn(&mut PaginatedWriter, &ArcDemoSongTracer, CurrentSongInfo) -> ();
@@ -1489,19 +1415,6 @@ fn main() -> io::Result<()> {
 		    str::parse::<usize>(&args[2]).unwrap()
 		} else { 0 };
 		play_song2(&data, song_nr).unwrap();
-	    },
-	    "fg-song"	=> {
-		let source = &args[2];
-		let duration = if args.len() > 3 {
-		    str::parse::<usize>(&args[3]).unwrap()
-		} else { 1 };
-		let channels = if args.len() > 4 {
-		    str::parse::<usize>(&args[4]).unwrap()
-		} else { 15 };
-		let start_at_tick = if args.len() > 5 {
-		    str::parse::<usize>(&args[5]).unwrap()
-		} else { 0 };
-		let _ = play_song_fg(&data, str::parse::<usize>(source).unwrap(), duration, channels, start_at_tick);
 	    },
 	    "iter-song"	=> {
 		let source = &args[2];

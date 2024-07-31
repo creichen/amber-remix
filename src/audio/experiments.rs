@@ -2,11 +2,11 @@
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 
-use hound::WavWriter;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
-use std::{collections::{VecDeque, HashSet}, sync::{Mutex, Arc}, fs::File, io::BufWriter, mem, fmt::Display};
+use hound::WavWriter;
+use std::{collections::{VecDeque, HashSet, HashMap}, sync::{Mutex, Arc}, fs::File, io::BufWriter, mem, fmt::Display};
 use lazy_static::lazy_static;
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
@@ -36,10 +36,123 @@ use super::acore::AudioSource;
 pub const SAMPLE_RATE : usize = 48_000;
 
 // ================================================================================
+// SampleProvider
+
+#[derive(Hash, PartialEq, Eq)]
+struct ResamplingKey {
+    range: SampleRange,
+    freq: usize,
+    looping: bool,
+}
+
+impl ResamplingKey {
+    fn new(range: SampleRange,
+	   freq: usize,
+	   looping: bool) -> Self {
+	ResamplingKey {
+	    range,
+	    freq,
+	    looping,
+	}
+    }
+
+}
+
+struct SampleProvider {
+    sample_data: SampleData,
+    looping_samples: Vec<SampleRange>,
+    nonlooping_samples: Vec<SampleRange>,
+    //scratch: Vec<Complex<f32>>,
+    samples: HashMap<ResamplingKey, Vec<f32>>,
+    empty: Vec<f32>,
+}
+
+impl SampleProvider {
+    fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
+	let mut non_looping_samples = HashSet::new();
+	let mut looping_samples = HashSet::new();
+	for song in songs {
+	    let (nl, l) = song.samples();
+	    for s in nl {
+		non_looping_samples.insert(s);
+	    }
+	    for s in l {
+		looping_samples.insert(s);
+	    }
+	}
+	let mut nl_samples : Vec<SampleRange> = non_looping_samples.iter().map(|x| *x).collect();
+	let mut l_samples : Vec<SampleRange> = looping_samples.iter().map(|x| *x).collect();
+	nl_samples.sort();
+	l_samples.sort();
+
+	let mut result = SampleProvider {
+	    sample_data: sample_data.clone(),
+	    nonlooping_samples: nl_samples.clone(),
+	    looping_samples: l_samples.clone(),
+	    //scratch: vec![],
+	    samples: HashMap::new(),
+	    empty: vec![],
+	};
+	result.resample_looping(&l_samples);
+	result.resample_nonlooping(&nl_samples);
+	result
+    }
+
+    fn resample_looping(&mut self, samples: &Vec<SampleRange>) {
+	for &sample_range in samples {
+	    self.samples.insert(ResamplingKey::new(sample_range, 0, false),
+				self.sample_f32(sample_range));
+	}
+    }
+    fn resample_nonlooping(&mut self, samples: &Vec<SampleRange>) {
+	// FIXME
+	self.resample_looping(samples);
+    }
+
+    // fn ensure_scratch(&mut self, len: usize) {
+    // 	if self.scratch.len() < len {
+    // 	    self.scratch = vec![Complex::new(0.0, 0.0); len];
+    // 	}
+    // }
+
+    fn sample_f32(&self, range: SampleRange) -> Vec<f32> {
+	return self.sample_data[range].iter().map(|&v| v as f32 / 128.0).collect();
+    }
+
+    fn next_lowest_freq(&self, _freq: usize) -> usize {
+	0
+    }
+
+    fn get(&self, range: SampleRange, freq: usize, _is_looping: bool) -> &[f32] {
+	return &self.samples[&ResamplingKey::new(range,
+						 self.next_lowest_freq(freq),
+						 false)];
+    }
+
+    fn empty_sample(&self) -> &[f32] {
+	&self.empty
+    }
+}
+
+impl Display for SampleProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	//let sep: String = ", ".into();
+	let l : String = self.looping_samples.iter().map(|x| x.show()).collect();
+	let nl : String = self.nonlooping_samples.iter().map(|x| x.show()).collect();
+	writeln!(f, "[SampleProvider]\n      looping: ({}) {l}\n  non-looping: ({}) {nl}",
+		 self.looping_samples.len(),
+		 self.nonlooping_samples.len(),
+	)
+    }
+}
+
+
+
+// ================================================================================
 // Instruments
 #[derive(Clone, Debug)]
-enum InstrumentUpdate {
-    New(Vec<f32>, bool), // bool: sliding (i.e., preserve offset)
+enum InstrumentUpdate<'a> {
+    New(&'a [f32], bool), // bool: sliding (i.e., preserve offset)
     Loop,
     None
 }
@@ -90,22 +203,22 @@ impl Instrument {
 	}
     }
 
-    fn current_sample_raw<'a>(&self, sample_data: &'a SampleData) -> Option<&'a [i8]> {
+    fn current_sample<'a>(&self, sample_provider: &'a SampleProvider, freq: usize) -> &'a [f32] {
 	match self.current_sample_range() {
-	    None => None,
-	    Some(r) => Some(&sample_data[r]),
+	    None => &sample_provider.empty_sample(),
+	    Some(r) => sample_provider.get(r, freq, self.is_looping()),
 	}
     }
 
-    fn current_sample(&self, sample_data: &SampleData) -> Vec<f32> {
-	match self.current_sample_raw(sample_data) {
-	    None => vec![],
-	    Some(pcm) => pcm.iter()
-		.map(|&v| v as f32 / 128.0).collect(),
-	}
-    }
+    // fn current_sample(&self, sample_provider: &SampleProvider, freq: usize) -> Vec<f32> {
+    // 	match self.current_sample_raw(sample_provider, freq) {
+    // 	    None => vec![],
+    // 	    Some(pcm) => pcm.iter()
+    // 		.map(|&v| v as f32 / 128.0).collect(),
+    // 	}
+    // }
 
-    fn next_sample(&mut self, sample_data: &SampleData) -> InstrumentUpdate {
+    fn next_sample<'a>(&mut self, sample_provider: &'a SampleProvider, freq: usize) -> InstrumentUpdate<'a> {
 	let new_range = self.current_sample_range();
 	if new_range.is_none() {
 	    return InstrumentUpdate::None;
@@ -115,7 +228,7 @@ impl Instrument {
 	    return InstrumentUpdate::Loop;
 	}
 	// otherwise we have an actual update
-	let sample = self.current_sample(sample_data);
+	let sample = self.current_sample(sample_provider, freq);
 	trace!("    -> single sample: {:?}", self.current_sample_range());
 	if !self.is_looping() {
 	    self.ops = self.ops[1..self.ops.len()].to_vec();
@@ -166,12 +279,16 @@ impl<'a> ChannelState {
 	let frequency = self.freq as f64;
 	return frequency / sample_rate;
     }
+
+    fn next_instrument_sample(&mut self, sample_provider: &'a SampleProvider) -> InstrumentUpdate<'a> {
+	self.instrument.next_sample(sample_provider, self.freq)
+    }
 }
 
 // --------------------------------------------------------------------------------
 
 trait ChannelResampler {
-    fn play(&mut self, sample_data: &SampleData, dest: &mut [f32], channel: &mut ChannelState);
+    fn play(&mut self, sample_provider: &SampleProvider, dest: &mut [f32], channel: &mut ChannelState);
     // Called after a frequency change
     fn updated_frequency(&mut self, _channel: &mut ChannelState) {}
     fn updated_instrument(&mut self, _channel: &mut ChannelState) {}
@@ -195,22 +312,22 @@ impl<'a, T : ChannelResampler> ChannelPlayer<T> {
 	}
     }
 
-    fn play(&mut self, sample_data: &SampleData, dest: &mut [f32]) {
+    fn play(&mut self, sample_provider: &SampleProvider, dest: &mut [f32]) {
 	if self.state.volume == 0.0 || self.state.freq == 0 {
 	    return;
 	}
-	self.resampler.play(sample_data, dest, &mut self.state);
+	self.resampler.play(sample_provider, dest, &mut self.state);
     }
 
 
     /// Like play, but fade volume to zero at the end of dest.
     /// Does not update the channel volume.
-    fn play_fadeout(&mut self, sample_data: &SampleData, dest: &mut [f32]) {
+    fn play_fadeout(&mut self, sample_provider: &SampleProvider, dest: &mut [f32]) {
 	if dest.len() == 0 {
 	    return;
 	}
 	let mut tmp = vec![0.0; dest.len()];
-	self.play(sample_data, &mut tmp);
+	self.play(sample_provider, &mut tmp);
 	let volume_fraction = 1.0 / dest.len() as f32;
 	let mut volume = 1.0;
 	for i in 0..dest.len() {
@@ -242,6 +359,7 @@ impl<'a, T : ChannelResampler> ChannelPlayer<T> {
 struct SineResampler {
 }
 
+#[allow(unused)]
 impl SineResampler {
     fn new() -> Self {
 	SineResampler {
@@ -250,7 +368,7 @@ impl SineResampler {
 }
 
 impl ChannelResampler for SineResampler {
-    fn play(&mut self, _sample_data: &SampleData, buf: &mut [f32], state: &mut ChannelState) {
+    fn play(&mut self, _sample_provider: &SampleProvider, buf: &mut [f32], state: &mut ChannelState) {
 	mk_sine(buf, state.freq);
     }
 }
@@ -264,6 +382,7 @@ struct SincResampler {
     current_inpos: usize,
 }
 
+#[allow(unused)]
 impl SincResampler {
     fn new() -> Self {
 	SincResampler {
@@ -312,12 +431,12 @@ impl SincResampler {
 }
 
 impl ChannelResampler for SincResampler {
-    fn play(&mut self, sample_data: &SampleData, buf: &mut [f32], channel: &mut ChannelState) {
+    fn play(&mut self, sample_provider: &SampleProvider, buf: &mut [f32], channel: &mut ChannelState) {
 	let volume = channel.volume;
 	let mut pos = 0;
 	while pos < buf.len() {
 	    if self.current_inpos >= self.current_resampled_sample.len() {
-		match channel.instrument.next_sample(sample_data) {
+		match channel.next_instrument_sample(sample_provider) {
 		    InstrumentUpdate::None => {
 			return;
 		    },
@@ -325,7 +444,7 @@ impl ChannelResampler for SincResampler {
 			self.current_inpos = 0;
 		    },
 		    InstrumentUpdate::New(sample, is_sliding) => {
-			self.current_sample = sample;
+			self.current_sample = sample.to_vec();
 			self.resample(channel);
 			if !is_sliding || self.current_inpos >= self.current_sample.len() {
 			    self.current_inpos = 0;
@@ -360,6 +479,7 @@ struct DirectFFTResampler {
     planner: FftPlanner<f32>,
 }
 
+#[allow(unused)]
 impl DirectFFTResampler {
     fn new() -> Self {
 	DirectFFTResampler {
@@ -440,12 +560,12 @@ impl DirectFFTResampler {
 }
 
 impl ChannelResampler for DirectFFTResampler {
-    fn play(&mut self, sample_data: &SampleData, buf: &mut [f32], channel: &mut ChannelState) {
+    fn play(&mut self, sample_provider: &SampleProvider, buf: &mut [f32], channel: &mut ChannelState) {
 	let volume = channel.volume;
 	let mut pos = 0;
 	while pos < buf.len() {
             if self.current_inpos >= self.current_resampled_sample.len() {
-		match channel.instrument.next_sample(sample_data) {
+		match channel.next_instrument_sample(sample_provider) {
                     InstrumentUpdate::None => {
 			return;
                     },
@@ -484,6 +604,7 @@ struct NearestResampler {
     current_inpos: f32,
 }
 
+#[allow(unused)]
 impl NearestResampler {
     fn new() -> Self {
 	NearestResampler {
@@ -495,7 +616,7 @@ impl NearestResampler {
 
 
 impl ChannelResampler for NearestResampler {
-    fn play(&mut self, sample_data: &SampleData, buf: &mut [f32], channel: &mut ChannelState) {
+    fn play(&mut self, sample_provider: &SampleProvider, buf: &mut [f32], channel: &mut ChannelState) {
 	let volume = channel.volume;
 	let mut pos = 0;
 	let stride = channel.inv_resample_ratio() as f32;
@@ -503,7 +624,7 @@ impl ChannelResampler for NearestResampler {
 	while pos < buf.len() {
 	    let mut inpos = self.current_inpos as usize;
             if inpos >= self.current_sample.len() {
-		match channel.instrument.next_sample(sample_data) {
+		match channel.next_instrument_sample(sample_provider) {
                     InstrumentUpdate::None => {
 			return;
                     },
@@ -512,7 +633,7 @@ impl ChannelResampler for NearestResampler {
 			inpos = 0;
                     },
                     InstrumentUpdate::New(sample, is_sliding) => {
-			self.current_sample = sample;
+			self.current_sample = sample.to_vec();
 			self.current_inpos = 0.0;
 			if !is_sliding || inpos >= self.current_sample.len() {
 			    inpos = 0;
@@ -539,6 +660,7 @@ struct LinearResampler {
     prev: f32,
 }
 
+#[allow(unused)]
 impl LinearResampler {
     fn new() -> Self {
 	LinearResampler {
@@ -548,10 +670,10 @@ impl LinearResampler {
 	}
     }
 
-    fn ensure_sample(&mut self, sample_data: &SampleData, channel: &mut ChannelState, inpos_delta: usize) -> Option<usize> {
+    fn ensure_sample(&mut self, sample_provider: &SampleProvider, channel: &mut ChannelState, inpos_delta: usize) -> Option<usize> {
 	let inpos = self.current_inpos as usize + inpos_delta;
         if inpos >= self.current_sample.len() {
-	    match channel.instrument.next_sample(sample_data) {
+	    match channel.next_instrument_sample(sample_provider) {
                 InstrumentUpdate::None => {
 		    trace!("  <none>");
 		    return None;
@@ -572,7 +694,7 @@ impl LinearResampler {
 			    trace!("      {i:8}: {:}", self.current_sample[i]);
 			}
 		    }
-		    self.current_sample = sample;
+		    self.current_sample = sample.to_vec();
 		    if self.current_sample.len() > 0 {
 			trace!("   -- New:");
 			for i in 0..10 {
@@ -592,13 +714,13 @@ impl LinearResampler {
 
 
 impl ChannelResampler for LinearResampler {
-    fn play(&mut self, sample_data: &SampleData, buf: &mut [f32], channel: &mut ChannelState) {
+    fn play(&mut self, sample_provider: &SampleProvider, buf: &mut [f32], channel: &mut ChannelState) {
 	let volume = channel.volume;
 	let mut pos = 0;
 	let stride = channel.inv_resample_ratio() as f32;
 	trace!(" stride={stride}");
 	while pos < buf.len() {
-	    let inpos_i = match self.ensure_sample(sample_data, channel, 0) {
+	    let inpos_i = match self.ensure_sample(sample_provider, channel, 0) {
 		None => return,
 		Some(v) => v,
 	    };
@@ -610,7 +732,7 @@ impl ChannelResampler for LinearResampler {
 	    self.current_inpos = next_inpos_f;
 	    if next_inpos_f as usize > inpos_i {
 		let last_sample = if self.current_sample.len() > 0 { self.current_sample[self.current_sample.len() - 1] } else { v };
-		self.ensure_sample(sample_data, channel, 0);
+		self.ensure_sample(sample_provider, channel, 0);
 		self.prev = if self.current_sample.len() == 0 || self.current_inpos as usize == 0 {
 		    last_sample
 		} else { self.current_sample[self.current_inpos as usize - 1] };
@@ -667,111 +789,6 @@ type DefaultChannelPlayer = ChannelPlayer<LinearResampler>;
 //fn mk_player() -> ChannelPlayer<NearestResampler> {  ChannelPlayer::new(NearestResampler::new()) }
 fn mk_player() -> ChannelPlayer<LinearResampler> {  ChannelPlayer::new(LinearResampler::new()) }
 
-/// Iterate over the song's poly iterator until the buffer is full
-pub fn song_to_pcm(sample_data: &SampleData,
-		   buf_left: &mut [f32],
-		   buf_right: &mut [f32],
-		   channel_mask: usize,
-		   start_at_tick: usize,
-		   song: &Song,
-		   sample_rate: usize) {
-    let mut poly_it = SongIterator::new(&song,
-					song.songinfo.first_division,
-					song.songinfo.last_division);
-
-    let max_pos = buf_left.len();
-    let duration_milliseconds = (max_pos * 1000) / sample_rate;
-    let mut buf_pos_ms = [0, 0, 0, 0];
-    let mut players = [
-	mk_player(),
-	mk_player(),
-	mk_player(),
-	mk_player(),
-    ];
-
-    let mut new_instruments: [Option<Instrument>; 4] = [
-	None, None, None, None,
-    ];
-
-    let mut channels = [0, 1, 1, 0];
-    for i in 0..4 {
-	if channel_mask & (1 << i) == 0 {
-	    channels[i] = -1;
-	}
-    }
-
-    let mut tick = 0;
-
-    // FIXME: doesn't necessarily iterate until buffer is full
-    while buf_pos_ms[0] < duration_milliseconds
-	&& buf_pos_ms[1] < duration_milliseconds
-	&& buf_pos_ms[2] < duration_milliseconds
-	&& buf_pos_ms[3] < duration_milliseconds {
-
-	    trace!("--- tick {buf_pos_ms:?} {tick} >= {start_at_tick}\n");
-
-	for i in 0..4 {
-	    let mut d = VecDeque::<AQOp>::new();
-	    let out_channel = channels[i];
-	    if out_channel < 0 {
-		// suppress
-		poly_it.channels[i].next(&mut d);
-	    } else {
-		poly_it.channels[i].next(&mut d);
-		if poly_it.channels[i].is_done() {
-		    // FIXME: this should happen when ALL channels are done
-		    // (though that should normally coincide.....)
-		    poly_it.next_division();
-		}
-
-		let buf = if out_channel == 0
-		    {&mut*buf_left } else { &mut*buf_right };
-
-		for dd in d {
-		    trace!("  #{i}- {dd:?}");
-		    match dd {
-			AQOp::SetSamples(samples) => {
-			    new_instruments[i] = Some(Instrument::new(samples));
-			},
-			AQOp::WaitMillis(ms) => {
-			    let start = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
-			    if tick >= start_at_tick {
-				buf_pos_ms[i] += ms;
-			    }
-			    let mut stop = (SAMPLE_RATE * buf_pos_ms[i]) / 1000;
-			    if stop > max_pos {
-				stop = max_pos;
-			    }
-
-			    if let Some(instr) = &new_instruments[i] {
-				// Fade out old instrument
-				// FIXME if we want to make this incremental: always want the same fade-out
-				let fade_end = usize::min(stop, start + SAMPLE_RATE / 4000);
-				if tick >= start_at_tick {
-				    players[i].play_fadeout(sample_data, &mut buf[start..fade_end]);
-				}
-				players[i].set_instrument(instr.clone());
-				new_instruments[i] = None;
-			    }
-			    if tick >= start_at_tick {
-				players[i].play(sample_data, &mut buf[start..stop]);
-			    }
-			},
-			AQOp::SetVolume(v) => {
-			    players[i].set_volume(v);
-			},
-			AQOp::SetFreq(f) => // freq = f / 32,
-			    players[i].set_frequency(f), // FIXME: workaround for period_to_freq
-			//AQOp::Timeslice => poly_it.adv,
-			_ => {},
-		    }
-		}
-	    }
-	}
-	    tick += 1;
-    }
-}
-
 #[derive(Clone)]
 struct SingleSongPlayer {
     buf_pos_ms: [usize; 4],
@@ -816,7 +833,7 @@ impl SingleSongPlayer {
 	self.poly_it.channels[channel as usize].set_logger(logger);
     }
 
-    fn fill(&mut self, sample_data: &SampleData, channel: u8, buf: &mut [f32], sample_rate: usize) {
+    fn fill(&mut self, sample_provider: &SampleProvider, channel: u8, buf: &mut [f32], sample_rate: usize) {
 	debug!("SingleSongPlayer::fill({}, {sample_rate})", buf.len());
 	let i = channel as usize;
 	let mut d = VecDeque::<AQOp>::new();
@@ -845,11 +862,11 @@ impl SingleSongPlayer {
 			// Fade out old instrument
 			// FIXME if we want to make this incremental: always want the same fade-out
 			let fade_end = usize::min(stop, start + sample_rate / 4000);
-			self.players[i].play_fadeout(sample_data, &mut buf[start..fade_end]);
+			self.players[i].play_fadeout(&sample_provider, &mut buf[start..fade_end]);
 			self.players[i].set_instrument(instr.clone());
 			self.new_instruments[i] = None;
 		    }
-		    self.players[i].play(sample_data, &mut buf[start..stop]);
+		    self.players[i].play(&sample_provider, &mut buf[start..stop]);
 		},
 		AQOp::SetVolume(v) => {
 		    self.players[i].set_volume(v);
@@ -912,7 +929,7 @@ const BUF_SIZE : usize = 8000;
 pub struct SongPlayer {
     song: Option<SingleSongPlayer>,
     tick: usize, // Song tick counter
-    sample_data: SampleData,
+    sample_provider: SampleProvider,
     left_buf: Vec<f32>,
     right_buf: Vec<f32>,
     tracer: Option<Arc<Mutex<dyn SongTracer>>>,
@@ -922,12 +939,15 @@ pub struct SongPlayer {
 }
 
 impl SongPlayer {
-    fn new(sample_data: &SampleData) -> Self {
+    fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
 	// FIXME: use SampleProvider instead of SampleData
+	let sample_provider = SampleProvider::new(sample_data, songs);
+	// TODO: migrate to sample_provider as sample source for SongPlayer
+
 	SongPlayer {
 	    song: None,
 	    tick: 0,
-	    sample_data: (*sample_data).clone(),
+	    sample_provider,
 	    left_buf: Vec::<f32>::with_capacity(BUF_SIZE),
 	    right_buf: Vec::<f32>::with_capacity(BUF_SIZE),
 	    tracer: None,
@@ -1048,7 +1068,7 @@ impl SongPlayer {
 
 		if trace {
 		    let mut data: Vec<f32> = vec![0.0; buf.len()];
-		    sp.fill(&self.sample_data,
+		    sp.fill(&self.sample_provider,
 			    i as u8,
 			    &mut data,
 			    sample_rate);
@@ -1057,7 +1077,7 @@ impl SongPlayer {
 		    }
 		    to_report.push(data);
 		} else {
-		    sp.fill(&self.sample_data,
+		    sp.fill(&self.sample_provider,
 			    i as u8,
 			    buf,
 			    sample_rate);
@@ -1135,60 +1155,14 @@ impl AudioSource for SongPlayer {
     }
 }
 
-struct SampleProvider {
-    looping_samples: Vec<SampleRange>,
-    nonlooping_samples: Vec<SampleRange>,
-}
-
-impl SampleProvider {
-    fn new(_sample_data: &SampleData, songs: &[Song]) -> Self {
-	let mut non_looping_samples = HashSet::new();
-	let mut looping_samples = HashSet::new();
-	for song in songs {
-	    let (nl, l) = song.samples();
-	    for s in nl {
-		non_looping_samples.insert(s);
-	    }
-	    for s in l {
-		looping_samples.insert(s);
-	    }
-	}
-	let mut nl_samples : Vec<SampleRange> = non_looping_samples.iter().map(|x| *x).collect();
-	let mut l_samples : Vec<SampleRange> = looping_samples.iter().map(|x| *x).collect();
-	nl_samples.sort();
-	l_samples.sort();
-
-	SampleProvider {
-	    nonlooping_samples: nl_samples,
-	    looping_samples: l_samples,
-	}
-    }
-}
-
-impl Display for SampleProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-	//let sep: String = ", ".into();
-	let l : String = self.looping_samples.iter().map(|x| x.show()).collect();
-	let nl : String = self.nonlooping_samples.iter().map(|x| x.show()).collect();
-	writeln!(f, "[SampleProvider]\n      looping: ({}) {l}\n  non-looping: ({}) {nl}",
-		 self.looping_samples.len(),
-		 self.nonlooping_samples.len(),
-	)
-    }
-}
-
 pub struct SongPlayerAudioSource {
     player: Arc<Mutex<SongPlayer>>,
 }
 
 impl SongPlayerAudioSource {
     pub fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
-	let sample_provider = SampleProvider::new(sample_data, songs);
-	// TODO: migrate to sample_provider as sample source for SongPlayer
-	println!("{sample_provider}");
-
 	SongPlayerAudioSource {
-	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data)))
+	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data, songs)))
 	}
     }
 

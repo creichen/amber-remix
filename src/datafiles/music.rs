@@ -829,6 +829,13 @@ impl<'a> RawSong<'a> {
 		let raw_effect = cdata[2];
 		let effect;
 
+		// if div_id == 0 {
+		//     if raw_effect > 64 {
+		// 	effect = DivisionEffect::ChannelVolume(0);
+		//     } else {
+		// 	effect = DivisionEffect::ChannelVolume(64 - raw_effect as usize);
+		//     }
+		// } else 
 		if raw_effect & 0x80 == 0x80 {
 		    let effect_type = (raw_effect & 0x70) >> 4;
 		    let effect_value = raw_effect & 0xf;
