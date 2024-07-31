@@ -7,6 +7,8 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 use std::{sync::{Arc, Mutex}, ops::DerefMut};
 use sdl2::audio::{AudioSpec, AudioFormat, AudioCallback};
 
+use super::Freq;
+
 // use super::dsp::ringbuf::RingBuf;
 
 // ================================================================================
@@ -175,10 +177,17 @@ impl AudioCore {
 
 pub struct ACore {
     ac : Arc<Mutex<AudioCore>>,
+    pub frequency : Freq,
 }
 
 impl ACore {
-    fn new(ac: Arc<Mutex<AudioCore>>) -> Self { Self { ac } }
+    fn new(ac: Arc<Mutex<AudioCore>>) -> Self {
+	let frequency = {
+	    let guard = ac.lock().unwrap();
+	    guard.spec.freq as Freq
+	};
+	Self { ac, frequency }
+    }
 
     pub fn mixer(&self) -> Mixer {
 	let guard = self.ac.lock().unwrap();

@@ -1218,7 +1218,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 
     let audiocore = audio::acore::init(&sdl_context);
     let mut mixer = audiocore.mixer();
-    let mut song_player = SongPlayerAudioSource::new(&data.sample_data, &data.songs);
+    let mut song_player = SongPlayerAudioSource::new(&data.sample_data, &data.songs, audiocore.frequency);
     let song_tracer = ArcDemoSongTracer::new();
     mixer.add_source(song_player.player());
     let mut poly_it = SongIterator::new(&song,

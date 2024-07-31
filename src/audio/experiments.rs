@@ -12,7 +12,7 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationPar
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
 //use sdl2::libc::STA_FREQHOLD;
 use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
-use super::{amber::SongIterator, AQSample, SampleRange, dsp::streamlog::{StreamLogger, self, StreamLogClient}};
+use super::{amber::{SongIterator, self}, AQSample, SampleRange, dsp::streamlog::{StreamLogger, self, StreamLogClient}, Freq};
 use super::blep::BLEP;
 use super::acore::AudioSource;
 
@@ -41,7 +41,7 @@ pub const SAMPLE_RATE : usize = 48_000;
 #[derive(Hash, PartialEq, Eq)]
 struct ResamplingKey {
     range: SampleRange,
-    freq: usize,
+    freq: Freq,
     looping: bool,
 }
 
@@ -59,16 +59,18 @@ impl ResamplingKey {
 }
 
 struct SampleProvider {
+    output_freq: Freq,
     sample_data: SampleData,
     looping_samples: Vec<SampleRange>,
     nonlooping_samples: Vec<SampleRange>,
-    //scratch: Vec<Complex<f32>>,
+    resampling_frequencies: Vec<Freq>,
+    scratch: Vec<Complex<f32>>,
     samples: HashMap<ResamplingKey, Vec<f32>>,
     empty: Vec<f32>,
 }
 
 impl SampleProvider {
-    fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
+    fn new(sample_data: &SampleData, songs: &[Song], output_freq: Freq) -> Self {
 	let mut non_looping_samples = HashSet::new();
 	let mut looping_samples = HashSet::new();
 	for song in songs {
@@ -85,11 +87,17 @@ impl SampleProvider {
 	nl_samples.sort();
 	l_samples.sort();
 
+	let mut resampling_frequencies : Vec<Freq> = amber::PERIODS.iter().step_by(3).map(
+	    |&p| amber::period_to_freq(p)).collect();
+	resampling_frequencies.sort();
+
 	let mut result = SampleProvider {
+	    output_freq,
 	    sample_data: sample_data.clone(),
-	    nonlooping_samples: nl_samples.clone(),
 	    looping_samples: l_samples.clone(),
-	    //scratch: vec![],
+	    nonlooping_samples: nl_samples.clone(),
+	    resampling_frequencies,
+	    scratch: vec![],
 	    samples: HashMap::new(),
 	    empty: vec![],
 	};
@@ -109,21 +117,21 @@ impl SampleProvider {
 	self.resample_looping(samples);
     }
 
-    // fn ensure_scratch(&mut self, len: usize) {
-    // 	if self.scratch.len() < len {
-    // 	    self.scratch = vec![Complex::new(0.0, 0.0); len];
-    // 	}
-    // }
+    fn ensure_scratch(&mut self, len: usize) {
+	if self.scratch.len() < len {
+	    self.scratch = vec![Complex::new(0.0, 0.0); len];
+	}
+    }
 
     fn sample_f32(&self, range: SampleRange) -> Vec<f32> {
 	return self.sample_data[range].iter().map(|&v| v as f32 / 128.0).collect();
     }
 
-    fn next_lowest_freq(&self, _freq: usize) -> usize {
+    fn next_lowest_freq(&self, _freq: Freq) -> usize {
 	0
     }
 
-    fn get(&self, range: SampleRange, freq: usize, _is_looping: bool) -> &[f32] {
+    fn get(&self, range: SampleRange, freq: Freq, _is_looping: bool) -> &[f32] {
 	return &self.samples[&ResamplingKey::new(range,
 						 self.next_lowest_freq(freq),
 						 false)];
@@ -939,10 +947,8 @@ pub struct SongPlayer {
 }
 
 impl SongPlayer {
-    fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
-	// FIXME: use SampleProvider instead of SampleData
-	let sample_provider = SampleProvider::new(sample_data, songs);
-	// TODO: migrate to sample_provider as sample source for SongPlayer
+    fn new(sample_data: &SampleData, songs: &[Song], output_freq: Freq) -> Self {
+	let sample_provider = SampleProvider::new(sample_data, songs, output_freq);
 
 	SongPlayer {
 	    song: None,
@@ -1160,9 +1166,9 @@ pub struct SongPlayerAudioSource {
 }
 
 impl SongPlayerAudioSource {
-    pub fn new(sample_data: &SampleData, songs: &[Song]) -> Self {
+    pub fn new(sample_data: &SampleData, songs: &[Song], output_freq: Freq) -> Self {
 	SongPlayerAudioSource {
-	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data, songs)))
+	    player: Arc::new(Mutex::new(SongPlayer::new(sample_data, songs, output_freq)))
 	}
     }
 
