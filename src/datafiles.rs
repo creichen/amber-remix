@@ -453,7 +453,8 @@ pub struct AmberstarFiles {
     pub tiles : Vec<Tileset<Pixmap>>,
     pub maps : Vec<Map>,
     pub bg_pictures : Vec<Vec<IndexedPixmap>>,
-    pub monster_gfx : Vec<Vec<IndexedPixmap>>,
+    pub combat_bg_pictures : Vec<Pixmap>,
+    pub monster_gfx : Vec<Vec<Pixmap>>,
     pub labgfx : labgfx::LabInfo,
     pub chardata : Vec<CharData>,
 }
@@ -549,8 +550,21 @@ impl AmberstarFiles {
 	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
 	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
 
+	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
+	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
+
 	let mut mon_gfx_f = load_relative(path, "MON_GFX.AMB");
 	let monster_gfx = pictures::load_monster_gfx(&mut mon_gfx_f);
+	let monster_palette = palette::amberdev_combat_palette(&amberdev, 4).with_transparency(0);
+	let monster_gfx: Vec<Vec<Pixmap>> = monster_gfx.iter().map(|vv| vv.iter().map(|v| v.with_palette(&monster_palette)).collect()).collect();
+
+	let mut com_back_f = load_relative(path, "COM_BACK.AMB");
+	let combat_bg_pictures_raw = pictures::load_combat_bg_gfx(&mut com_back_f);
+	let mut combat_bg_pictures = vec![];
+	for (i, raw_pic) in combat_bg_pictures_raw.iter().enumerate() {
+	    let palette = palette::amberdev_combat_palette(&amberdev, i);
+	    combat_bg_pictures.push(raw_pic.with_palette(&palette));
+	}
 
 	let mut chardata_f = load_relative(path, "CHARDATA.AMB");
 	let chardata : Vec<CharData> = (0..(chardata_f.num_entries)).map(|i| CharData::new(&string_fragments, i, &chardata_f.decode(i))).collect();
@@ -574,6 +588,7 @@ impl AmberstarFiles {
 	    tiles,
 	    maps,
 	    bg_pictures,
+	    combat_bg_pictures,
 	    monster_gfx,
 	    labgfx,
 	    chardata,

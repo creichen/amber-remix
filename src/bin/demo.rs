@@ -264,6 +264,7 @@ struct GfxExplorer<'a> {
     pad : usize,
     transparency : bool,
     print_gfxinfo : bool,
+    palettemode: usize,
 }
 
 impl<'a> GfxExplorer<'a> {
@@ -312,18 +313,41 @@ impl<'a> GfxExplorer<'a> {
 	    // bitplanes : 4, // usually 4
 	    // file_index : 0,
 
+	    // // --------------------------------------------------------------------------------
+	    // filename : "COM_BACK.AMB".to_string(),
+	    // offset:   0x0,
+	    // pad : 0,
+	    // width : 176, // try 16, 64 and 128
+	    // height : 112,
+	    // palette : 0,
+	    // bitplanes : 4, // usually 4
+	    // file_index : 0,
+
+	    // // // --------------------------------------------------------------------------------
+	    // filename : "TACTIC.ICN".to_string(),
+	    // //offset: 0x33d70,
+	    // offset:   0x0,
+	    // pad : 0,
+	    // width : 16, // try 16, 64 and 128
+	    // height : 16,
+	    // palette : 0,
+	    // bitplanes : 4, // usually 4
+	    // file_index : 0,
+
 	    // --------------------------------------------------------------------------------
-	    filename : "COM_BACK.AMB".to_string(),
+	    filename : "F_T_ANIM.ICN".to_string(),
+	    //offset: 0x33d70,
 	    offset:   0x0,
 	    pad : 0,
-	    width : 176, // try 16, 64 and 128
-	    height : 112,
+	    width : 16, // try 16, 64 and 128
+	    height : 16,
 	    palette : 0,
 	    bitplanes : 4, // usually 4
 	    file_index : 0,
 
 	    transparency : false,
 	    print_gfxinfo : true,
+	    palettemode: 0,
 	};
     }
 
@@ -333,24 +357,34 @@ impl<'a> GfxExplorer<'a> {
     pub fn mod_pad(&mut self, delta : isize) { self.pad = isize::max(0, self.pad as isize + delta) as usize;  self.info(); }
     pub fn mod_palette(&mut self, delta : isize) { self.palette = isize::min((self.data.amberdev_palettes.len() + 2) as isize, isize::max(0, self.palette as isize + delta)) as usize;  self.info(); }
     pub fn mod_bitplanes(&mut self, delta : isize) { self.bitplanes = isize::min(5, isize::max(2, self.bitplanes as isize + delta)) as usize;  self.info(); }
+    pub fn mod_palettemode(&mut self, delta : isize) { self.palettemode = isize::max(0, self.palettemode as isize + delta) as usize;  self.info(); }
     pub fn mod_file_index(&mut self, delta : isize) { self.file_index = isize::max(0, self.file_index as isize + delta) as usize;  self.info(); }
     pub fn toggle_transparency(&mut self) { self.transparency = !self.transparency; self.info(); println!("transparency = {}", self.transparency); }
 
     fn print_config(&self) {
-	println!("[GFX] {} off:{} padding:{}, (0x{:x}) size:{}x{}, bp:{}, pal:{}",
-		 self.filename, self.offset, self.pad, self.offset, self.width, self.height, self.bitplanes, self.palette);
+	println!("[GFX] {} off:{} padding:{}, (0x{:x}) size:{}x{}, bp:{}, pal:{}, palettemode:{}",
+		 self.filename, self.offset, self.pad, self.offset, self.width, self.height, self.bitplanes, self.palette,
+		 self.palettemode);
     }
 
     #[allow(unused)]
     fn get_palette(&self) -> Palette {
-	let palettes = &self.data.amberdev_palettes;
+	//if self.palettemode == 0 {
+	    let palettes = &self.data.amberdev_palettes;
 
-	if self.palette == palettes.len() {
-	    return palette::TEST_PALETTE.clone();
-	} else if self.palette > palettes.len() {
-	    return self.data.tiles[self.palette - palettes.len() - 1].palette.clone();
+	    if self.palette == palettes.len() {
+		return palette::TEST_PALETTE.clone();
+	    } else if self.palette > palettes.len() {
+		return self.data.tiles[self.palette - palettes.len() - 1].palette.clone();
+	    }
+	let mut xpal = palettes[self.palette].clone();
+	if self.palettemode > 0 {
+	    xpal = xpal.replacing(0xc, 3, &self.data.amberdev[0x31ef8 + self.palettemode * 2..]);
 	}
-	return palettes[self.palette].clone();
+	return xpal;
+	// } else {
+	//     return palette::new(&self.data.amberdev[0x313d8 + 2*self.palettemode..], 16);
+	// }
     }
 
     fn info(&mut self) {
@@ -481,16 +515,16 @@ fn show_images(data : &datafiles::AmberstarFiles) {
     let mut canvas = window.into_canvas().build().unwrap();
     let creator = canvas.texture_creator();
 
-    let mut audiocore = audio::init(&sdl_context);
-    let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
-    let mut instr = InstrSelect {
-	data, mixer:&mut mixer,
-	song_nr : 0,
-	sample_nr : 0,
-	instrument_nr : 0,
-	timbre_nr : 0,
-	monopattern_nr : 0,
-	mode : ISelect::Instrument };
+    // let mut audiocore = audio::init(&sdl_context);
+    // let mut mixer = audiocore.start_mixer(&data.sample_data.data[..]);
+    // let mut instr = InstrSelect {
+    // 	data, mixer:&mut mixer,
+    // 	song_nr : 0,
+    // 	sample_nr : 0,
+    // 	instrument_nr : 0,
+    // 	timbre_nr : 0,
+    // 	monopattern_nr : 0,
+    // 	mode : ISelect::Instrument };
 
     let mut gfxexplore = GfxExplorer::new(data);
     let mut focus_img : usize = 0;
@@ -506,6 +540,18 @@ fn show_images(data : &datafiles::AmberstarFiles) {
 	//canvas.set_draw_color(Color::RGB(i, 64, 128 - (i>>1)));
         canvas.clear();
 
+	// for j in 0..8*6 {
+	//     let addr = 0x31efa + j * 2;
+	//     let d = &data.amberdev[addr..addr+2];
+	//     let r = ((d[0] & 0xf) ) << 5;
+	//     let g = (((d[1] >> 4) & 0xf) ) << 5;
+	//     let b = ((d[1] & 0xf) ) << 5;
+	//     canvas.set_draw_color(Color::RGBA(r, g, b, 255));
+	//     let height = 8;
+	//     canvas.fill_rect(sdl2::rect::Rect::new(1800, 400 + (j as i32)*(height as i32),
+	// 					   2200, height)).unwrap();
+	// }
+
 	for j in 0..data.pics80.len() {
 	    let img = &data.pics80[j];
 	    let creator = canvas.texture_creator();
@@ -520,17 +566,26 @@ fn show_images(data : &datafiles::AmberstarFiles) {
 	//     canvas.copy(&texture, None, Some(Rect::new(index as i32 * (img.width as i32 + 8), 0, img.width as u32, img.height as u32))).unwrap();
 	// }
 
-	for j in 0..data.monster_gfx.len() {
-	    let imgseq = &data.monster_gfx[j];
-	    let pal = gfxexplore.get_palette().with_transparency(0);
-	    for (y, mgfx) in imgseq.iter().enumerate() {
-		let img = mgfx.with_palette(&pal);
+	for (j, img) in data.combat_bg_pictures.iter().enumerate() {
 		let mut texture = img.as_texture(&creator);
 		texture.set_blend_mode(BlendMode::Blend);
 		let TextureQuery { width, height, .. } = texture.query();
 		canvas.copy(&texture,
 			    Rect::new(0, 0, width, height),
-			    Some(Rect::new(j as i32 * 60 + 1500, y as i32 * 60, img.width as u32, img.height as u32))).unwrap();
+			    Some(Rect::new((j % 6) as i32 * 200 + 100, (j / 6) as i32 * 120 + 1200, img.width as u32, img.height as u32))).unwrap();
+	}
+
+	for j in 0..data.monster_gfx.len() {
+	    let imgseq = &data.monster_gfx[j];
+	    //let pal = gfxexplore.get_palette().with_transparency(0);
+	    for (y, mgfx) in imgseq.iter().enumerate() {
+		let img = mgfx;//.with_palette(&pal);
+		let mut texture = img.as_texture(&creator);
+		texture.set_blend_mode(BlendMode::Blend);
+		let TextureQuery { width, height, .. } = texture.query();
+		canvas.copy(&texture,
+			    Rect::new(0, 0, width, height),
+			    Some(Rect::new(j as i32 * 60 + 1500, 100 + y as i32 * 60, img.width as u32, img.height as u32))).unwrap();
 	    }
 	}
 
@@ -600,53 +655,54 @@ fn show_images(data : &datafiles::AmberstarFiles) {
 			Keycode::F7           => gfxexplore.mod_width(stride),
 			Keycode::F8           => gfxexplore.mod_height(stride),
 			Keycode::F9           => gfxexplore.mod_bitplanes(stride),
+			Keycode::F10          => gfxexplore.mod_palettemode(stride),
 			Keycode::F11          => gfxexplore.print_img(focus_img),
 			Keycode::F12          => gfxexplore.mod_file_index(stride),
 
-			Keycode::LeftBracket  => instr.move_song(-1),
-			Keycode::RightBracket => instr.move_song(1),
-			Keycode::Minus        => instr.move_sample(-1),
-			Keycode::Equals       => instr.move_sample(1),
-			Keycode::Quote        => instr.move_instrument(-1),
-			Keycode::Backslash    => instr.move_instrument(1),
-			Keycode::Period       => instr.move_timbre(-1),
-			Keycode::Slash        => instr.move_timbre(1),
-			Keycode::Kp7          => instr.move_monopattern(-1),
-			Keycode::Kp9          => instr.move_monopattern(1),
+			// Keycode::LeftBracket  => instr.move_song(-1),
+			// Keycode::RightBracket => instr.move_song(1),
+			// Keycode::Minus        => instr.move_sample(-1),
+			// Keycode::Equals       => instr.move_sample(1),
+			// Keycode::Quote        => instr.move_instrument(-1),
+			// Keycode::Backslash    => instr.move_instrument(1),
+			// Keycode::Period       => instr.move_timbre(-1),
+			// Keycode::Slash        => instr.move_timbre(1),
+			// Keycode::Kp7          => instr.move_monopattern(-1),
+			// Keycode::Kp9          => instr.move_monopattern(1),
 
-			Keycode::Return       => instr.play_song(),
-			Keycode::Space        => instr.play(0),
-			Keycode::Z            => instr.play(12),
-			Keycode::S            => instr.play(13),
-			Keycode::X            => instr.play(14),
-			Keycode::D            => instr.play(15),
-			Keycode::C            => instr.play(16),
-			Keycode::V            => instr.play(17),
-			Keycode::G            => instr.play(18),
-			Keycode::B            => instr.play(19),
-			Keycode::H            => instr.play(20),
-			Keycode::N            => instr.play(21),
-			Keycode::J            => instr.play(21),
-			Keycode::M            => instr.play(23),
+			// Keycode::Return       => instr.play_song(),
+			// Keycode::Space        => instr.play(0),
+			// Keycode::Z            => instr.play(12),
+			// Keycode::S            => instr.play(13),
+			// Keycode::X            => instr.play(14),
+			// Keycode::D            => instr.play(15),
+			// Keycode::C            => instr.play(16),
+			// Keycode::V            => instr.play(17),
+			// Keycode::G            => instr.play(18),
+			// Keycode::B            => instr.play(19),
+			// Keycode::H            => instr.play(20),
+			// Keycode::N            => instr.play(21),
+			// Keycode::J            => instr.play(21),
+			// Keycode::M            => instr.play(23),
 
-			Keycode::Q            => instr.play(24),
-			Keycode::Num2         => instr.play(25),
-			Keycode::W            => instr.play(26),
-			Keycode::Num3         => instr.play(27),
-			Keycode::E            => instr.play(28),
-			Keycode::R            => instr.play(29),
-			Keycode::Num5         => instr.play(30),
-			Keycode::T            => instr.play(31),
-			Keycode::Num6         => instr.play(32),
-			Keycode::Y            => instr.play(33),
-			Keycode::Num7         => instr.play(34),
-			Keycode::U            => instr.play(35),
+			// Keycode::Q            => instr.play(24),
+			// Keycode::Num2         => instr.play(25),
+			// Keycode::W            => instr.play(26),
+			// Keycode::Num3         => instr.play(27),
+			// Keycode::E            => instr.play(28),
+			// Keycode::R            => instr.play(29),
+			// Keycode::Num5         => instr.play(30),
+			// Keycode::T            => instr.play(31),
+			// Keycode::Num6         => instr.play(32),
+			// Keycode::Y            => instr.play(33),
+			// Keycode::Num7         => instr.play(34),
+			// Keycode::U            => instr.play(35),
 
-			Keycode::I            => instr.play(36),
-			Keycode::Num9         => instr.play(37),
-			Keycode::O            => instr.play(38),
-			Keycode::Num0         => instr.play(39),
-			Keycode::P            => instr.play(40),
+			// Keycode::I            => instr.play(36),
+			// Keycode::Num9         => instr.play(37),
+			// Keycode::O            => instr.play(38),
+			// Keycode::Num0         => instr.play(39),
+			// Keycode::P            => instr.play(40),
 			    _ => { println!("<ESC>: quit\n [/] : song\n -|=: sample\n '|\\: instrument\n .|/: timbre\n  Num7/Num9: Monopattern\nzsxdc.../q2w3e... -> play note; Space: play zero note (monopatterns)")},
 		    }
                 },
@@ -658,7 +714,7 @@ fn show_images(data : &datafiles::AmberstarFiles) {
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 50));
     }
-    mixer.shutdown();
+    // mixer.shutdown();
 }
 
 fn print_iter_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
@@ -1438,6 +1494,8 @@ fn main() -> io::Result<()> {
 	    // "maps"	=> map_demo::show_maps(&data),
 	    _		=> show_images(&data)
 	}
+    } else {
+	show_images(&data)
     }
 
     Ok(())

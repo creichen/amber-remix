@@ -229,6 +229,7 @@ impl Event {
 	//const OP_3D_STORE	: u8 = 0x12; // ?? Only used in first-person view, probably stores/guilds
 	//const OP_3D_BARRIER     : u8 = 0x13; // ?? need crowbar to get through?
 	//const OP_3D_LOCKED_DOOR	: u8 = 0x14; // ?? Only used in first-person view
+        // param 04: other event to trigger (if unlocked with special key?)
 	// e.g., door to Family Home:   14 01 00 00 1c 04 00 97 00 00
 	const OP_WIN_GAME	: u8 = 0x17; // Last OP
 
@@ -328,6 +329,14 @@ impl Event {
 		}
 		write!(s, " ] warnings:").unwrap();
 		warn!("{}\n{}", s, notes);
+	    } else {
+		let mut s = String::new();
+		write!(s, "Event [").unwrap();
+		for i in 0..10 {
+		    write!(s, " {:02x}", data[i]).unwrap();
+		}
+		write!(s, " ] OK").unwrap();
+		info!("{}\n{}", s, notes);
 	    }
 
 	    let raw : [u8; 10] = data[0..10].try_into().unwrap();

@@ -79,6 +79,15 @@ fn load_mon_gfx(data : &[u8]) -> Vec<IndexedPixmap> {
     return images;
 }
 
+pub fn load_combat_bg_gfx(com_back_f: &mut DataFile) -> Vec<IndexedPixmap> {
+    let mut results = vec![];
+    for i in 0..com_back_f.num_entries {
+	results.push(pixmap::new(&com_back_f.decode(i),
+				 176, 112, 4));
+    }
+    return results;
+}
+
 pub fn load_monster_gfx(bgimage_f : &mut DataFile) -> Vec<Vec<IndexedPixmap>> {
     let mut results = vec![];
     for entry_nr in 0..bgimage_f.num_entries {

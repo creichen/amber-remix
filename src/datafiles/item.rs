@@ -124,7 +124,7 @@ impl Item {
 	    item_type : ItemType::new(data[0x01]),
 	    num_hands : data[0x04] as usize,
 	    num_fingers : data[0x05] as usize,
-	    allowed_classes : decode::u16(data, 0x0e) as u32,
+	    allowed_classes : decode::u16(data, 0x0e) as u32, // should this be 0x20?
 	    bonus_shield_defense : data[0x10] as isize,
 	    bonus_damage : data[0x11] as isize,
 	    equip_slot : EquipSlot::new(data[0x12]),
@@ -133,16 +133,16 @@ impl Item {
 	    key_id : KeyID::new(decode::u16(data, 0x24) as usize),
 	    name : fragment_table.get(decode::u16(data, 0x26)),
 	    unknowns : [
-		data[0x02],
-		data[0x03],
-		data[0x06],
-		data[0x07],
-		data[0x08],
-		data[0x09],
-		data[0x0a],
-		data[0x0b],
-		data[0x0c],
-		data[0x0d],
+		data[0x02], // ammo use ID?
+		data[0x03], // gender use?
+		data[0x06], // LP_max?
+		data[0x07], // SP_max?
+		data[0x08], // attribute?
+		data[0x09], // attribute_normal?
+		data[0x0a], // skill?
+		data[0x0b], // skill_normal?
+		data[0x0c], // spell numer?
+		data[0x0d], // spell charges?
 		data[0x13],
 		data[0x14],
 		data[0x15],

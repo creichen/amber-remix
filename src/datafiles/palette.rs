@@ -9,33 +9,40 @@ pub struct Palette {
     pub colors : Vec<Color>,
 }
 
-const AMBERDEV_PALETTE_OFFSETS : [usize; 1/*25*/] = [
+const AMBERDEV_COMBAT_PALETTE_OFFSET: usize = 0x31eda; // excluding colours 0c, 0d, 0e
+const AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET: usize = 0x31efa; // Colours 0c, 0d, 0e, which vary per background
+
+const AMBERDEV_PALETTE_OFFSETS : [usize; 27] = [
+    0x31eda,
+    0x31f62,
     0x20f70,
-    // 0x210f8,
-    // 0x2113e,
-    // 0x29026,
-    // 0x292a2,
-    // 0x292c4,
-    // 0x2930a,
-    // 0x29322 - (32 - 8),
-    // 0x29372,
-    // 0x293b8,
-    // 0x2987e,
-    // 0x29a0a,
-    // 0x29a2c,
-    // 0x29a4c,
-    // 0x29b38,
-    // 0x29d90,
-    // 0x29df8,
-    // 0x29e3e,
-    // 0x31300,
-    // 0x31322,
-    // 0x31848,
-    // 0x3188e,
-    // 0x31f62,
-    // 0x323dc,
-    // 0x32858,
+    0x210f8,
+    0x2113e,
+    0x29026,
+    0x292a2,
+    0x292c4,
+    0x2930a,
+    0x29322 - (32 - 8),
+    0x29372,
+    0x293b8,
+    0x2987e,
+    0x29a0a,
+    0x29a2c,
+    0x29a4c,
+    0x29b38,
+    0x29d90,
+    0x29df8,
+    0x29e3e,
+    0x31300,
+    0x31322,
+    0x31848,
+    0x3188e,
+    0x31f62,
+    0x323dc,
+    0x32858,
     ];
+
+// 00031edc
 
 lazy_static! {
 // EGA palette for testing colour indices
@@ -84,28 +91,28 @@ lazy_static! {
 
 // packed 0RGB format
 pub fn new(src : &[u8], num_colors : usize) -> Palette {
-    let mut p = Palette { colors : vec![] };
-    for i in 0..num_colors {
-	let r = src[i * 2] & 0x7;
-	let gb = src[i * 2 + 1] & 0x77;
-	let g = gb >> 4;
-	let b = gb & 0xf;
-	let c = Color {
-	    r : r * 0x20,
-	    g : g * 0x20,
-	    b : b * 0x20,
-	    a : 0xff,
-	};
-	p.colors.push(c);
-    };
-    return p;
+    return Palette {
+	colors: colors_compressed(num_colors as usize, src),
+    }
+    // let mut p = Palette { colors : vec![] };
+    // for i in 0..num_colors {
+    // 	let r = src[i * 2] & 0x7;
+    // 	let gb = src[i * 2 + 1] & 0x77;
+    // 	let g = gb >> 4;
+    // 	let b = gb & 0xf;
+    // 	let c = Color {
+    // 	    r : r * 0x20,
+    // 	    g : g * 0x20,
+    // 	    b : b * 0x20,
+    // 	    a : 0xff,
+    // 	};
+    // 	p.colors.push(c);
+    // };
+    // return p;
 }
 
-// Different format:
-// [num : 16] [0A 0R 0G 0B], with values from 0-6
-pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
-    let num_colors = decode::u16(src, 0);
-    let mut p = Palette { colors : vec![] };
+fn colors(num_colors: usize, src: &[u8], factor: u8) -> Vec<Color> {
+    let mut result = vec![];
     for i in 0..num_colors {
 	//let a = 6-src[(2 + i * 4) as usize];
 	let r = src[(3 + i * 4) as usize];
@@ -117,8 +124,42 @@ pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
 	    b : b * factor,
 	    a : 0xff,
 	};
-	p.colors.push(c);
+	result.push(c);
     }
+    return result;
+}
+
+fn colors_compressed(num_colors: usize, src: &[u8]) -> Vec<Color> {
+    let mut result = vec![];
+    for i in 0..num_colors {
+	//let a = 6-src[(2 + i * 4) as usize];
+	let r = src[i * 2] & 0x7;
+	let gb = src[i * 2 + 1] & 0x77;
+	let g = gb >> 4;
+	let b = gb & 0xf;
+	let c = Color {
+	    r : r * 0x20,
+	    g : g * 0x20,
+	    b : b * 0x20,
+	    a : 0xff,
+	};
+	result.push(c);
+    }
+    return result;
+}
+
+// Different format:
+// [num : 16] [0A 0R 0G 0B], with values from 0-6
+pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
+    let num_colors = decode::u16(src, 0);
+    return Palette {
+	colors: colors(num_colors as usize, src, factor),
+    }
+}
+
+pub fn amberdev_combat_palette(data: &[u8], index: usize) -> Palette {
+    let mut p = new(&data[AMBERDEV_COMBAT_PALETTE_OFFSET..], 16);
+    p = p.replacing(0x0c, 3, &data[AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET + index*6..]);
     return p;
 }
 
@@ -127,19 +168,29 @@ impl Palette {
 	return self.colors[index];
     }
 
+    pub fn replacing(&self, first_color: usize, num: usize, new_rgb: &[u8]) -> Palette {
+	let mut pal_colors = self.colors[..first_color].to_vec();
+	let mut new_colors = colors_compressed(num, new_rgb);
+	pal_colors.append(&mut new_colors);
+	pal_colors.append(&mut self.colors[first_color+num..].to_vec());
+	return Palette {
+	    colors: pal_colors,
+	}
+    }
+
     pub fn amberdev_palettes(data: &[u8]) -> Vec<Palette> {
-	// AMBERDEV_PALETTE_OFFSETS
-	//     .iter()
-	//     .map(|offset|
-	// 	 new(&data[(*offset)..], 16))
-	//     .collect()
-	let offset = AMBERDEV_PALETTE_OFFSETS[0];
-	let pal = new(&data[offset..], 16);
-	print!("================!!+======================\n");
-	print!("Loading pal from {offset:x}: {:x?} -> {:?}\n",
-	       &data[offset..(offset+32)],
-	       &pal);
-	return vec![pal];
+	AMBERDEV_PALETTE_OFFSETS
+	    .iter()
+	    .map(|offset|
+		 new(&data[(*offset)..], 16))
+	    .collect()
+	// let offset = AMBERDEV_PALETTE_OFFSETS[0];
+	// let pal = new(&data[offset..], 16);
+	// print!("================!!+======================\n");
+	// print!("Loading pal from {offset:x}: {:x?} -> {:?}\n",
+	//        &data[offset..(offset+32)],
+	//        &pal);
+	// return vec![pal];
     }
 
     pub fn with_transparency(&self, index : usize) -> Palette {

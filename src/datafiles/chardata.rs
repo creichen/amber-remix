@@ -4,8 +4,10 @@
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 use crate::datafiles::{decode, amber_string, map_string_table::MapStringTable, pixmap};
+use enumset::{EnumSet, EnumSetType};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
 
 use std::assert;
 
@@ -232,6 +234,16 @@ pub struct Interaction {
     pub reactions : Vec<Reaction>,
 }
 
+// ----------------------------------------
+
+#[derive(EnumSetType, Debug)]
+pub enum MagicSchool {
+    White,
+    Black,
+    Grey,
+    Special,
+}
+
 // --------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
@@ -250,10 +262,13 @@ impl StatField {
 #[derive(Clone)]
 pub struct CharData {
     pub monster : bool,
+    pub monster_gfx : usize,
     pub gender : usize,
     pub race : usize,
     pub class : usize,
     pub stats : Vec<StatField>,
+    pub level : usize,
+    pub magic_schools: EnumSet<MagicSchool>,
     pub used_hands : usize,
     pub used_fingers : usize,
     pub interaction_status_flag : usize, // number of flag to mark whether NPC is in "completed" state
@@ -261,19 +276,71 @@ pub struct CharData {
     pub sp : PointPool, // spell points
     pub gp : usize, // gold
     pub num_food : usize, // rations
+    pub base_defense: usize,
+    pub base_damage: usize,
     pub defense : usize,
     pub attack : usize,
     pub weight : usize,
     pub name : String,
     pub items : Vec<(usize, Item)>, // 0-8 are equipment slots
+    // 0 neck
+    // 1 head
+    // 2 chest
+    // 3 right hand
+    // 4 body
+    // 5 left hand
+    // 6 right finger
+    // 7 feet
+    // 8 left finger
     pub portrait : Option<IndexedPixmap>,
     pub interactions : Vec<Vec<Interaction>>,  // not completed
     pub messages : Vec<String>,
 }
 
 impl CharData {
+    const MONSTER_ICON_OFFSET : usize = 0x0a;
+
+    // Index into the combat icon table
+    pub fn combat_icon_nr(&self) -> usize {
+	if self.monster {
+	    self.monster_gfx - 1 + CharData::MONSTER_ICON_OFFSET
+	} else {
+	    self.class
+	}
+    }
+
+    // index into the monster_gfx table
+    pub fn combat_monster_gfx(&self) -> Option<usize> {
+	if self.monster {
+	    Some(self.monster_gfx - 1)
+	} else {
+	    None
+	}
+    }
+}
+
+fn print_unknown(data: &[u8], start: usize, len: usize) {
+    let mut interesting = false;
+    for n in start..start+len {
+	if data[n] != 0 {
+	    interesting = true;
+	    break
+	}
+    }
+    if !interesting {
+	debug!("  unknown {:04x}: <zero>", start);
+	return
+    }
+    let mut buf = format!("  unknown {:04x}:", start);
+    for n in start..start+len {
+	buf = buf + &format!(" {:02x}", data[n]);
+    }
+    debug!("{buf}");
+}
+
+impl CharData {
     pub fn new(fragment_table : &StringFragmentTable, npc_id : u16, data : &[u8]) -> Self {
-	// unknown 0000-0001
+	// unknown 0000-0001 (always 00 ff)
 	let monster = data[0x0002] > 0;
 	assert!(data[0x0002] < 2);
 	let gender = data[0x0003] as usize;
@@ -301,14 +368,40 @@ impl CharData {
 	    StatField::new(Stat::AttrMagic,		decode::u16(data, 0x0056) as usize, decode::u16(data, 0x006a) as usize),
 	    StatField::new(Stat::AttrAge,		decode::u16(data, 0x0058) as usize, decode::u16(data, 0x006c) as usize),
 	];
-	// unknown 001a-001b
+	let mut magic_schools = EnumSet::new();
+	if data[0x001a] & 0x02 > 0 { magic_schools |= MagicSchool::White };
+	if data[0x001a] & 0x04 > 0 { magic_schools |= MagicSchool::Grey };
+	if data[0x001a] & 0x08 > 0 { magic_schools |= MagicSchool::Black };
+	if data[0x001a] & 0x80 > 0 { magic_schools |= MagicSchool::Special };
+	assert!(data[0x001a] & !0x8e == 0);
+
+	let level = data[0x001b] as usize;
 	let used_hands = data[0x001c] as usize;
-	let used_fingers = data[0x001c] as usize;
-	// unknown 001e-0021
+	let used_fingers = data[0x001d] as usize;
+	let base_defense = data[0x001e] as usize;
+	let base_damage = data[0x001f] as usize;
+	//let _magic_bonus_weapon = data[0x0020] as usize;
+	//let _magic_bonus_defense = data[0x0021] as usize;
 	let inventory_counts = &data[0x0022..0x0022+(9 + 12)];
+	let languages = data[0x0037];
+	let current_language = data[0x0038]; // unused in game?
+	// 0x39: always zero
+	let physical_conditions = data[0x003a] as usize;
+	let mental_conditions = data[0x003b] as usize;
+	let join_chance = data[0x003c] as usize; // in percent: chance of joining party when asked
 	let interaction_status_flag = data[0x003d] as usize;
-	// unknown 003e-0047
-	// unknown attribute at decode(data, 0x005a) / max decode(data, 0x006e)
+	let monster_gfx = data[0x003e] as usize;
+	if monster { assert!(monster_gfx > 0); }
+	if !monster { assert!(monster_gfx == 0); }
+	let spellcast_success_chance = data[0x3f];
+	let minimum_magic_to_hit = data[0x40]; // Cannot be damaged if bonus is lower than this
+	let morale_percentage = data[0x41]; // flee once this % of monsters of same type are defeated
+	let battle_position = data[0x42]; // 0x01 / 0x02 : last row?
+	let attacks_per_round = data[0x43];
+	let monster_type = data[0x44]; // 01: undead, 02: demon, 04: immune to ailments
+	let elemental_status = data[0x45]; // 01 fire, 02 earth, 04 water, 08 wind; lower nibble: immune, upper nibble: vulnerable (dbl damage)
+	// unknown 003f-0047
+	// unknown attribute at decode(data, 0x005a) / max decode(data, 0x006e)  (always zero)
 	// unknown 0070-0085
 	let hp = PointPool::new(decode::u16(data, 0x0086) as usize,
 				decode::u16(data, 0x0088) as usize);
@@ -321,17 +414,29 @@ impl CharData {
 	let attack = decode::u16(data, 0x0096) as usize;
 	// unknown 0098-00eb
 	let weight = decode::u32(data, 0x00ec) as usize;
-	let name = amber_string::from_bytes(&data[0x0f0..0x100]);
+	let pre_name = amber_string::from_bytes(&data[0x0f0..0x100]);
+	let name = match pre_name.find('\0') {
+	    None    => pre_name,
+	    Some(i) => pre_name[..i].to_string(),
+	};
 	// unknown 0x100-0x132
 
 	debug!("----------------------------------------");
 	debug!("NPC #{npc_id}/{npc_id:x}: {name}");
 	debug!("  quest flag ID = {interaction_status_flag:x}");
 	debug!("  size = {}/{:x}", data.len(), data.len());
+	debug!("  monster_gfx = {monster_gfx}");
 	debug!("  hp = {hp:?}");
 	debug!("  sp = {sp:?}");
 	debug!("  race = {race}");
 	debug!("  class = {class}");
+	print_unknown(data, 0x0020, 2);
+	print_unknown(data, 0x0046, 2); // possible character classes?
+	print_unknown(data, 0x0070, 22);
+	print_unknown(data, 0x008e, 2); // often close to 1000
+	print_unknown(data, 0x0098, 0x28);
+	print_unknown(data, 0x0098 + 0x28, 0xeb - 0x98 - 0x28);
+	print_unknown(data, 0x0100, 0x32);
 
 	let mut items = vec![];
 	let item_base_pos = 0x132;
@@ -404,6 +509,7 @@ impl CharData {
 
 	return CharData {
 	    monster,
+	    monster_gfx,
 	    gender,
 	    race,
 	    class,
@@ -411,10 +517,14 @@ impl CharData {
 	    interaction_status_flag,
 	    used_hands,
 	    used_fingers,
+	    magic_schools,
+	    level,
 	    hp,
 	    sp,
 	    gp,
 	    num_food,
+	    base_defense,
+	    base_damage,
 	    defense,
 	    attack,
 	    weight,
