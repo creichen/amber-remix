@@ -1461,6 +1461,9 @@ fn main() -> io::Result<()> {
 
     if args.len() >= 2 {
 	match args[1].as_str() {
+	    "words"	=> for w in 0..data.string_fragments.len() {
+		println!("{:4} 0x{:04x}: {}", w, w, data.string_fragments.get(w as u16));
+	    },
 	    "strings"	=> print_strings(&data),
 	    "song-old"	=> {
 		let source = &args[2];
