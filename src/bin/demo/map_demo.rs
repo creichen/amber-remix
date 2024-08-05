@@ -808,10 +808,3 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	}
     }
 }
-
-fn main() -> io::Result<()> {
-    env_logger::init();
-    let data = datafiles::AmberstarFiles::new("data");
-    show_maps(&data);
-    Ok(())
-}

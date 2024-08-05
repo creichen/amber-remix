@@ -8,13 +8,11 @@ Resources for decoding Amiga **Amberstar** data files, including
 Make sure that the Amiga Amberstar data files are in the `data/` subdirectory.  Their
 names should be in all-caps (`AMBERDEV.UDO` etc.).
 
-To compile and run, use the Rust `cargo` tool.
-
-The current run modes are supported:
-- `cargo run --bin demo strings`: Dump out all text strings
-- `cargo run --bin demo graphics`: Shows some graphics
-- `cargo run --bin demo song $X`: Plays the in-game song `${X}` (no looping)
-- `cargo run --bin map_demo`: Map demo, allows walking through first-person dungeons
+To compile and run, the easiest interface is the Rust `cargo` tool:
+- `cargo run`: Map demo, allows walking through first-person dungeons
+- `cargo run song $X`: Plays the in-game song `${X}` (no looping)
+- `cargo run strings`: Dump out all text strings
+- `cargo run gfx-demo`: Shows some graphics
 
 ## Why?
 I wanted a zero-stakes project to learn the basics of Rust, and this

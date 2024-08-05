@@ -15,7 +15,5 @@ rust-analyzer = "0.0.1"
 rubato = "0.15.0"
 rustfft = "6.2.0"
 enumset = "1.1.5"
-
-[dependencies.sdl2]
-version = "0.37.0"
-features = ["ttf"]
+sdl2 = { version = "0.37.0", features = ["ttf"] }
+clap = { version = "4.0", features = ["derive"] }

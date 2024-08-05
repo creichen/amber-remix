@@ -1,10 +1,10 @@
 // Copyright (C) 2022 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
-use amber_remix::audio::experiments::{SongPlayerAudioSource, SongTracer};
+use cli::Command;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-use sdl2::audio::AudioSpecDesired;
+
 use sdl2::video::Window;
 use sdl2::ttf::Sdl2TtfContext;
 
@@ -17,12 +17,16 @@ use amber_remix::audio::amber::SongIterator;
 use amber_remix::datafiles::{music::{BasicSample, Song}, palette::{Palette, self}, pixmap::IndexedPixmap};
 use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, render::{Canvas, TextureCreator, Texture, BlendMode, TextureQuery}};
 
+use amber_remix::audio::experiments::{SongPlayerAudioSource, SongTracer};
 use amber_remix::{audio::amber, datafiles::pixmap};
 
 use amber_remix::datafiles;
 use amber_remix::audio;
-use amber_remix::debug_audio;
-// mod util;
+
+use clap::Parser;
+mod cli;
+mod map_demo;
+
 
 fn print_strings(data : &datafiles::AmberstarFiles) {
 
@@ -1456,51 +1460,50 @@ fn play_song(data : &datafiles::AmberstarFiles, song_nr : usize) {
 // ================================================================================
 fn main() -> io::Result<()> {
     env_logger::init();
-    let data = datafiles::AmberstarFiles::new("data");
-    let args : Vec<String> = env::args().collect();
+    let cli = cli::Cli::parse();
+    let source = &cli.data.into_os_string().into_string().unwrap();
+    let data = datafiles::AmberstarFiles::new(source);
+    let command = match cli.command {
+	None    => cli::Command::MapViewer,
+	Some(c) => c,
+    };
 
-    if args.len() >= 2 {
-	match args[1].as_str() {
-	    "words"	=> for w in 0..data.string_fragments.len() {
+    match command {
+	Command::Words =>
+	    for w in 0..data.string_fragments.len() {
 		println!("{:4} 0x{:04x}: {}", w, w, data.string_fragments.get(w as u16));
 	    },
-	    "strings"	=> print_strings(&data),
-	    "song-old"	=> {
-		let source = &args[2];
-		play_song(&data, str::parse::<usize>(source).unwrap());
-	    },
-	    "song"	=> {
-		let song_nr = if args.len() > 2 {
-		    str::parse::<usize>(&args[2]).unwrap()
-		} else { 0 };
-		play_song2(&data, song_nr).unwrap();
-	    },
-	    "iter-song"	=> {
-		let source = &args[2];
-		print_iter_song(&data, str::parse::<usize>(source).unwrap());
-	    },
-	    "debug-audio" => {
-	    debug_audio::debug_audio(&data).unwrap();
-	    },
-	    "extract"	=> {
-		let source = &args[2];
-		let mut df = datafiles::DataFile::load(Path::new(source));
-		println!("File type: {}", df.filetype);
-		for i in 0..df.num_entries {
-		    println!("Extracting {i}/{}", df.num_entries);
-		    let data = df.decode(i);
-		    let filename = format!("decompressed/{source}.{:04}", i);
-		    println!("  -> writing {} bytes to {filename}", data.len());
-		    fs::write(filename, data).expect("Unable to write file");
-		}
-	    },
-	    // "maps"	=> map_demo::show_maps(&data),
-	    _		=> show_images(&data)
-	}
-    } else {
-	show_images(&data)
+	Command::Strings => print_strings(&data),
+	    // "song-old"	=> {
+	    // 	let source = &args[2];
+	    // 	play_song(&data, str::parse::<usize>(source).unwrap());
+	    // },
+	Command::Song{song:song_nr} =>
+	    play_song2(&data, song_nr.unwrap_or(0)).unwrap(),
+	    // "iter-song"	=> {
+	    // 	let source = &args[2];
+	    // 	print_iter_song(&data, str::parse::<usize>(source).unwrap());
+	    // },
+	    // "debug-audio" => {
+	    // debug_audio::debug_audio(&data).unwrap();
+	    // },
+	Command::Extract{ filename }  => {
+	    let mut df = datafiles::DataFile::load(&filename);
+	    let dest = cli.output;
+
+	    println!("File type: {}", df.filetype);
+	    for i in 0..df.num_entries {
+		print!("Extracting {i}/{} \t", df.num_entries);
+		let data = df.decode(i);
+		let out_filename = format!("{}.{:04}", filename.file_name().unwrap().to_str().unwrap(), i);
+		let out_path = dest.join(out_filename);
+		println!("  -> writing {} bytes to {}", data.len(), out_path.clone().into_os_string().into_string().unwrap());
+		fs::write(out_path, data).expect("Unable to write file");
+	    }
+	},
+	Command::GfxDemo => show_images(&data),
+	Command::MapViewer => map_demo::show_maps(&data),
     }
 
     Ok(())
 }
-
