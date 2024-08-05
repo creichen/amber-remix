@@ -21,6 +21,9 @@ anywhere.
 
 ## Status
 
+- German/English version: mostly same status, except that some palettes
+  for the German version are off (`gfx-demo`)
+
 Very much WIP.  The following bits work to some extent:
 - *Data*: Container format decoding is fully supported
 - *Text*: String extraction seems to work
@@ -31,8 +34,6 @@ Very much WIP.  The following bits work to some extent:
 The following get partially decoded but don't do anything yet
 - *Game Scripts*: Bits and pieces from the map data are decoded
 
-
-Only tested on a late English version of the game.
 
 ## Decoding status and documentation
 - All container formats can be decoded.

@@ -373,7 +373,10 @@ impl CharData {
 	if data[0x001a] & 0x04 > 0 { magic_schools |= MagicSchool::Grey };
 	if data[0x001a] & 0x08 > 0 { magic_schools |= MagicSchool::Black };
 	if data[0x001a] & 0x80 > 0 { magic_schools |= MagicSchool::Special };
-	assert!(data[0x001a] & !0x8e == 0);
+	if !(data[0x001a] & !0x8e == 0) {
+	    warn!("suspicious magic school flags: {:02x} in NPC #{npc_id:x}", data[0x001a]);
+	}
+	//assert!(data[0x001a] & !0x8e == 0);
 
 	let level = data[0x001b] as usize;
 	let used_hands = data[0x001c] as usize;

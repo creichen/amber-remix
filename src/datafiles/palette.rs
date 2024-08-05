@@ -9,6 +9,7 @@ pub struct Palette {
     pub colors : Vec<Color>,
 }
 
+// FIXME: compute relative to occurrence of CODETXT.AMB (318f4 for at least some variants of the English version)
 const AMBERDEV_COMBAT_PALETTE_OFFSET: usize = 0x31eda; // excluding colours 0c, 0d, 0e
 const AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET: usize = 0x31efa; // Colours 0c, 0d, 0e, which vary per background
 

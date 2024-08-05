@@ -16,7 +16,7 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum Command {
     /// Extract all data files
     Extract{ filename: PathBuf },

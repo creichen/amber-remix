@@ -1462,31 +1462,13 @@ fn main() -> io::Result<()> {
     env_logger::init();
     let cli = cli::Cli::parse();
     let source = &cli.data.into_os_string().into_string().unwrap();
-    let data = datafiles::AmberstarFiles::new(source);
     let command = match cli.command {
 	None    => cli::Command::MapViewer,
 	Some(c) => c,
     };
 
-    match command {
-	Command::Words =>
-	    for w in 0..data.string_fragments.len() {
-		println!("{:4} 0x{:04x}: {}", w, w, data.string_fragments.get(w as u16));
-	    },
-	Command::Strings => print_strings(&data),
-	    // "song-old"	=> {
-	    // 	let source = &args[2];
-	    // 	play_song(&data, str::parse::<usize>(source).unwrap());
-	    // },
-	Command::Song{song:song_nr} =>
-	    play_song2(&data, song_nr.unwrap_or(0)).unwrap(),
-	    // "iter-song"	=> {
-	    // 	let source = &args[2];
-	    // 	print_iter_song(&data, str::parse::<usize>(source).unwrap());
-	    // },
-	    // "debug-audio" => {
-	    // debug_audio::debug_audio(&data).unwrap();
-	    // },
+    // Commands that don't use data diretly:
+    let completed = match command.clone() {
 	Command::Extract{ filename }  => {
 	    let mut df = datafiles::DataFile::load(&filename);
 	    let dest = cli.output;
@@ -1500,9 +1482,37 @@ fn main() -> io::Result<()> {
 		println!("  -> writing {} bytes to {}", data.len(), out_path.clone().into_os_string().into_string().unwrap());
 		fs::write(out_path, data).expect("Unable to write file");
 	    }
+	    true
 	},
-	Command::GfxDemo => show_images(&data),
-	Command::MapViewer => map_demo::show_maps(&data),
+	_ => false,
+    };
+
+    if !completed {
+	let data = datafiles::AmberstarFiles::new(source);
+
+	match command {
+	    Command::Words =>
+		for w in 0..data.string_fragments.len() {
+		    println!("{:4} 0x{:04x}: {}", w, w, data.string_fragments.get(w as u16));
+		},
+	    Command::Strings => print_strings(&data),
+	    // "song-old"	=> {
+	    // 	let source = &args[2];
+	    // 	play_song(&data, str::parse::<usize>(source).unwrap());
+	    // },
+	    Command::Song{song:song_nr} =>
+		play_song2(&data, song_nr.unwrap_or(0)).unwrap(),
+	    // "iter-song"	=> {
+	    // 	let source = &args[2];
+	    // 	print_iter_song(&data, str::parse::<usize>(source).unwrap());
+	    // },
+	    // "debug-audio" => {
+	    // debug_audio::debug_audio(&data).unwrap();
+	    // },
+	    Command::GfxDemo => show_images(&data),
+	    Command::MapViewer => map_demo::show_maps(&data),
+	    Command::Extract{..}  => {}, // already handled above
+	}
     }
 
     Ok(())

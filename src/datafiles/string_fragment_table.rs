@@ -9,8 +9,6 @@ pub struct StringFragmentTable {
 
 impl StringFragmentTable {
     pub fn new(bytes : &[u8]) -> StringFragmentTable {
-	let codepage = &amber_string::CODEPAGE;
-
 	let mut result = StringFragmentTable { fragments : vec!["<?-NUL-?>".to_string()] };
 	let mut offset = 0;
 
@@ -21,8 +19,7 @@ impl StringFragmentTable {
 		break;
 	    }
 	    let str_vec = &bytes[offset+1..(offset+str_len)];
-	    let str : String = codepage.decode_lossy(str_vec).to_string();
-	    //println!("word[{}] @ {offset} = '{str}'", result.fragments.len());
+	    let str : String = amber_string::from_bytes(&str_vec);
 	    if str == "#" {
 		result.fragments.push("\n".to_string());
 	    } else {

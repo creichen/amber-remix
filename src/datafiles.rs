@@ -502,6 +502,34 @@ fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
     (0..dfile.num_entries).map(|i| map::new(i as usize, &dfile.decode(i))).collect()
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Language {
+    DE, EN
+}
+
+fn detect_stringtable(data: &[u8]) -> Option<(Language, usize)> {
+    let search_starts = [
+	0x21700, // likely to hit
+	0x0,     // worst case: search in entire file
+    ];
+    let keywords = [ ("MENSCH", Language::DE),
+		       ("HUMAN", Language::EN), ];
+
+    for search_start in search_starts {
+	for (keyword, language) in keywords.iter() {
+	    let keyword_bytes: Vec<u8> = keyword.bytes().collect();
+	    let mut pos = search_start;
+	    for w in data[search_start..].windows(keyword.len()) {
+		if w == keyword_bytes {
+		    return Some((*language, pos - 1));
+		}
+		pos += 1;
+	    }
+	}
+    }
+    return None;
+}
+
 impl AmberstarFiles {
     pub fn load<'a>(&self, f : &str) -> DataFile {
 	return load_relative(&self.path, f);
@@ -509,8 +537,14 @@ impl AmberstarFiles {
 
     pub fn new(path : &str) -> AmberstarFiles {
 	let amberdev = load_relative(path, "AMBERDEV.UDO").decode(0);
-	const STRINGTABLE_OFFSET : usize = 0x2170b;
-	let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[STRINGTABLE_OFFSET..]);
+	let (language, stringtable_offset) = match detect_stringtable(&amberdev) {
+	    Some((l, offset)) => (l, offset),
+	    None => {
+		panic!("Could not find string table in AMBERDEV.UDO");
+	    },
+	};
+	println!("Detected language: {language:?}");
+	let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[stringtable_offset..]);
 
 	let map_text = load_text_vec(&mut load_relative(path, "MAPTEXT.AMB"), &string_fragments);
 	let code_text = load_text_vec(&mut load_relative(path, "CODETXT.AMB"), &string_fragments);
@@ -570,7 +604,6 @@ impl AmberstarFiles {
 	let chardata : Vec<CharData> = (0..(chardata_f.num_entries)).map(|i| CharData::new(&string_fragments, i, &chardata_f.decode(i))).collect();
 
 	let amberdev_palettes = Palette::amberdev_palettes(&amberdev);
-
 	let path : String = format!("{}", path);
 
 	return AmberstarFiles {
