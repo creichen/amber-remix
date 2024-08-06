@@ -5,14 +5,19 @@ Resources for decoding Amiga **Amberstar** data files, including
 
 ## Building and running
 
-Make sure that the Amiga Amberstar data files are in the `data/` subdirectory.  Their
-names should be in all-caps (`AMBERDEV.UDO` etc.).
+Make sure that the Amiga Amberstar data files are in the `data/`
+subdirectory.  Their names should be in all-caps (`AMBERDEV.UDO`
+etc.).  Alternatively, use the `--data` parameter to specify their
+location.
 
 To compile and run, the easiest interface is the Rust `cargo` tool:
 - `cargo run`: Map demo, allows walking through first-person dungeons
 - `cargo run song $X`: Plays the in-game song `${X}` (no looping)
 - `cargo run strings`: Dump out all text strings
 - `cargo run gfx-demo`: Shows some graphics
+- `cargo run list-pixmaps`: enumerate most in-game graphics
+- `cargo run list-palettes`: enumerate most in-game palettes, also lists their default palettes
+- `cargo run extract-pixmap <name> [palette-name]`: Extract pixmap to a png; `palette-name` must be specified for pixmaps that have no default palette
 
 ## Why?
 I wanted a zero-stakes project to learn the basics of Rust, and this
@@ -21,7 +26,7 @@ anywhere.
 
 ## Status
 
-- German/English version: should work equally well
+- German/English versions: should work equally well
 
 Very much WIP.  The following bits work to some extent:
 - *Data*: Container format decoding is fully supported
@@ -31,18 +36,18 @@ Very much WIP.  The following bits work to some extent:
 - *Maps*: Get loaded and can be traversed
 
 The following get partially decoded but don't do anything yet
-- *Game Scripts*: Bits and pieces from the map data are decoded
+- *Game Scripts*
+- *Items*
 
 
 ## Decoding status and documentation
-- All container formats can be decoded.
-- Please check the [WIP format descriptions](docs/FORMATS.org)
+- Please check the [Ambermoon file formats documentation](https://github.com/Pyrdacor/Ambermoon) for details
+- The table below lists what this project decodes
 
 
-| File         | Decoded                             |
+| File         | Supported                           |
 |--------------|-------------------------------------|
-| AMBERDEV.UDO | only very partially                 |
-| Amberload    |                                     |
+| AMBERDEV.UDO | songs and some tables               |
 | AUTOMAP.AMB  |                                     |
 | BACKGRND.AMB | yes                                 |
 | CHARDATA.AMB | partially (missing some attributes) |
@@ -51,7 +56,7 @@ The following get partially decoded but don't do anything yet
 | COL_PALL.AMB | yes                                 |
 | COM_BACK.AMB | yes                                 |
 | EXTRO.UDO    |                                     |
-| F_T_ANIM.ICN | yes, but not incorporated yet       |
+| F_T_ANIM.ICN | not incorporated yet                |
 | ICON_DAT.AMB | yes                                 |
 | INTRO_P.UDO  |                                     |
 | INTRO.UDO    |                                     |
@@ -59,25 +64,25 @@ The following get partially decoded but don't do anything yet
 | LAB_DATA.AMB | yes                                 |
 | MAP_DATA.AMB | mostly                              |
 | MAPTEXT.AMB  | yes                                 |
-| MON_DATA.AMB | yes                                 |
+| MON_DATA.AMB |                                     |
 | MON_GFX.AMB  | yes                                 |
 | PARTYDAT.SAV |                                     |
 | PICS80.AMB   | yes                                 |
 | PUZZLE.ICN   |                                     |
 | PUZZLE.TXT   |                                     |
 | SAMPLEDA.IMG | yes                                 |
-| TACTIC.ICN   | yes, but not handled by program yet |
+| TACTIC.ICN   | not incorporated yet                |
 | TH_LOGO.UDO  |                                     |
 | WARESDAT.AMB |                                     |
 
 ## Links
-- Ambermoon resources: https://github.com/Pyrdacor/Ambermoon
+- Ambermoon resources and format specification: https://github.com/Pyrdacor/Ambermoon
 
 ## Hacking
-Check src/util.rs for integration with the Rust logging infrastructure.  To enable logging for a specific module,
+Check `src/util.rs` for integration with the Rust logging infrastructure.  To enable logging for a specific module,
 such as `datafiles::map`, you can set:
 ```
-RUST_LOG="warn,amber_remix::datafiles::map=info" cargo run --bin demo
+RUST_LOG="warn,amber_remix::datafiles::map=info" cargo run demo
 ```
 
 ## Acknowledgements

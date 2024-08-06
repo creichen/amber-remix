@@ -1529,7 +1529,7 @@ fn main() -> io::Result<()> {
 		for key in keys {
 		    if let Some((ref default_palette, pixmap)) = pixmaps.get(&key) {
 			let no_default_palette = default_palette.is_empty();
-			let pal_str = format!("  \t{default_palette}");
+			let pal_str = format!("  \tpalette: {default_palette}");
 			let mut s = format!("{key}");
 			while s.len() < pad {
 			    s += " ";

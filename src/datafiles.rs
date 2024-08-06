@@ -676,7 +676,7 @@ impl AmberstarFiles {
 		if let Some(ref pic) = chardat.portrait {
 		    let s = format!("{:02x}", i);
 		    let ps = &p/s;
-		    m.insert(ps.clone(), (ps, pic.clone()));
+		    m.insert(ps.clone(), (ResourcePath::empty(), pic.clone()));
 		}
 	    }
 	}
