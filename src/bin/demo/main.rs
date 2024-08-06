@@ -774,6 +774,7 @@ struct CurrentSongInfo<'a> {
     tick: usize,
     song_nr: usize,
     info_functions: &'a [(Keycode, &'a str, InfoFunction)],
+    name: &'a str,
 }
 
 const COLOR_WHITE : Color = Color::RGBA(0xff, 0xff, 0xff, 0xff);
@@ -1175,9 +1176,9 @@ impl ArcDemoSongTracer {
 					  font,
 					  &mut* canvas);
 	pw.set_color(COLOR_GREEN);
-	pw.print(&format!("Song {:02x}", current_song_info.song_nr));
+	pw.print("[F1] for help  ");
+	pw.println(&format!("Song {:02x}: {}", current_song_info.song_nr, current_song_info.name));
 	pw.set_color(COLOR_YELLOW);
-	pw.println("  [F1] for help");
 	pw.set_color(COLOR_WHITE);
 	song_info_fn(&mut pw, &self, current_song_info);
     }
@@ -1355,6 +1356,7 @@ fn play_song2(data : &datafiles::AmberstarFiles, song_nr : usize) -> Result<(), 
 	    tick: start_tick,
 	    song_nr: current_song_nr,
 	    info_functions: &info_functions,
+	    name: &data.amberdev.song_names[current_song_nr],
 	};
 
 	song_tracer.draw_info(&mut canvas,

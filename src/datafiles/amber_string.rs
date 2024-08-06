@@ -35,6 +35,30 @@ pub fn from_terminated_bytes(src: &[u8]) -> String {
     src.iter().take_while(|&u| *u > 0).map(|&u| ATARI_ST_CODEPOINTS[u as usize]).collect()
 }
 
+/// Converts bytes in src to a string until it hits a zero byte
+pub fn vec_from_terminated_bytes(src: &[u8]) -> Vec<String> {
+    let mut pos = 0;
+    let mut start = 0;
+    let mut results = vec![];
+
+    loop {
+	if pos >= src.len() {
+	    results.push(from_terminated_bytes(&src[start..pos]));
+	    break;
+	}
+	if src[pos] == 0 {
+	    // terminated
+	    if pos == start {
+		break;
+	    }
+	    results.push(from_terminated_bytes(&src[start..pos]));
+	    start = pos + 1;
+	}
+	pos += 1;
+    }
+    return results;
+}
+
 /// Panics if not found
 pub fn to_byte(c: char) -> u8 {
     if c.is_ascii() {

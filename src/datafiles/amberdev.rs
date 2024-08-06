@@ -46,6 +46,7 @@ pub struct Amberdev {
     pub positions: Positions,
     pub spell_names: Vec<Vec<String>>,
     pub merchant_names: Vec<String>,
+    pub song_names: Vec<String>,
 }
 
 impl Amberdev {
@@ -62,6 +63,7 @@ impl Amberdev {
 	    positions: Positions::new(),
 	    spell_names: vec![],
 	    merchant_names: vec![],
+	    song_names: vec![],
 	};
 	let (language, string_fragment_table) = match amberdev.find_string_fragment_table() {
 	    None => panic!("Could not find string fragment table in decompressed AMBERDEV.UDO ({} bytes)", data_len),
@@ -74,6 +76,11 @@ impl Amberdev {
 	amberdev.positions.spell_name_table = 6 + amberdev.find_bytes_anywhere(0x4db00, &[0, 0, 0, 0, 0x01, 0x62]).expect("No spell name table foundin AMBERDEV.UDO");
 	amberdev.positions.merchant_name_table = amberdev.positions.spell_name_table + 0x0004b230 - 0x0004ac00 - 2;
 	amberdev.positions.daylight_tables = amberdev.positions.spell_name_table + 0x000473a4 - 0x0004ac0a;
+	amberdev.song_names = amber_string::vec_from_terminated_bytes(&amberdev[amberdev.positions.codetxt_amb + 0x151..]);
+
+	for (i, n) in amberdev.song_names.iter().enumerate() {
+	    println!(" SONG {i}: {n}");
+	}
 
 	amberdev.spell_names = amberdev.extract_spell_names();
 	amberdev.merchant_names = amberdev.extract_merchant_names();
