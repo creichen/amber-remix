@@ -14,24 +14,27 @@ enum Language {
 }
 
 /// Positions of special entities within an Amberdev file
-struct Positions {
-    string_fragment_table: usize,
-    codetxt_amb: usize,
-    spell_name_table: usize,
-    merchant_name_table: usize,
+pub struct Positions {
+    /// start of the string fragment table
+    pub string_fragment_table: usize,
+    /// The string "CODETXT.AMB", relative to which a number of valuable pieces of data are stored
+    pub codetxt_amb: usize,
+    /// Start of the table of spell names
+    pub spell_name_table: usize,
+    /// Table of merchant names
+    pub merchant_name_table: usize,
+    /// day, night, and dusk BG colour palettes
+    pub daylight_tables: usize,
 }
 
 impl Positions {
     fn new() -> Self {
 	Self {
-	    /// start of the string fragment table
 	    string_fragment_table: 0,
-	    /// The string "CODETXT.AMB", relative to which a number of valuable pieces of data are stored
 	    codetxt_amb: 0,
-	    /// Start of the table of spell names
 	    spell_name_table: 0,
-	    /// Table of merchant names
 	    merchant_name_table: 0,
+	    daylight_tables: 0,
 	}
     }
 }
@@ -70,8 +73,11 @@ impl Amberdev {
 	amberdev.positions.codetxt_amb = amberdev.find_string_anywhere(0x31000, "CODETXT.AMB").expect("No reference to CODETXT.AMB in AMBERDEV.UDO");
 	amberdev.positions.spell_name_table = 6 + amberdev.find_bytes_anywhere(0x4db00, &[0, 0, 0, 0, 0x01, 0x62]).expect("No spell name table foundin AMBERDEV.UDO");
 	amberdev.positions.merchant_name_table = amberdev.positions.spell_name_table + 0x0004b230 - 0x0004ac00 - 2;
+	amberdev.positions.daylight_tables = amberdev.positions.spell_name_table + 0x000473a4 - 0x0004ac0a;
+
 	amberdev.spell_names = amberdev.extract_spell_names();
 	amberdev.merchant_names = amberdev.extract_merchant_names();
+
 	return amberdev;
     }
 

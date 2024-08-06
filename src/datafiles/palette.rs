@@ -11,9 +11,11 @@ pub struct Palette {
     pub colors : Vec<Color>,
 }
 
-// FIXME: compute relative to occurrence of CODETXT.AMB (318f4 for at least some variants of the English version)
-// const AMBERDEV_COMBAT_PALETTE_OFFSET: usize = 0x31eda; // excluding colours 0c, 0d, 0e
-// const AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET: usize = 0x31efa; // Colours 0c, 0d, 0e, which vary per background
+pub struct DaylightGradientPalettes {
+    pub day: Palette,
+    pub night: Palette,
+    pub twilight: Palette,
+}
 
 const AMBERDEV_PALETTE_OFFSETS : [usize; 27] = [
     0x31eda,
@@ -52,21 +54,6 @@ pub fn new(src : &[u8], num_colors : usize) -> Palette {
     return Palette {
 	colors: colors_compressed(num_colors as usize, src),
     }
-    // let mut p = Palette { colors : vec![] };
-    // for i in 0..num_colors {
-    // 	let r = src[i * 2] & 0x7;
-    // 	let gb = src[i * 2 + 1] & 0x77;
-    // 	let g = gb >> 4;
-    // 	let b = gb & 0xf;
-    // 	let c = Color {
-    // 	    r : r * 0x20,
-    // 	    g : g * 0x20,
-    // 	    b : b * 0x20,
-    // 	    a : 0xff,
-    // 	};
-    // 	p.colors.push(c);
-    // };
-    // return p;
 }
 
 fn colors(num_colors: usize, src: &[u8], factor: u8) -> Vec<Color> {
@@ -120,7 +107,46 @@ impl Palette {
 	return self.colors[index];
     }
 
+    pub fn fill(col: &Color, num: usize) -> Self {
+	Palette { colors: vec![*col; num] }
+    }
+
+    pub fn len(&self) -> usize { self.colors.len() }
+
+    pub fn copy_into(&mut self, other: &Palette) {
+	assert!(self.len() == other.len());
+	self.colors.copy_from_slice(&other.colors);
+    }
+
+    pub fn blend_into(&mut self, other: &Palette, factor: u8) {
+	assert!(self.len() == other.len());
+	let factor = factor as usize;
+	for (i, c) in self.colors.iter_mut().enumerate() {
+	    c.r = usize::min(0xff,
+			     c.r as usize + ((other.colors[i].r as usize * factor + 128) >> 8)) as u8;
+	    c.g = usize::min(0xff,
+			     c.g as usize + ((other.colors[i].g as usize * factor + 128) >> 8)) as u8;
+	    c.b = usize::min(0xff,
+			     c.b as usize + ((other.colors[i].b as usize * factor + 128) >> 8)) as u8;
+	}
+    }
+
     pub const AMBERDEV_COMBAT_PALETTES_NR: usize = 14;
+
+    /// Day, Night, Dawn/Dusk
+    pub fn daylight_palettes(amberdev: &Amberdev) -> DaylightGradientPalettes {
+	const COLORS_NUM: usize = 83;
+	const OFFSET: usize = COLORS_NUM * 2;
+	let day_offset = amberdev.positions.daylight_tables;
+	let night_offset = day_offset + OFFSET;
+	let twilight_offset = night_offset + OFFSET;
+
+	DaylightGradientPalettes {
+	    day: new(&amberdev[day_offset..day_offset+OFFSET], COLORS_NUM),
+	    night: new(&amberdev[night_offset..night_offset+OFFSET], COLORS_NUM),
+	    twilight: new(&amberdev[twilight_offset..twilight_offset+OFFSET], COLORS_NUM),
+	}
+    }
 
     pub fn amberdev_combat_palette(amberdev: &Amberdev, index: usize) -> Palette {
 	let mut p = new(amberdev.combat_palette(), 16);

@@ -23,6 +23,7 @@ use crate::datafiles::palette::Palette;
 
 use self::chardata::CharData;
 use self::music::Song;
+use self::palette::DaylightGradientPalettes;
 use self::pixmap::IndexedPixmap;
 use self::tile::Tileset;
 use self::map::Map;
@@ -466,6 +467,7 @@ pub struct AmberstarFiles {
     pub monster_gfx : Vec<Vec<Pixmap>>,
     pub labgfx : labgfx::LabInfo,
     pub chardata : Vec<CharData>,
+    pub daylight_gradients: DaylightGradientPalettes, // day, night, twilight
 }
 
 fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::StringFragmentTable) -> Vec<map_string_table::MapStringTable> {
@@ -617,6 +619,11 @@ impl AmberstarFiles {
 		m.insert(&p/s, palette.clone());
 	    }
 	}
+
+	let daylight_gradients = Palette::daylight_palettes(&self.amberdev);
+	m.insert(ResourcePath::from("outdoors.day"), daylight_gradients.day);
+	m.insert(ResourcePath::from("outdoors.night"), daylight_gradients.night);
+	m.insert(ResourcePath::from("outdoors.twilight"), daylight_gradients.twilight);
 	return m;
     }
 
@@ -661,6 +668,16 @@ impl AmberstarFiles {
 		let s = format!("{:02x}", i);
 		let ps = &p/s;
 		m.insert(ps.clone(), (ps, pic.clone()));
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["char"]);
+	    for (i, chardat) in self.chardata.iter().enumerate() {
+		if let Some(ref pic) = chardat.portrait {
+		    let s = format!("{:02x}", i);
+		    let ps = &p/s;
+		    m.insert(ps.clone(), (ps, pic.clone()));
+		}
 	    }
 	}
 	return m;
@@ -732,6 +749,8 @@ impl AmberstarFiles {
 	let amberdev_palettes = Palette::amberdev_palettes(&amberdev);
 	let path : String = format!("{}", path);
 
+	let daylight_gradients = Palette::daylight_palettes(&amberdev);
+
 	return AmberstarFiles {
 	    path,
 	    amberdev,
@@ -754,6 +773,7 @@ impl AmberstarFiles {
 	    monster_gfx,
 	    labgfx,
 	    chardata,
+	    daylight_gradients,
 	}
     }
 }

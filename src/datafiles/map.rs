@@ -500,6 +500,26 @@ impl MapNPC {
 
 // ----------------------------------------
 // Map
+
+/// Light status of the map
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Illumination {
+    /// Always bright
+    Always,
+    /// Light depends on time of day
+    Daylight,
+    /// Players must bring their own light
+    Never,
+}
+
+/// What kind of environment the map is representing
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Environment {
+    Wilderness,
+    City,
+    Dungeon,
+}
+
 pub struct Map {
     pub name : String,
     pub width : usize,
@@ -511,7 +531,13 @@ pub struct Map {
     pub tileset : usize,
     pub song_nr : usize,
     pub lab_info : Vec<LabRef>,
-    pub flags : u32,
+    pub flags: u32,
+    /// Resting allowed
+    pub can_rest : bool,
+    /// Mapshow spell allowed
+    pub can_mapshow : bool,
+    pub illumination: Illumination,
+    pub environment: Environment,
     pub first_person : bool, // Pseudo-3D view
     pub npcs : Vec<MapNPC>,
     pub data : Vec<u8>,
@@ -585,17 +611,23 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	       false},
     };
     let flags = src[5] as u32;
-    // Current hypotheses / observations:
-    // 0x01 = Tomb, Inn
-    // 0x02 = Graveyard
-    // 0x04 = ?
-    // 0x08 = Tomb, Inn
-    // 0x10 = ?
-    // 0x20 = ?
-    // 0x40 = Graveyard, Inn
-    // 0x80 = Tomb of Marillon
-    // flags 01, 02, 04 are mutually exclusive, exactly one is set at any time
-    // flags 20, 40, 80 are mutually exclusive, exactly one is set at any time
+    let illumination = match flags & 0x07 {
+	0x01 => Illumination::Always,
+	0x02 => Illumination::Daylight,
+	0x04 => Illumination::Never,
+	_    => { perror!("  map#{:x} illumination flags are odd {:x}", map_nr, flags & 0x07);
+	          Illumination::Always }
+    };
+    let environment = match flags & 0xe0 {
+	0x20 => Environment::Wilderness,
+	0x40 => Environment::City,
+	0x80 => Environment::Dungeon,
+	_    => { perror!("  map#{:x} environment flags are odd {:x}", map_nr, flags & 0xe0);
+	          Environment::Wilderness }
+    };
+    let can_mapshow = flags & 0x08 > 0;
+    let can_rest = flags & 0x10 > 0;
+
     let song_nr = src[6] as usize;
     let width = src[7] as usize;
     let height = src[8] as usize;
@@ -771,6 +803,10 @@ pub fn new(map_nr : usize, src : &[u8]) -> Map {
 	flags,
 	first_person,
 	npcs,
+        can_rest,
+        can_mapshow,
+        illumination,
+        environment,
 	data : src.to_vec(),
     };
     pinfo!("}}");

@@ -6,11 +6,11 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use amber_remix::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use std::{time::Duration, borrow::Borrow, io};
+use std::{time::Duration, borrow::Borrow};
 
 use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}, video::Window, ttf::Sdl2TtfContext};
 
-use amber_remix::datafiles::{map::{self, LabRef, MapDir}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
+use amber_remix::datafiles::{palette::Palette, map::{self, LabRef, MapDir, Illumination, Environment}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
 use std::fmt::Write;
 
 struct Font<'a> {
@@ -350,8 +350,8 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     let mut draw_event_info = false;
     let mut draw_tile_nr = false;
 
-    let mut x = 10;
-    let mut y = 10;
+    let mut x = 15;
+    let mut y = 15;
     let mut dir = MapDir::NORTH;
 
     // WIP
@@ -359,6 +359,9 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
     //let labblocks : Vec<Vec<labgfx::LabBlock<Texture>>> = vec![labblock_textures(&data, &creator, &data.labgfx.labdata[0])];
 
     let mut only_tiles = false;
+
+    const TIME_ADVANCE: usize = 20;
+    const DAY_LENGTH: usize = 288; // 5 minute-chunks per day
 
     'running: loop {
 
@@ -376,7 +379,12 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	let tileset_painter : Box<dyn IndexedTilePainter>;
 	if map.first_person {
 	    tileset_painter = Box::new(LabBlockPainter::new(&map.lab_info, &labblocks[tileset]));
-	    let palette = &data.lab_palettes[lab_info.palette_index];
+
+	    let mut palette = data.lab_palettes[lab_info.palette_index].clone();
+	    if map.illumination == Illumination::Daylight {
+		palette = palette.with_transparency(11);
+	    }
+
 	    //let palette = &palette::TEST_PALETTE;
 	    let lab_floors = &data.bg_pictures[lab_info.bg_floor_index];
 	    let lab_ceilings = &data.bg_pictures[lab_info.bg_ceiling_index];
@@ -385,9 +393,9 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    lab_bg_images = vec![];
 	    for floor in lab_floors {
 		for ceiling in lab_ceilings {
-		    let mut ceiling = ceiling.with_palette(palette).as_texture(&creator);
+		    let mut ceiling = ceiling.with_palette(&palette).as_texture(&creator);
 		    ceiling.set_blend_mode(BlendMode::Blend);
-		    let mut floor = floor.with_palette(palette).as_texture(&creator);
+		    let mut floor = floor.with_palette(&palette).as_texture(&creator);
 		    floor.set_blend_mode(BlendMode::Blend);
 		    lab_bg_images.push((ceiling, floor));
 		}
@@ -402,6 +410,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	// Run the loop below while the current map is selected
 	let mut i : usize = 0;
 	let mut movedir = None;
+	let mut timeofday_finegrained = 0;
 	'current_map: loop {
             for event in event_pump.poll_iter() {
 		match event {
@@ -506,6 +515,15 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		    }
 		}
 	    }
+
+	    timeofday_finegrained += TIME_ADVANCE;
+	    timeofday_finegrained %= 256 * DAY_LENGTH;
+
+	    // hour, minute
+	    let (timeofday_hour, timeofday_minute) = {
+		let minutes = (timeofday_finegrained * 5) >> 8;
+		(minutes / 60,
+		 minutes % 60) };
 
 	    // draw NPC
 	    for npc in &mut npcs {
@@ -629,7 +647,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 							 img_id)));
 	    }
 
-	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {} tileset={tileset}", map_nr, map_nr, map.name).as_str(),
+	    font.draw_to(&mut canvas, format!("Map {} ({:#02x}): {} tileset={tileset} {timeofday_hour}:{timeofday_minute:02}", map_nr, map_nr, map.name).as_str(),
 			 1680, 10, Color::RGBA(0xaf, 0xaf, 0xaf, 0xff));
 	    let line_height = font_size + 4;
 	    let mut ypos = 20 + font_size + line_height;
@@ -650,24 +668,89 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    }
 
 	    if map.first_person {
+		const SCALE: usize = 2;
+
 		// Draw map view
 		let start_xpos = 1620;
 		let start_ypos = ypos;
 		let mut max_bg_height = 0;
 		let mut xpos = start_xpos;
-		for (bg_ceiling, bg_floor) in lab_bg_images.iter() {
+
+		// draw floor and ceiling
+		if map.illumination == Illumination::Daylight {
+		    let gradients = &data.daylight_gradients;
+		    let mut bg_gradient = Palette::fill(&Color::BLACK, gradients.day.len());
+
+		    let partial_into_hour: u8 = ((timeofday_minute * 256) / 60) as u8;
+		    let partial_outof_hour: u8 = 255 - partial_into_hour;
+
+		    // day or night
+		    if timeofday_hour >= 8 && timeofday_hour <= 17 {
+			// day
+			bg_gradient.copy_into(&gradients.day);
+		    } else if timeofday_hour == 7 {
+			// late dawn
+			bg_gradient.blend_into(&gradients.day, partial_into_hour);
+		    } else if timeofday_hour == 18 {
+			// early dusk
+			bg_gradient.blend_into(&gradients.day, partial_outof_hour);
+		    } else if timeofday_hour < 6 || timeofday_hour >= 20 {
+			// night
+			bg_gradient.copy_into(&gradients.night);
+		    } else if timeofday_hour == 6 {
+			// early dawn
+			bg_gradient.blend_into(&gradients.night, partial_outof_hour);
+		    } else if timeofday_hour == 19 {
+			// late dusk
+			bg_gradient.blend_into(&gradients.night, partial_into_hour);
+		    } else {
+			println!("Weird hour: {timeofday_hour}");
+		    };
+
+		    // twilight
+		    match timeofday_hour {
+			6 | 18               => bg_gradient.blend_into(&gradients.twilight, partial_into_hour),
+			7 | 19               => bg_gradient.blend_into(&gradients.twilight, partial_outof_hour),
+			_                    => {},
+		    };
+
+		    const DAYLIGHT_WIDTH: usize = 144 * SCALE;
+		    const DAYLIGHT_HEIGHT: usize = 135;
+		    let rows_num = bg_gradient.len();
+
+		    for row in 0..rows_num {
+			canvas.set_draw_color(bg_gradient.get(row));
+			canvas.fill_rect(Rect::new(start_xpos as i32, start_ypos as i32 + row as i32 * SCALE as i32,
+						   DAYLIGHT_WIDTH as u32, SCALE as u32)).unwrap();
+		    }
+		    canvas.set_draw_color(Color::BLACK);
+		    canvas.fill_rect(Rect::new(start_xpos as i32, start_ypos as i32 + rows_num as i32 * SCALE as i32,
+					       DAYLIGHT_WIDTH as u32, SCALE as u32 * (DAYLIGHT_HEIGHT as u32 - rows_num as u32))).unwrap();
+		}
+
+		// draw floor and ceiling
+		{
+		    let bg_index = if lab_bg_images.len() == 0 { 0 } else {
+			if timeofday_hour >= 7 && timeofday_hour < 19 { 1 } else { 0 }
+		    };
+		    let (bg_ceiling, bg_floor) = &lab_bg_images[bg_index];
 		    let mut yoffset = 0;
 		    let mut max_width = 0;
-		    for bg_pixmap in [bg_ceiling, bg_floor] {
+		    // let draw_ceiling = map.illumination != Illumination::Daylight
+		    // 	|| !(timeofday_hour >= 7 && timeofday_hour < 19);
+		    let draw_ceiling = true;
+		    for (draw_this, bg_pixmap) in [(draw_ceiling, bg_ceiling), (true, bg_floor)] {
 			let TextureQuery { width, height, .. } = bg_pixmap.query();
-			canvas.copy(&bg_pixmap,
-				    Rect::new(0, 0, width as u32, height as u32),
-				    Rect::new(xpos as i32, (ypos + yoffset) as i32,
-					      width * 2 as u32, height * 2 as u32)).unwrap();
+			if draw_this {
+			    canvas.copy(&bg_pixmap,
+					Rect::new(0, 0, width as u32, height as u32),
+					Rect::new(xpos as i32, (ypos + yoffset) as i32,
+						  width * SCALE as u32, height * SCALE as u32)).unwrap();
+			}
 			max_width = usize::max(max_width, width as usize);
-			yoffset += height as usize * 2;
+			yoffset += height as usize * SCALE;
 		    }
-		    xpos += max_width * 2 + 4;
+		    xpos += (max_width + 2) * SCALE;
 		    max_bg_height = usize::max(max_bg_height, yoffset as usize + 10);
 		}
 
