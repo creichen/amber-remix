@@ -21,8 +21,7 @@ anywhere.
 
 ## Status
 
-- German/English version: mostly same status, except that some palettes
-  for the German version are off (`gfx-demo`)
+- German/English version: should work equally well
 
 Very much WIP.  The following bits work to some extent:
 - *Data*: Container format decoding is fully supported

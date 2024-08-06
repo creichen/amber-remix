@@ -4,14 +4,16 @@
 use sdl2::pixels::Color;
 use crate::datafiles::decode;
 
+use super::amberdev::Amberdev;
+
 #[derive(Clone,Debug)]
 pub struct Palette {
     pub colors : Vec<Color>,
 }
 
 // FIXME: compute relative to occurrence of CODETXT.AMB (318f4 for at least some variants of the English version)
-const AMBERDEV_COMBAT_PALETTE_OFFSET: usize = 0x31eda; // excluding colours 0c, 0d, 0e
-const AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET: usize = 0x31efa; // Colours 0c, 0d, 0e, which vary per background
+// const AMBERDEV_COMBAT_PALETTE_OFFSET: usize = 0x31eda; // excluding colours 0c, 0d, 0e
+// const AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET: usize = 0x31efa; // Colours 0c, 0d, 0e, which vary per background
 
 const AMBERDEV_PALETTE_OFFSETS : [usize; 27] = [
     0x31eda,
@@ -158,9 +160,9 @@ pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
     }
 }
 
-pub fn amberdev_combat_palette(data: &[u8], index: usize) -> Palette {
-    let mut p = new(&data[AMBERDEV_COMBAT_PALETTE_OFFSET..], 16);
-    p = p.replacing(0x0c, 3, &data[AMBERDEV_COMBAT_PALETTE_EXTRA_OFFSET + index*6..]);
+pub fn amberdev_combat_palette(amberdev: &Amberdev, index: usize) -> Palette {
+    let mut p = new(amberdev.combat_palette(), 16);
+    p = p.replacing(0x0c, 3, &amberdev.combat_palette_specialisation_table()[index*6..]);
     return p;
 }
 

@@ -16,12 +16,16 @@ enum Language {
 /// Positions of special entities within an Amberdev file
 struct Positions {
     string_fragment_table: usize,
+    codetxt_amb: usize,
 }
 
 impl Positions {
     fn new() -> Self {
 	Self {
+	    /// start of the string fragment table
 	    string_fragment_table: 0,
+	    /// The string "CODETXT.AMB", relative to which a number of valuable pieces of data are stored
+	    codetxt_amb: 0,
 	}
     }
 }
@@ -34,6 +38,10 @@ pub struct Amberdev {
 }
 
 impl Amberdev {
+    const COMBAT_PALETTE_OFFSET: usize = 0x5e5; // relative to the string "CODETXT.AMB"
+    const COMBAT_PALETTE_LENGTH: usize = 0x20;
+    const COMBAT_PALETTE_SPECIALISATION_LENGTH: usize = 14 * 6;
+
     pub fn new(data: Vec<u8>) -> Self {
 	let data_len = data.len();
 	let mut amberdev = Self {
@@ -49,7 +57,18 @@ impl Amberdev {
 	amberdev.language = language;
 	amberdev.positions.string_fragment_table = string_fragment_table;
 	amberdev.string_fragments = StringFragmentTable::new(&amberdev[string_fragment_table..]);
+	amberdev.positions.codetxt_amb = amberdev.find_string_anywhere(0x31000, "CODETXT.AMB").expect("No reference to CODETXT.AMB in AMBERDEV.UDO");
 	return amberdev;
+    }
+
+    pub fn combat_palette(&self) -> &[u8] {
+	let offset = self.positions.codetxt_amb + Amberdev::COMBAT_PALETTE_OFFSET;
+	return &self[offset..offset+Amberdev::COMBAT_PALETTE_LENGTH];
+    }
+
+    pub fn combat_palette_specialisation_table(&self) -> &[u8] {
+	let offset = self.positions.codetxt_amb + Amberdev::COMBAT_PALETTE_OFFSET + Amberdev::COMBAT_PALETTE_LENGTH;
+	return &self[offset..offset+Amberdev::COMBAT_PALETTE_SPECIALISATION_LENGTH];
     }
 
     fn find_string_fragment_table(&self) -> Option<(Language, usize)> {
@@ -63,7 +82,7 @@ impl Amberdev {
 	for search_start in search_starts {
 	    for (keyword, language) in keywords.iter() {
 		match self.find_string(search_start, keyword) {
-		    Some(offset) => { return Some((*language, offset)); },
+		    Some(offset) => { return Some((*language, offset - 1)); },
 		    None => {},
 		}
 	    }
