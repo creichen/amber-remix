@@ -100,9 +100,6 @@ impl Amberdev {
 	    result.push(amber_string::from_bytes(&self[pos..pos+len]).trim_end().to_string());
 	    pos += len;
 	}
-	for n in &result {
-	    println!("- '{n}'");
-	}
 	return result;
     }
 

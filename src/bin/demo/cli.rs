@@ -28,6 +28,17 @@ pub enum Command {
     Song { song : Option<usize> },
     /// Graphics demo (mainly intended for debugging and exploration)
     GfxDemo,
+
+    /// List all palettes
+    ListPalettes,
+    /// Prints a palette
+    Palette{palette: String},
+    /// List all pixmaps
+    ListPixmaps,
+    /// Extract pixmap as PNG
+    ExtractPixmap{pixmap: String, palette: Option<String>},
+
+
     /// Map viewer and 3D map walking demo
     MapViewer,
 }

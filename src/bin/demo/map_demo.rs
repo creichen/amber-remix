@@ -8,7 +8,7 @@ use amber_remix::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{time::Duration, borrow::Borrow, io};
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}, video::Window, ttf::Sdl2TtfContext};
 
 use amber_remix::datafiles::{map::{self, LabRef, MapDir}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
 use std::fmt::Write;
@@ -385,9 +385,11 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 	    lab_bg_images = vec![];
 	    for floor in lab_floors {
 		for ceiling in lab_ceilings {
-		    lab_bg_images.push((ceiling.with_palette(palette).as_texture(&creator),
-					floor.with_palette(palette).as_texture(&creator),
-					));
+		    let mut ceiling = ceiling.with_palette(palette).as_texture(&creator);
+		    ceiling.set_blend_mode(BlendMode::Blend);
+		    let mut floor = floor.with_palette(palette).as_texture(&creator);
+		    floor.set_blend_mode(BlendMode::Blend);
+		    lab_bg_images.push((ceiling, floor));
 		}
 	    }
 	} else {

@@ -47,51 +47,6 @@ const AMBERDEV_PALETTE_OFFSETS : [usize; 27] = [
 
 // 00031edc
 
-lazy_static! {
-// EGA palette for testing colour indices
-    pub static ref TEST_PALETTE : Palette = Palette {
-	colors : vec![
-	    Color{ r : 0x00, g: 0x00, b: 0x00, a : 0xff }, // 0 black
-	    Color{ r : 0x00, g: 0x00, b: 0xaa, a : 0xff }, // 1 blue
-	    Color{ r : 0x00, g: 0xaa, b: 0x00, a : 0xff }, // 2 green
-	    Color{ r : 0x00, g: 0xaa, b: 0xaa, a : 0xff }, // 3 cyan
-	    Color{ r : 0xaa, g: 0x00, b: 0x00, a : 0xff }, // 4 red
-	    Color{ r : 0xaa, g: 0x00, b: 0xaa, a : 0xff }, // 5 purple
-	    Color{ r : 0xaa, g: 0x55, b: 0x00, a : 0xff }, // 6 brown
-	    Color{ r : 0xaa, g: 0xaa, b: 0xaa, a : 0xff }, // 7 light grey
-	    Color{ r : 0x55, g: 0x55, b: 0x55, a : 0xff }, // 8 dark grey
-	    Color{ r : 0x55, g: 0x55, b: 0xff, a : 0xff }, // 9 light blue
-	    Color{ r : 0x55, g: 0xff, b: 0x55, a : 0xff }, // a light green
-	    Color{ r : 0x55, g: 0xff, b: 0xff, a : 0xff }, // b light cyan
-	    Color{ r : 0xff, g: 0x55, b: 0x55, a : 0xff }, // c light red
-	    Color{ r : 0xff, g: 0x55, b: 0xff, a : 0xff }, // d light purple
-	    Color{ r : 0xff, g: 0xff, b: 0x55, a : 0xff }, // e yellow
-	    Color{ r : 0xff, g: 0xff, b: 0xff, a : 0xff }, // f white
-	],
-    };
-
-    // pub static ref COMBAT_PALETTE : Palette = Palette {
-    // 	colors : vec![
-    // 	    Color{ r : 0xff, g: 0xff, b: 0xff, a : 0xff },
-    // 	    Color{ r : 0x00, g: 0x00, b: 0x00, a : 0xff },
-    // 	    Color{ r : 0x82, g: 0x82, b: 0x82, a : 0xff },
-    // 	    Color{ r : 0x61, g: 0x61, b: 0x41, a : 0xff },
-    // 	    Color{ r : 0x20, g: 0x41, b: 0x41, a : 0xff }, // 204141
-    // 	    Color{ r : 0xa2, g: 0xa2, b: 0x41, a : 0xff }, // a2a241
-    // 	    Color{ r : 0xa2, g: 0x61, b: 0x20, a : 0xff }, // a26120
-    // 	    Color{ r : 0x82, g: 0x41, b: 0x00, a : 0xff }, // 824100
-    // 	    Color{ r : 0x61, g: 0x20, b: 0x00, a : 0xff }, // 612000
-    // 	    Color{ r : 0x41, g: 0xa2, b: 0x00, a : 0xff }, // 41a200
-    // 	    Color{ r : 0x00, g: 0x61, b: 0x20, a : 0xff }, // 006120
-    // 	    Color{ r : 0x41, g: 0x00, b: 0x00, a : 0xff }, // 410000
-    // 	    Color{ r : 0x24, g: 0x6d, b: 0x92, a : 0xff }, // 246d92
-    // 	    Color{ r : 0x00, g: 0x24, b: 0x49, a : 0xff }, // 002449
-    // 	    Color{ r : 0x92, g: 0xb6, b: 0xb6, a : 0xff }, // 92b6b6
-    // 	    Color{ r : 0xc3, g: 0xc3, b: 0xc3, a : 0xff }, // c3c3c3
-    // 	],
-    // };
-}
-
 // packed 0RGB format
 pub fn new(src : &[u8], num_colors : usize) -> Palette {
     return Palette {
@@ -160,15 +115,17 @@ pub fn new_with_header(src : &[u8], factor : u8) -> Palette {
     }
 }
 
-pub fn amberdev_combat_palette(amberdev: &Amberdev, index: usize) -> Palette {
-    let mut p = new(amberdev.combat_palette(), 16);
-    p = p.replacing(0x0c, 3, &amberdev.combat_palette_specialisation_table()[index*6..]);
-    return p;
-}
-
 impl Palette {
     pub fn get(&self, index : usize) -> Color {
 	return self.colors[index];
+    }
+
+    pub const AMBERDEV_COMBAT_PALETTES_NR: usize = 14;
+
+    pub fn amberdev_combat_palette(amberdev: &Amberdev, index: usize) -> Palette {
+	let mut p = new(amberdev.combat_palette(), 16);
+	p = p.replacing(0x0c, 3, &amberdev.combat_palette_specialisation_table()[index*6..]);
+	return p;
     }
 
     pub fn replacing(&self, first_color: usize, num: usize, new_rgb: &[u8]) -> Palette {
@@ -205,5 +162,29 @@ impl Palette {
 	return Palette {
 	    colors,
 	}
+    }
+
+    pub const TEST_PALETTE_COLORS: [Color; 16] = [
+	Color{ r : 0x00, g: 0x00, b: 0x00, a : 0xff }, // 0 black
+	Color{ r : 0x00, g: 0x00, b: 0xaa, a : 0xff }, // 1 blue
+	Color{ r : 0x00, g: 0xaa, b: 0x00, a : 0xff }, // 2 green
+	Color{ r : 0x00, g: 0xaa, b: 0xaa, a : 0xff }, // 3 cyan
+	Color{ r : 0xaa, g: 0x00, b: 0x00, a : 0xff }, // 4 red
+	Color{ r : 0xaa, g: 0x00, b: 0xaa, a : 0xff }, // 5 purple
+	Color{ r : 0xaa, g: 0x55, b: 0x00, a : 0xff }, // 6 brown
+	Color{ r : 0xaa, g: 0xaa, b: 0xaa, a : 0xff }, // 7 light grey
+	Color{ r : 0x55, g: 0x55, b: 0x55, a : 0xff }, // 8 dark grey
+	Color{ r : 0x55, g: 0x55, b: 0xff, a : 0xff }, // 9 light blue
+	Color{ r : 0x55, g: 0xff, b: 0x55, a : 0xff }, // a light green
+	Color{ r : 0x55, g: 0xff, b: 0xff, a : 0xff }, // b light cyan
+	Color{ r : 0xff, g: 0x55, b: 0x55, a : 0xff }, // c light red
+	Color{ r : 0xff, g: 0x55, b: 0xff, a : 0xff }, // d light purple
+	Color{ r : 0xff, g: 0xff, b: 0x55, a : 0xff }, // e yellow
+	Color{ r : 0xff, g: 0xff, b: 0xff, a : 0xff }, // f white
+    ];
+
+    /// EGA-style test palette to quickly inspect colour index values
+    pub fn test_palette() -> Self {
+	Self { colors: Self::TEST_PALETTE_COLORS.to_vec(), }
     }
 }

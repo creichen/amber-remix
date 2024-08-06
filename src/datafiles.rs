@@ -10,9 +10,12 @@ use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use core::fmt;
 use std::assert;
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::File;
-use std::cmp::min;
+use std::cmp::{min, Ordering};
 use std::io::Read;
+use std::ops::{Deref, Div};
 use std::path::Path;
 
 use crate::datafiles::pixmap::Pixmap;
@@ -447,6 +450,8 @@ pub struct AmberstarFiles {
     pub map_text : Vec<map_string_table::MapStringTable>,
     pub code_text : Vec<map_string_table::MapStringTable>,
     pub pics80 : Vec<Pixmap>,
+    pub pics80_indexed : Vec<IndexedPixmap>,
+    pub pics80_palettes : Vec<Palette>,
     pub pic_intro : Pixmap,
     pub lab_palettes : Vec<Palette>,
     pub amberdev_palettes : Vec<Palette>,
@@ -455,7 +460,9 @@ pub struct AmberstarFiles {
     pub tiles : Vec<Tileset<Pixmap>>,
     pub maps : Vec<Map>,
     pub bg_pictures : Vec<Vec<IndexedPixmap>>,
+    pub combat_bg_pictures_indexed : Vec<IndexedPixmap>,
     pub combat_bg_pictures : Vec<Pixmap>,
+    pub monster_gfx_indexed : Vec<Vec<IndexedPixmap>>,
     pub monster_gfx : Vec<Vec<Pixmap>>,
     pub labgfx : labgfx::LabInfo,
     pub chardata : Vec<CharData>,
@@ -472,12 +479,13 @@ fn load_text_vec(dfile : &mut DataFile, fragments : &string_fragment_table::Stri
     return map_text;
 }
 
-fn load_pic80(dfile : &mut DataFile, index : u32) -> Pixmap {
+fn load_pic80(dfile : &mut DataFile, index : u32) -> (Pixmap, IndexedPixmap, Palette) {
     let pic_index = index as u16;
     let pal_index = (index + 1) as u16;
     let picdata = pixmap::new(&dfile.decode(pic_index), 80, 80, 4);
     let palette = palette::new(&dfile.decode(pal_index), 16);
-    return picdata.with_palette(&palette);
+    let pixmap = picdata.with_palette(&palette);
+    return (pixmap, picdata, palette);
 }
 
 fn load_palettes(dfile : &mut DataFile) -> Vec<Palette> {
@@ -504,30 +512,176 @@ fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
     (0..dfile.num_entries).map(|i| map::new(i as usize, &dfile.decode(i))).collect()
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ResourcePath {
+    path: Vec<String>,
+}
+
+impl ResourcePath {
+    fn empty() -> Self { Self { path: vec![] } }
+    fn new(s: &[&str]) -> Self { Self { path: s.iter().map(|s| s.to_string()).collect() } }
+
+    fn extend(&self, next: &str) -> Self {
+	let mut path = self.path.clone();
+	path.push(next.to_string());
+	ResourcePath {
+	    path
+	}
+    }
+
+    fn len(&self) -> usize {
+	return self.path.len();
+    }
+
+    fn is_empty(&self) -> bool {
+	return self.path.is_empty();
+    }
+}
+
+impl From<&str> for ResourcePath {
+    fn from(s: &str) -> Self {
+	let elts: Vec<&str> = s.split(".").collect();
+	return Self::new(&elts);
+    }
+}
+
+impl From<&String> for ResourcePath {
+    fn from(s: &String) -> Self {
+	let str: &str = &s;
+	return ResourcePath::from(str);
+    }
+}
+
+impl Display for ResourcePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	if self.path.is_empty() {
+	    write!(f, "[]")
+	} else {
+	    write!(f, "{}", self.path.join("."))
+	}
+    }
+}
+
+impl Deref for ResourcePath {
+    type Target = [String];
+
+    fn deref(&self) -> &Self::Target {
+	return &self.path;
+    }
+}
+
+impl Div<&str> for &ResourcePath {
+    type Output = ResourcePath;
+
+    fn div(self, rhs: &str) -> Self::Output {
+	return self.extend(rhs);
+    }
+}
+
+impl Div<String> for &ResourcePath {
+    type Output = ResourcePath;
+
+    fn div(self, rhs: String) -> Self::Output {
+	return self.extend(&rhs);
+    }
+}
+
 impl AmberstarFiles {
     pub fn load<'a>(&self, f : &str) -> DataFile {
 	return load_relative(&self.path, f);
     }
 
+    /// Extracts all palettes and gives them names
+    pub fn palettes(&self) -> HashMap<ResourcePath, Palette> {
+	let mut m = HashMap::new();
+	m.insert(ResourcePath::new(&["test"]), Palette::test_palette());
+	{
+	    let p = ResourcePath::new(&["lab"]);
+	    for (i, palette) in self.lab_palettes.iter().enumerate() {
+		let s = format!("{:02x}", i);
+		m.insert(&p/s, palette.clone());
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["combat"]);
+	    for i in 0..Palette::AMBERDEV_COMBAT_PALETTES_NR {
+		let palette = Palette::amberdev_combat_palette(&self.amberdev, i);
+		let s = format!("{:02x}", i);
+		m.insert(&p/s, palette);
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["pics80"]);
+	    for (i, palette) in self.pics80_palettes.iter().enumerate() {
+		let s = format!("{:02x}", i);
+		m.insert(&p/s, palette.clone());
+	    }
+	}
+	return m;
+    }
+
+    /// Extracts all indexed pictures by name, plus their preferred palettes
+    pub fn pixmaps(&self) -> HashMap<ResourcePath, (ResourcePath, IndexedPixmap)> {
+	let mut m = HashMap::new();
+	{
+	    let p = ResourcePath::new(&["combat"]);
+	    for (i, pic) in self.combat_bg_pictures_indexed.iter().enumerate() {
+		let s = format!("{:02x}", i);
+		let ps = &p/s;
+		m.insert(ps.clone(), (ps, pic.clone()));
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["bg"]);
+	    for (i, pic_vec) in self.bg_pictures.iter().enumerate() {
+		let is = format!("{:02x}", i);
+		let ps = &p/is;
+		for (j, pic) in pic_vec.iter().enumerate() {
+		    let js = format!("{:02x}", j);
+		    let ps = &ps/js;
+		    m.insert(ps, (ResourcePath::empty(), pic.clone()));
+		}
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["monster"]);
+	    for (i, pic_vec) in self.monster_gfx_indexed.iter().enumerate() {
+		let is = format!("{:02x}", i);
+		let ps = &p/is;
+		for (j, pic) in pic_vec.iter().enumerate() {
+		    let js = format!("{:02x}", j);
+		    let ps = &ps/js;
+		    m.insert(ps.clone(), (ResourcePath::new(&["combat", "04"]), pic.clone()));
+		}
+	    }
+	}
+	{
+	    let p = ResourcePath::new(&["pics80"]);
+	    for (i, pic) in self.pics80_indexed.iter().enumerate() {
+		let s = format!("{:02x}", i);
+		let ps = &p/s;
+		m.insert(ps.clone(), (ps, pic.clone()));
+	    }
+	}
+	return m;
+    }
+
     pub fn new(path : &str) -> AmberstarFiles {
 	let amberdev_data = load_relative(path, "AMBERDEV.UDO").decode(0);
 	let amberdev = Amberdev::new(amberdev_data);
-	// let (language, stringtable_offset) = match detect_stringtable(&amberdev) {
-	//     Some((l, offset)) => (l, offset),
-	//     None => {
-	// 	panic!("Could not find string table in AMBERDEV.UDO");
-	//     },
-	// };
-	// println!("Detected language: {language:?}");
-	// let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[stringtable_offset..]);
 
 	let map_text = load_text_vec(&mut load_relative(path, "MAPTEXT.AMB"), &amberdev.string_fragments);
 	let code_text = load_text_vec(&mut load_relative(path, "CODETXT.AMB"), &amberdev.string_fragments);
 
 	let mut pics80_f = load_relative(path, "PICS80.AMB");
 	let mut pics80 = vec![];
+	let mut pics80_palettes = vec![];
+	let mut pics80_indexed = vec![];
 	for i in 0..(pics80_f.num_entries >> 1) {
-	    pics80.push(load_pic80(&mut pics80_f, (i as u32) << 1));
+	    let (pics80_elt, pics80_indexed_elt, pics80_pal_elt) = load_pic80(&mut pics80_f, (i as u32) << 1);
+	    pics80.push(pics80_elt);
+	    pics80_palettes.push(pics80_pal_elt);
+	    pics80_indexed.push(pics80_indexed_elt);
 	}
 
 	let mut pall_f = load_relative(path, "COL_PALL.AMB");
@@ -559,19 +713,16 @@ impl AmberstarFiles {
 	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
 	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
 
-	let mut bg_pictures_f = load_relative(path, "BACKGRND.AMB");
-	let bg_pictures = pictures::load_backgrounds(&mut bg_pictures_f);
-
 	let mut mon_gfx_f = load_relative(path, "MON_GFX.AMB");
-	let monster_gfx = pictures::load_monster_gfx(&mut mon_gfx_f);
-	let monster_palette = palette::amberdev_combat_palette(&amberdev, 4).with_transparency(0);
-	let monster_gfx: Vec<Vec<Pixmap>> = monster_gfx.iter().map(|vv| vv.iter().map(|v| v.with_palette(&monster_palette)).collect()).collect();
+	let monster_gfx_indexed = pictures::load_monster_gfx(&mut mon_gfx_f);
+	let monster_palette = Palette::amberdev_combat_palette(&amberdev, 4).with_transparency(0);
+	let monster_gfx: Vec<Vec<Pixmap>> = monster_gfx_indexed.iter().map(|vv| vv.iter().map(|v| v.with_palette(&monster_palette)).collect()).collect();
 
 	let mut com_back_f = load_relative(path, "COM_BACK.AMB");
-	let combat_bg_pictures_raw = pictures::load_combat_bg_gfx(&mut com_back_f);
+	let combat_bg_pictures_indexed = pictures::load_combat_bg_gfx(&mut com_back_f);
 	let mut combat_bg_pictures = vec![];
-	for (i, raw_pic) in combat_bg_pictures_raw.iter().enumerate() {
-	    let palette = palette::amberdev_combat_palette(&amberdev, i);
+	for (i, raw_pic) in combat_bg_pictures_indexed.iter().enumerate() {
+	    let palette = Palette::amberdev_combat_palette(&amberdev, i);
 	    combat_bg_pictures.push(raw_pic.with_palette(&palette));
 	}
 
@@ -587,6 +738,8 @@ impl AmberstarFiles {
 	    map_text,
 	    code_text,
 	    pics80,
+	    pics80_indexed,
+	    pics80_palettes,
 	    pic_intro,
 	    lab_palettes,
 	    amberdev_palettes,
@@ -595,7 +748,9 @@ impl AmberstarFiles {
 	    tiles,
 	    maps,
 	    bg_pictures,
+	    combat_bg_pictures_indexed,
 	    combat_bg_pictures,
+	    monster_gfx_indexed,
 	    monster_gfx,
 	    labgfx,
 	    chardata,

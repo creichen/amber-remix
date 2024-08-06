@@ -5,10 +5,12 @@ use cli::Command;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
+use png_codec::Rgba;
 use sdl2::video::Window;
 use sdl2::ttf::Sdl2TtfContext;
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::{time::Duration, io, fs};
 
@@ -20,7 +22,7 @@ use sdl2::{pixels::Color, event::Event, keyboard::{Keycode, Mod}, rect::Rect, re
 use amber_remix::audio::experiments::{SongPlayerAudioSource, SongTracer};
 use amber_remix::{audio::amber, datafiles::pixmap};
 
-use amber_remix::datafiles;
+use amber_remix::datafiles::{self, ResourcePath};
 use amber_remix::audio;
 
 use clap::Parser;
@@ -377,7 +379,7 @@ impl<'a> GfxExplorer<'a> {
 	    let palettes = &self.data.amberdev_palettes;
 
 	    if self.palette == palettes.len() {
-		return palette::TEST_PALETTE.clone();
+		return palette::Palette::test_palette();
 	    } else if self.palette > palettes.len() {
 		return self.data.tiles[self.palette - palettes.len() - 1].palette.clone();
 	    }
@@ -1471,7 +1473,7 @@ fn main() -> io::Result<()> {
     let completed = match command.clone() {
 	Command::Extract{ filename }  => {
 	    let mut df = datafiles::DataFile::load(&filename);
-	    let dest = cli.output;
+	    let dest = cli.output.clone();
 
 	    println!("File type: {}", df.filetype);
 	    for i in 0..df.num_entries {
@@ -1496,21 +1498,88 @@ fn main() -> io::Result<()> {
 		    println!("{:4} 0x{:04x}: {}", w, w, data.amberdev.string_fragments.get(w as u16));
 		},
 	    Command::Strings => print_strings(&data),
-	    // "song-old"	=> {
-	    // 	let source = &args[2];
-	    // 	play_song(&data, str::parse::<usize>(source).unwrap());
-	    // },
 	    Command::Song{song:song_nr} =>
 		play_song2(&data, song_nr.unwrap_or(0)).unwrap(),
-	    // "iter-song"	=> {
-	    // 	let source = &args[2];
-	    // 	print_iter_song(&data, str::parse::<usize>(source).unwrap());
-	    // },
-	    // "debug-audio" => {
-	    // debug_audio::debug_audio(&data).unwrap();
-	    // },
 	    Command::GfxDemo => show_images(&data),
 	    Command::MapViewer => map_demo::show_maps(&data),
+	    Command::ListPalettes => {
+		let palettes = data.palettes();
+		let mut keys: Vec<ResourcePath> = palettes.keys().into_iter().map(|k| k.clone()).collect();
+		keys.sort();
+		let pad = keys.iter().map(|k| format!("{k}").len()).max().unwrap();
+		for key in keys {
+		    println!("  {key:0pad$}");
+		}
+	    }
+	    Command::Palette{palette} => {
+		let palettes = data.palettes();
+		if let Some(palette) = palettes.get(&ResourcePath::from(&palette)) {
+		    for (i, col) in palette.colors.iter().enumerate() {
+			println!("  {i:02x}: {:x} {:x} {:x} {:x}", col.r >> 4, col.g >> 4, col.b >> 4, col.a >> 4);
+		    }
+		} else {
+		    panic!("Unknown palette '{palette}'");
+		}
+	    }
+	    Command::ListPixmaps => {
+		let pixmaps = data.pixmaps();
+		let mut keys: Vec<ResourcePath> = pixmaps.keys().into_iter().map(|k| k.clone()).collect();
+		keys.sort();
+		let pad = keys.iter().map(|k| format!("{k}").len()).max().unwrap();
+		for key in keys {
+		    if let Some((ref default_palette, pixmap)) = pixmaps.get(&key) {
+			let no_default_palette = default_palette.is_empty();
+			let pal_str = format!("  \t{default_palette}");
+			let mut s = format!("{key}");
+			while s.len() < pad {
+			    s += " ";
+			}
+			println!("  {s}  {}x{}{}", pixmap.width, pixmap.height,
+				 if no_default_palette { "" } else { &pal_str });
+		    }
+		}
+	    }
+	    Command::ExtractPixmap { pixmap, palette } => {
+		let mut dest_file = cli.output.clone();
+		let dest_file_str: &str = dest_file.to_str().unwrap();
+		if dest_file_str == "" || dest_file_str == "." {
+		    dest_file = PathBuf::from(pixmap.clone() + ".png");
+		}
+		let pixmap_name = pixmap.clone();
+		let palettes = data.palettes();
+		let pixmaps = data.pixmaps();
+		if let Some((default_palette, pixmap)) = pixmaps.get(&ResourcePath::from(&pixmap)) {
+		    let palette = match palette {
+			None           => default_palette.clone(),
+			Some(palname)  => ResourcePath::from(&palname),
+		    };
+		    if palette.is_empty() {
+			panic!("No default palette for pixmap {pixmap_name}, specify palette explicitly");
+		    }
+		    if let Some(palette) = palettes.get(&palette) {
+			let palette: Vec<Rgba> = palette.colors.iter().map(|c| Rgba::new(c.r, c.g, c.b, c.a)).collect();
+			let png = png_codec::IndexedImage {
+			    height: pixmap.height as u32,
+			    width: pixmap.width as u32,
+			    pixels: &pixmap.pixels,
+			    palette: &palette,
+			};
+			let encoded = png.encode(5).unwrap();
+			std::fs::write(dest_file, &encoded).expect("Failed to save image");
+		    } else {
+			panic!("Not found: palette {palette}");
+		    }
+		} else {
+		    panic!("Not found: pixmap {pixmap}");
+		}
+
+		// let mut keys: Vec<ResourcePath> = palettes.keys().into_iter().map(|&k| k.clone()).collect();
+		// keys.sort();
+		// let pad = keys.iter().map(|k| format!("{k}").len()).max().unwrap();
+		// for key in keys {
+		//     println!("{key:pad$}");
+		// }
+	    }
 	    Command::Extract{..}  => {}, // already handled above
 	}
     }
