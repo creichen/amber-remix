@@ -3,6 +3,7 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+use crate::datafiles::amberdev::Amberdev;
 //use crate::datafiles::chardata::CharData;
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
@@ -38,6 +39,7 @@ pub mod sampledata;
 pub mod tile;
 pub mod map;
 pub mod labgfx;
+pub mod amberdev;
 mod chardata;
 mod item;
 
@@ -440,8 +442,8 @@ fn load_relative(path : &str, filename : &str) -> DataFile {
 
 pub struct AmberstarFiles {
     pub path : String,
-    pub amberdev : Vec<u8>,
-    pub string_fragments : string_fragment_table::StringFragmentTable,
+    pub amberdev : Amberdev,
+    // pub string_fragments : string_fragment_table::StringFragmentTable,
     pub map_text : Vec<map_string_table::MapStringTable>,
     pub code_text : Vec<map_string_table::MapStringTable>,
     pub pics80 : Vec<Pixmap>,
@@ -502,52 +504,25 @@ fn load_maps(dfile : &mut DataFile) -> Vec<Map> {
     (0..dfile.num_entries).map(|i| map::new(i as usize, &dfile.decode(i))).collect()
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Language {
-    DE, EN
-}
-
-fn detect_stringtable(data: &[u8]) -> Option<(Language, usize)> {
-    let search_starts = [
-	0x21700, // likely to hit
-	0x0,     // worst case: search in entire file
-    ];
-    let keywords = [ ("MENSCH", Language::DE),
-		       ("HUMAN", Language::EN), ];
-
-    for search_start in search_starts {
-	for (keyword, language) in keywords.iter() {
-	    let keyword_bytes: Vec<u8> = keyword.bytes().collect();
-	    let mut pos = search_start;
-	    for w in data[search_start..].windows(keyword.len()) {
-		if w == keyword_bytes {
-		    return Some((*language, pos - 1));
-		}
-		pos += 1;
-	    }
-	}
-    }
-    return None;
-}
-
 impl AmberstarFiles {
     pub fn load<'a>(&self, f : &str) -> DataFile {
 	return load_relative(&self.path, f);
     }
 
     pub fn new(path : &str) -> AmberstarFiles {
-	let amberdev = load_relative(path, "AMBERDEV.UDO").decode(0);
-	let (language, stringtable_offset) = match detect_stringtable(&amberdev) {
-	    Some((l, offset)) => (l, offset),
-	    None => {
-		panic!("Could not find string table in AMBERDEV.UDO");
-	    },
-	};
-	println!("Detected language: {language:?}");
-	let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[stringtable_offset..]);
+	let amberdev_data = load_relative(path, "AMBERDEV.UDO").decode(0);
+	let amberdev = Amberdev::new(amberdev_data);
+	// let (language, stringtable_offset) = match detect_stringtable(&amberdev) {
+	//     Some((l, offset)) => (l, offset),
+	//     None => {
+	// 	panic!("Could not find string table in AMBERDEV.UDO");
+	//     },
+	// };
+	// println!("Detected language: {language:?}");
+	// let string_fragments = string_fragment_table::StringFragmentTable::new(&amberdev[stringtable_offset..]);
 
-	let map_text = load_text_vec(&mut load_relative(path, "MAPTEXT.AMB"), &string_fragments);
-	let code_text = load_text_vec(&mut load_relative(path, "CODETXT.AMB"), &string_fragments);
+	let map_text = load_text_vec(&mut load_relative(path, "MAPTEXT.AMB"), &amberdev.string_fragments);
+	let code_text = load_text_vec(&mut load_relative(path, "CODETXT.AMB"), &amberdev.string_fragments);
 
 	let mut pics80_f = load_relative(path, "PICS80.AMB");
 	let mut pics80 = vec![];
@@ -601,7 +576,7 @@ impl AmberstarFiles {
 	}
 
 	let mut chardata_f = load_relative(path, "CHARDATA.AMB");
-	let chardata : Vec<CharData> = (0..(chardata_f.num_entries)).map(|i| CharData::new(&string_fragments, i, &chardata_f.decode(i))).collect();
+	let chardata : Vec<CharData> = (0..(chardata_f.num_entries)).map(|i| CharData::new(&amberdev.string_fragments, i, &chardata_f.decode(i))).collect();
 
 	let amberdev_palettes = Palette::amberdev_palettes(&amberdev);
 	let path : String = format!("{}", path);
@@ -609,7 +584,6 @@ impl AmberstarFiles {
 	return AmberstarFiles {
 	    path,
 	    amberdev,
-	    string_fragments,
 	    map_text,
 	    code_text,
 	    pics80,

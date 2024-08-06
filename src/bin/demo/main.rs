@@ -10,7 +10,7 @@ use sdl2::ttf::Sdl2TtfContext;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::{time::Duration, io, env, fs, path::Path};
+use std::{time::Duration, io, fs};
 
 use amber_remix::audio::{Mixer, AQOp, SampleRange, AudioIterator};
 use amber_remix::audio::amber::SongIterator;
@@ -1492,8 +1492,8 @@ fn main() -> io::Result<()> {
 
 	match command {
 	    Command::Words =>
-		for w in 0..data.string_fragments.len() {
-		    println!("{:4} 0x{:04x}: {}", w, w, data.string_fragments.get(w as u16));
+		for w in 0..data.amberdev.string_fragments.len() {
+		    println!("{:4} 0x{:04x}: {}", w, w, data.amberdev.string_fragments.get(w as u16));
 		},
 	    Command::Strings => print_strings(&data),
 	    // "song-old"	=> {

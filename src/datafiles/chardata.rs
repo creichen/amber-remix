@@ -417,11 +417,7 @@ impl CharData {
 	let attack = decode::u16(data, 0x0096) as usize;
 	// unknown 0098-00eb
 	let weight = decode::u32(data, 0x00ec) as usize;
-	let pre_name = amber_string::from_bytes(&data[0x0f0..0x100]);
-	let name = match pre_name.find('\0') {
-	    None    => pre_name,
-	    Some(i) => pre_name[..i].to_string(),
-	};
+	let name = amber_string::from_terminated_bytes(&data[0x0f0..0x100]);
 	// unknown 0x100-0x132
 
 	debug!("----------------------------------------");
