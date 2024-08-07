@@ -78,50 +78,6 @@ impl AudioCallback for Mixer {
     }
 }
 
-// // ================================================================================
-// // Callback
-
-// struct Callback {
-//     mixer : Arc<Mutex<Mixer>>,
-// //    shared_buf : Arc<Mutex<RingBuf>>,
-// }
-
-// impl AudioCallback for Callback {
-//     type Channel = MixerSampleType;
-
-//     fn callback(&mut self, output: &mut [Self::Channel]) {
-// 	let mut guard = self.mixer.lock().unwrap();
-// 	let mixer = guard.deref_mut();
-// 	mixer.fill(output);
-
-// 	// let mut guard = self.shared_buf.lock().unwrap();
-// 	// let buf = guard.deref_mut();
-// 	// let num_written = buf.write_to(output);
-
-// 	// if num_written < output.len() {
-// 	//     if STARTED.load(std::sync::atomic::Ordering::SeqCst) {
-// 	// 	println!("Buffer underrun {num_written}/{}", output.len());
-// 	//     }
-// 	//     //warn!("Buffer underrun {num_written}/{}", output.len());
-// 	// }
-// 	// for x in output[num_written..].iter_mut() {
-// 	//     *x = 0.0;
-// 	// }
-// 	// let mut debug_total = 0.0;
-// 	// for x in output[0..num_written].iter() {
-// 	//     debug_total += f32::abs(*x);
-// 	// }
-// 	//self.tracker.add_many(debug_total, output.len());
-//     }
-// }
-
-// impl Callback {
-//     fn new(mixer: Arc<Mutex<Mixer>>) -> Callback {
-// 	return Callback {
-// 	    mixer
-// 	}
-//     }
-// }
 
 // --------------------------------------------------------------------------------
 

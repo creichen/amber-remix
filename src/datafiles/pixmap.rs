@@ -171,13 +171,7 @@ pub struct Pixmap {
 impl Pixmap {
     pub fn as_texture<'a, T>(&self, tc : &'a TextureCreator<T>) -> Texture<'a> {
 	let mut texture = tc.create_texture_static(PixelFormatEnum::RGBA8888, self.width as u32, self.height as u32).unwrap();
-	let mut data = self.data.clone();
-	let len = data.len();
-	for di in 0..(len >> 2) {
-	    let offset = di << 2;
-	    let d = &mut data[offset..offset+4];
-	}
-	//texture.update(None, &self.data[..], (self.width * 4) as usize).unwrap();
+	let data = self.data.clone();
 	texture.update(None, &data, (self.width * 4) as usize).unwrap();
 	return texture;
     }

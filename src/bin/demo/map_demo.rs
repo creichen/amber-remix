@@ -8,14 +8,12 @@ use amber_remix::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::{time::Duration, borrow::Borrow};
 
-use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}, video::Window, ttf::Sdl2TtfContext};
+use sdl2::{pixels::Color, event::Event, keyboard::Keycode, rect::{Rect, Point}, render::{TextureQuery, Canvas, Texture, TextureCreator, BlendMode}};
 
-use amber_remix::datafiles::{palette::Palette, map::{self, LabRef, MapDir, Illumination, Environment}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
+use amber_remix::datafiles::{palette::Palette, map::{self, LabRef, MapDir, Illumination}, self, tile::Tileset, labgfx::{self, LabBlockType, LabBlock, LabPixmap}};
 use std::fmt::Write;
 
-struct Font<'a> {
-    font : sdl2::ttf::Font<'a, 'a>,
-}
+use crate::font::Font;
 
 // --------------------------------------------------------------------------------
 trait IndexedTilePainter {
@@ -58,7 +56,7 @@ impl<'a> IndexedTilePainter for TilesetPainter<'a> {
 
     // no current support for scaling (not used/needed right now, should fix later)
     fn draw_scaled(&self, canvas : &mut Canvas<sdl2::video::Window>, image_id : usize, xpos : isize, ypos : isize, anim_index : usize,
-		   req_size : Option<usize>) {
+		   _req_size : Option<usize>) {
 	self.draw(canvas, image_id, xpos, ypos, anim_index);
     }
 }
@@ -221,64 +219,6 @@ impl NPC {
 	    painter.draw(canvas,
 			 self.mapnpc.sprite, xpos, ypos, anim_index);
 	}
-    }
-}
-
-impl<'a> Font<'a> {
-    pub fn new_ttf(ttf_context : &'a Sdl2TtfContext, path : &str, size : usize) -> Font<'a> {
-	// TODO: include font or use the existing one
-	let mut font = ttf_context.load_font(path, size as u16).unwrap();
-	font.set_style(sdl2::ttf::FontStyle::NORMAL);
-	Font {
-	    font
-	}
-    }
-
-    pub fn draw_to(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color) {
-	let creator = canvas.texture_creator();
-	let surface = self.font
-	    .render(text)
-	    .blended(color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let texture = creator
-	    .create_texture_from_surface(&surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-	let TextureQuery { width, height, .. } = texture.query();
-	let target = Rect::new(x as i32, y as i32, width, height);
-	canvas.copy(&texture, None, Some(target)).unwrap();
-    }
-    pub fn draw_to_with_outline(&self, canvas : &mut Canvas<Window>, text : &str, x : isize, y : isize, color : Color, outline_color : Color) {
-	let creator = canvas.texture_creator();
-
-	let outline_surface = self.font
-	    .render(text)
-	    .blended(outline_color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let outline_texture = creator
-	    .create_texture_from_surface(&outline_surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-	let TextureQuery { width, height, .. } = outline_texture.query();
-	for xdelta in [-1, 1] {
-	    for ydelta in [-1, 1] {
-		let target = Rect::new(xdelta + x as i32, ydelta + y as i32, width, height);
-		canvas.copy(&outline_texture, None, Some(target)).unwrap();
-	    }
-	}
-
-	let surface = self.font
-	    .render(text)
-	    .blended(color)
-	    .map_err(|e| e.to_string()).unwrap();
-	let texture = creator
-	    .create_texture_from_surface(&surface)
-	    .map_err(|e| e.to_string()).unwrap();
-
-
-	let TextureQuery { width, height, .. } = texture.query();
-	let target = Rect::new(x as i32, y as i32, width, height);
-	canvas.copy(&texture, None, Some(target)).unwrap();
     }
 }
 
@@ -674,7 +614,7 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		let start_xpos = 1620;
 		let start_ypos = ypos;
 		let mut max_bg_height = 0;
-		let mut xpos = start_xpos;
+		let xpos = start_xpos;
 
 		// draw floor and ceiling
 		if map.illumination == Illumination::Daylight {
@@ -736,8 +676,6 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 		    let (bg_ceiling, bg_floor) = &lab_bg_images[bg_index];
 		    let mut yoffset = 0;
 		    let mut max_width = 0;
-		    // let draw_ceiling = map.illumination != Illumination::Daylight
-		    // 	|| !(timeofday_hour >= 7 && timeofday_hour < 19);
 		    let draw_ceiling = true;
 		    for (draw_this, bg_pixmap) in [(draw_ceiling, bg_ceiling), (true, bg_floor)] {
 			let TextureQuery { width, height, .. } = bg_pixmap.query();
@@ -750,7 +688,6 @@ pub fn show_maps(data : &datafiles::AmberstarFiles) {
 			max_width = usize::max(max_width, width as usize);
 			yoffset += height as usize * SCALE;
 		    }
-		    xpos += (max_width + 2) * SCALE;
 		    max_bg_height = usize::max(max_bg_height, yoffset as usize + 10);
 		}
 

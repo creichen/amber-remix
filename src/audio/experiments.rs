@@ -10,28 +10,10 @@ use std::{collections::{VecDeque, HashSet, HashMap}, sync::{Mutex, Arc}, fs::Fil
 use lazy_static::lazy_static;
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use rustfft::{FftPlanner, num_complex::Complex, FftDirection};
-//use sdl2::libc::STA_FREQHOLD;
-use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::{AQOp, AudioIterator}};
-use super::{amber::{SongIterator, self}, AQSample, SampleRange, dsp::streamlog::{StreamLogger, self, StreamLogClient}, Freq};
+use crate::{datafiles::{music::Song, sampledata::SampleData}, audio::iterator::{AQOp, AudioIterator}};
+use super::{amber::{SongIterator, self}, AQSample, SampleRange, streamlog::{StreamLogger, self, StreamLogClient}, Freq};
 use super::blep::BLEP;
 use super::acore::AudioSource;
-
-// fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
-//     // Generate a square wave
-//     let tone_volume = 10_000i16;
-//     let period = 48_000 / 256;
-//     let sample_count = bytes_to_write;
-//     let mut result = Vec::new();
-
-//     for x in 0..sample_count {
-//         result.push(if (x / period) % 2 == 0 {
-//             tone_volume
-//         } else {
-//             -tone_volume
-//         });
-//     }
-//     result
-// }
 
 pub const SAMPLE_RATE : usize = 48_000;
 
@@ -59,12 +41,12 @@ impl ResamplingKey {
 }
 
 struct SampleProvider {
-    output_freq: Freq,
+    _output_freq: Freq,
     sample_data: SampleData,
     looping_samples: Vec<SampleRange>,
     nonlooping_samples: Vec<SampleRange>,
-    resampling_frequencies: Vec<Freq>,
-    scratch: Vec<Complex<f32>>,
+    _resampling_frequencies: Vec<Freq>,
+    _scratch: Vec<Complex<f32>>,
     samples: HashMap<ResamplingKey, Vec<f32>>,
     empty: Vec<f32>,
 }
@@ -92,12 +74,12 @@ impl SampleProvider {
 	resampling_frequencies.sort();
 
 	let mut result = SampleProvider {
-	    output_freq,
+	    _output_freq: output_freq,
 	    sample_data: sample_data.clone(),
 	    looping_samples: l_samples.clone(),
 	    nonlooping_samples: nl_samples.clone(),
-	    resampling_frequencies,
-	    scratch: vec![],
+	    _resampling_frequencies: resampling_frequencies,
+	    _scratch: vec![],
 	    samples: HashMap::new(),
 	    empty: vec![],
 	};
@@ -117,9 +99,9 @@ impl SampleProvider {
 	self.resample_looping(samples);
     }
 
-    fn ensure_scratch(&mut self, len: usize) {
-	if self.scratch.len() < len {
-	    self.scratch = vec![Complex::new(0.0, 0.0); len];
+    fn _ensure_scratch(&mut self, len: usize) {
+	if self._scratch.len() < len {
+	    self._scratch = vec![Complex::new(0.0, 0.0); len];
 	}
     }
 
@@ -128,6 +110,7 @@ impl SampleProvider {
     }
 
     fn next_lowest_freq(&self, _freq: Freq) -> usize {
+	// FIXME: forces use of the unresampled sample
 	0
     }
 
@@ -217,14 +200,6 @@ impl Instrument {
 	    Some(r) => sample_provider.get(r, freq, self.is_looping()),
 	}
     }
-
-    // fn current_sample(&self, sample_provider: &SampleProvider, freq: usize) -> Vec<f32> {
-    // 	match self.current_sample_raw(sample_provider, freq) {
-    // 	    None => vec![],
-    // 	    Some(pcm) => pcm.iter()
-    // 		.map(|&v| v as f32 / 128.0).collect(),
-    // 	}
-    // }
 
     fn next_sample<'a>(&mut self, sample_provider: &'a SampleProvider, freq: usize) -> InstrumentUpdate<'a> {
 	let new_range = self.current_sample_range();

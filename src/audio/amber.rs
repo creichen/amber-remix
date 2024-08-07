@@ -35,10 +35,10 @@ use super::AQSample;
 use super::ArcIt;
 use super::Freq;
 use super::SampleRange;
-use super::dsp::streamlog;
-use super::dsp::streamlog::ArcStreamLogger;
-use super::dsp::streamlog::StreamLogClient;
-use super::dsp::streamlog::StreamLogger;
+use super::streamlog;
+use super::streamlog::ArcStreamLogger;
+use super::streamlog::StreamLogClient;
+use super::streamlog::StreamLogger;
 use super::iterator::AQOp;
 use super::iterator::ArcPoly;
 use super::iterator::AudioIterator;
@@ -211,23 +211,23 @@ impl InstrumentNote {
 	}
     }
 
-    pub fn is_relative(&self) -> bool {
-	match self {
-	    InstrumentNote::Relative(_) => true,
-	    _ => false,
-	}
-    }
+    // pub fn is_relative(&self) -> bool {
+    // 	match self {
+    // 	    InstrumentNote::Relative(_) => true,
+    // 	    _ => false,
+    // 	}
+    // }
 
     pub fn to_period(&self) -> APeriod {
 	note_to_period(self.get())
     }
 
-    pub fn plus_relative(&self, other: InstrumentNote) -> InstrumentNote {
-	match (self, other) {
-	    (InstrumentNote::Relative(n), InstrumentNote::Relative(i)) => InstrumentNote::Relative(*n + i),
-	    _ => panic!("Invalid note combination: {self:?}, {other:?}"),
-	}
-    }
+    // pub fn plus_relative(&self, other: InstrumentNote) -> InstrumentNote {
+    // 	match (self, other) {
+    // 	    (InstrumentNote::Relative(n), InstrumentNote::Relative(i)) => InstrumentNote::Relative(*n + i),
+    // 	    _ => panic!("Invalid note combination: {self:?}, {other:?}"),
+    // 	}
+    // }
 
     pub fn modify(&mut self, change : isize) {
 	match self {
@@ -504,9 +504,9 @@ impl TimbreIterator {
     pub fn streamlog(&mut self, topic : &'static str, message : String) {
 	self.logger.log("timbre", topic, message);
     }
-    pub fn streamlog_num(&mut self, topic : &'static str, message : isize) {
-	self.logger.log_num("timbre", topic, message);
-    }
+    // pub fn streamlog_num(&mut self, topic : &'static str, message : isize) {
+    // 	self.logger.log_num("timbre", topic, message);
+    // }
 }
 
 lazy_static! {
@@ -1121,7 +1121,7 @@ struct SongChannelProxy {
 }
 
 impl StreamLogClient for SongChannelProxy {
-    fn set_logger(&mut self, logger : super::dsp::streamlog::ArcStreamLogger) {
+    fn set_logger(&mut self, logger : streamlog::ArcStreamLogger) {
         let mut guard = self.songit.lock().unwrap();
 	guard.set_logger(self.index, logger);
     }

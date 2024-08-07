@@ -2,10 +2,8 @@
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
 use std::{collections::VecDeque, sync::{Arc, Mutex}};
-
 use crate::datafiles::music::BasicSample;
-
-use super::{dsp::{frequency_range::Freq, writer::Timeslice, streamlog::StreamLogClient}, SampleRange};
+use super::{Timeslice, Freq, SampleRange, streamlog::{StreamLogClient, ArcStreamLogger}};
 
 // ================================================================================
 // AudioIterator
@@ -130,7 +128,7 @@ impl MockAudioIterator {
 }
 
 impl StreamLogClient for MockAudioIterator {
-    fn set_logger(&mut self, _logger : super::dsp::streamlog::ArcStreamLogger) {
+    fn set_logger(&mut self, _logger : super::streamlog::ArcStreamLogger) {
     }
 }
 
@@ -198,7 +196,7 @@ pub fn observe(source : ArcIt, observer : ArcItObserver) -> ArcIt {
 }
 
 impl StreamLogClient for AudioIteratorObserverAdapter {
-    fn set_logger(&mut self, logger : super::dsp::streamlog::ArcStreamLogger) {
+    fn set_logger(&mut self, logger : ArcStreamLogger) {
 	let mut guard = self.source.lock().unwrap();
 	guard.set_logger(logger);
     }

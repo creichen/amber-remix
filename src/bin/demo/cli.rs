@@ -26,6 +26,8 @@ pub enum Command {
     Strings,
     /// Plays the song with the given song number
     Song { song : Option<usize> },
+    /// Plays the song with the given song number
+    PrintSong { song : Option<usize> },
     /// Graphics demo (mainly intended for debugging and exploration)
     GfxDemo,
 

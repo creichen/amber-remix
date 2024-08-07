@@ -13,7 +13,7 @@ use std::assert;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::File;
-use std::cmp::{min, Ordering};
+use std::cmp::min;
 use std::io::Read;
 use std::ops::{Deref, Div};
 use std::path::Path;
@@ -520,10 +520,10 @@ pub struct ResourcePath {
 }
 
 impl ResourcePath {
-    fn empty() -> Self { Self { path: vec![] } }
-    fn new(s: &[&str]) -> Self { Self { path: s.iter().map(|s| s.to_string()).collect() } }
+    pub fn empty() -> Self { Self { path: vec![] } }
+    pub fn new(s: &[&str]) -> Self { Self { path: s.iter().map(|s| s.to_string()).collect() } }
 
-    fn extend(&self, next: &str) -> Self {
+    pub fn extend(&self, next: &str) -> Self {
 	let mut path = self.path.clone();
 	path.push(next.to_string());
 	ResourcePath {
@@ -531,11 +531,11 @@ impl ResourcePath {
 	}
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
 	return self.path.len();
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
 	return self.path.is_empty();
     }
 }

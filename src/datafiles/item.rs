@@ -6,7 +6,7 @@ use log::{Level, log_enabled, trace, debug, info, warn, error};
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
-use std::{assert, fmt::Display};
+use std::fmt::Display;
 
 use super::{decode, string_fragment_table::StringFragmentTable};
 
