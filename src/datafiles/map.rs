@@ -207,15 +207,15 @@ pub enum EventCondition {
 #[derive(Clone)]
 pub struct Event {
     pub raw: [u8;10],
-    cond : EventCondition,
-    program : Vec<EventOp>,
+    _cond : EventCondition,
+    _program : Vec<EventOp>,
 }
 
 impl Event {
     const EMPTY : Event = Event {
 	raw : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-	cond : EventCondition::Enter,
-	program : vec![],
+	_cond : EventCondition::Enter,
+	_program : vec![],
     };
     fn new(data : &[u8]) -> Option<Event> {
 	const OP_TELEPORT	: u8 = 0x01;
@@ -341,7 +341,7 @@ impl Event {
 
 	    let raw : [u8; 10] = data[0..10].try_into().unwrap();
 
-	    return Some(Event { raw, cond, program });
+	    return Some(Event { raw, _cond: cond, _program: program });
 	}
     }
 }

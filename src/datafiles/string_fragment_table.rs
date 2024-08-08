@@ -1,6 +1,9 @@
 // Copyright (C) 2022,23 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+#[allow(unused)]
+use log::{Level, log_enabled, trace, debug, info, warn, error};
+
 use super::amber_string;
 
 pub struct StringFragmentTable {
@@ -36,7 +39,7 @@ impl StringFragmentTable {
 
     pub fn get(&self, index : u16) -> String {
 	if index as usize >= self.fragments.len() {
-	    println!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
+	    error!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
 	    return "<?-?>".to_string();
 	}
 	return self.fragments[index as usize].clone();
@@ -44,7 +47,7 @@ impl StringFragmentTable {
 
     pub fn get_str(&self, index : u16) -> &str {
 	if index as usize >= self.fragments.len() {
-	    println!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
+	    error!("Invalid string index {index}, max is {}", self.fragments.len() - 1);
 	    return "<?-?>";
 	}
 	return &self.fragments[index as usize];

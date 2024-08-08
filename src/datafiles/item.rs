@@ -1,14 +1,16 @@
 // Copyright (C) 2023 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+use itertools::chain;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
+use crate::datafiles::attr;
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
 use std::fmt::Display;
 
-use super::{decode, string_fragment_table::StringFragmentTable};
+use super::{decode, string_fragment_table::StringFragmentTable, attr::{Attributed, Attr}};
 
 // --------------------------------------------------------------------------------
 #[derive(Debug, Clone, Copy)]
@@ -74,15 +76,19 @@ impl Display for ItemType {
 
 // --------------------------------------------------------------------------------
 #[derive(Debug, Clone, Copy)]
-struct EquipSlot {
+pub struct EquipSlot {
     slot : usize,
 }
 
 impl EquipSlot {
     pub fn new(slot : u8)  -> Self {
 	return EquipSlot{
-	    slot : slot as usize,
+	    slot : if slot <= Self::LEFT_FINGER { slot } else { 0 } as usize,
 	}
+    }
+
+    pub fn is_equip_slot(&self) -> bool {
+	return self.slot as u8 != Self::NONE;
     }
 
     const NONE : u8		= 0x00;
@@ -95,6 +101,25 @@ impl EquipSlot {
     const RIGHT_FINGER : u8	= 0x07;
     const FEET : u8		= 0x08;
     const LEFT_FINGER : u8	= 0x09;
+}
+
+impl Display for EquipSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "{}",
+	       match self.slot as u8 {
+		   Self::NONE         => "",
+		   Self::NECK         => "neck",
+		   Self::HEAD         => "head",
+		   Self::CHEST        => "chest",
+		   Self::MAIN_HAND    => "main hand",
+		   Self::ARMOR        => "armor",
+		   Self::OFF_HAND     => "off-hand",
+		   Self::RIGHT_FINGER => "right finger",
+		   Self::FEET         => "feet",
+		   Self::LEFT_FINGER  => "left finger",
+		   _                  => "<?-EquipSlot:Invalid-?>",
+	       })
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -111,8 +136,34 @@ pub struct Item {
     buy_price : usize,
     weight : usize,
     key_id : KeyID,
-    name : String,
+    pub name : String,
     unknowns : [u8; 23],
+}
+
+impl Attributed for Item {
+    fn attributes(&self) -> attr::AttrIterator {
+	let mut unknowns = self.unknowns.iter().enumerate().filter(|(_i, v)| **v > 0)
+	    .map(|(i, b)| Attr::string(&format!("[{i:02x}]"), format!("0x{b:02x}")));
+
+
+	Box::new(chain![
+	    attr::string("name", &self.name),
+	    attr::formatted("item-type", self.item_type),
+	    attr::uhex("icon-nr", self.icon),
+	    attr::usize_if_nonzero("num-hands", self.num_hands),
+	    attr::usize_if_nonzero("num-fingers", self.num_fingers),
+	    attr::uhex("allowed-classes", self.allowed_classes),
+	    attr::isize_if_nonzero("bonus-shield", self.bonus_shield_defense),
+	    attr::isize_if_nonzero("bonus-damage", self.bonus_damage),
+	    attr::formatted_if(self.equip_slot.is_equip_slot(),
+			       "slot", self.equip_slot),
+	    attr::usize("weight", self.weight),
+	    attr::usize("price", self.buy_price),
+	    attr::uhex_if_nonzero("key-id", self.key_id.id),
+
+	    attr::entity_it("unknown", Box::new(attr::inlined(&mut unknowns))),
+	])
+    }
 }
 
 impl Item {

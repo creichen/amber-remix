@@ -3,15 +3,42 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-use crate::datafiles::{decode, amber_string, map_string_table::MapStringTable, pixmap};
-use enumset::{EnumSet, EnumSetType};
+
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
 
+use crate::datafiles::{decode, amber_string, map_string_table::MapStringTable, pixmap, item::EquipSlot, attr};
 
-use std::assert;
+use itertools::chain;
+use enumset::{EnumSet, EnumSetType};
 
-use super::{item::{Item, KeyID}, pixmap::IndexedPixmap, string_fragment_table::StringFragmentTable};
+use std::{assert, fmt::Display};
+
+use super::attr::{Attr, Usizeable};
+use super::{item::{Item, KeyID}, pixmap::IndexedPixmap, string_fragment_table::StringFragmentTable, attr::Attributed};
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub struct Percentage {
+    pub percentage: usize,
+}
+
+impl Percentage {
+    fn new<T: Usizeable>(value: T) -> Self {
+	Self {
+	    percentage: value.to_usize()
+	}
+    }
+
+    fn nonzero(&self) -> bool {
+	return self.percentage > 0
+    }
+}
+
+impl Display for Percentage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}%", self.percentage)
+    }
+}
 
 // --------------------------------------------------------------------------------
 
@@ -39,44 +66,43 @@ pub enum Stat {
     AttrAge,
 }
 
-const OFFSET_XP_STAGING : usize		= 0x00cc; // Will be added to XP_CURRENT later, used during interactions
-const OFFSET_XP_CURRRENT : usize	= 0x00ce; // Current XP
+// const OFFSET_XP_STAGING : usize		= 0x00cc; // Will be added to XP_CURRENT later, used during interactions
+// const OFFSET_XP_CURRRENT : usize	= 0x00ce; // Current XP
 
-#[derive(Copy, Clone, Debug)]
-struct StatMetaInfo {
-    name : &'static str,
-    bytesized : bool, // offset_v has an u8 value, otherwise u16
-    offset_v : usize,
-    offset_max_v : usize,
-    stat : Stat,
-}
+// #[derive(Copy, Clone, Debug)]
+// struct StatMetaInfo {
+//     name : &'static str,
+//     bytesized : bool, // offset_v has an u8 value, otherwise u16
+//     offset_v : usize,
+//     offset_max_v : usize,
+//     stat : Stat,
+// }
 
-impl StatMetaInfo {
-    pub const fn skill(name : &'static str, offset_v : usize, offset_max_v : usize, stat : Stat) -> StatMetaInfo {
-	StatMetaInfo { name, offset_v, offset_max_v, stat, bytesized : true }
-    }
-    pub const fn attr(name : &'static str, offset_v : usize, offset_max_v : usize, stat : Stat) -> StatMetaInfo {
-	StatMetaInfo { name, offset_v, offset_max_v, stat, bytesized : false }
-    }
-}
+// impl StatMetaInfo {
+//     pub const fn skill(name : &'static str, offset_v : usize, offset_max_v : usize, stat : Stat) -> StatMetaInfo {
+// 	StatMetaInfo { name, offset_v, offset_max_v, stat, bytesized : true }
+//     }
+//     pub const fn attr(name : &'static str, offset_v : usize, offset_max_v : usize, stat : Stat) -> StatMetaInfo {
+// 	StatMetaInfo { name, offset_v, offset_max_v, stat, bytesized : false }
+//     }
+// }
 
-const STATS : [StatMetaInfo;10] = [
-    StatMetaInfo::skill("ATK", 0x0006, 0x0010, Stat::SkillAttack),
+// const STATS : [StatMetaInfo;10] = [
+//     StatMetaInfo::skill("ATK", 0x0006, 0x0010, Stat::SkillAttack),
 
-    StatMetaInfo::attr("STR", 0x0048, 0x005c, Stat::AttrStrength),
-    StatMetaInfo::attr("INT", 0x004a, 0x005e, Stat::AttrIntelligence),
-    StatMetaInfo::attr("DEX", 0x004c, 0x0060, Stat::AttrDexterity),
-    StatMetaInfo::attr("SPE", 0x004e, 0x0062, Stat::AttrSpeed),
-    StatMetaInfo::attr("CON", 0x0050, 0x0064, Stat::AttrConstitution),
-    StatMetaInfo::attr("CHA", 0x0052, 0x0066, Stat::AttrCharisma),
-    StatMetaInfo::attr("LUC", 0x0054, 0x0068, Stat::AttrLuck),
-    StatMetaInfo::attr("MAG", 0x0056, 0x006a, Stat::AttrMagic),
-    StatMetaInfo::attr("AGE", 0x0058, 0x006c, Stat::AttrAge),
-];
+//     StatMetaInfo::attr("STR", 0x0048, 0x005c, Stat::AttrStrength),
+//     StatMetaInfo::attr("INT", 0x004a, 0x005e, Stat::AttrIntelligence),
+//     StatMetaInfo::attr("DEX", 0x004c, 0x0060, Stat::AttrDexterity),
+//     StatMetaInfo::attr("SPE", 0x004e, 0x0062, Stat::AttrSpeed),
+//     StatMetaInfo::attr("CON", 0x0050, 0x0064, Stat::AttrConstitution),
+//     StatMetaInfo::attr("CHA", 0x0052, 0x0066, Stat::AttrCharisma),
+//     StatMetaInfo::attr("LUC", 0x0054, 0x0068, Stat::AttrLuck),
+//     StatMetaInfo::attr("MAG", 0x0056, 0x006a, Stat::AttrMagic),
+//     StatMetaInfo::attr("AGE", 0x0058, 0x006c, Stat::AttrAge),
+// ];
 
 
 impl Stat {
-
     pub fn short_str(&self) -> &str {
 	return match self {
 	    Stat::SkillAttack		=> "ATK",
@@ -102,6 +128,12 @@ impl Stat {
     }
 }
 
+impl Display for Stat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "{}", self.short_str())
+    }
+}
+
 // --------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
@@ -113,6 +145,12 @@ pub struct PointPool {
 impl PointPool {
     pub fn new(current : usize, max : usize) -> Self {
 	PointPool { current, max }
+    }
+}
+
+impl Display for PointPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "{} / {}", self.current, self.max)
     }
 }
 
@@ -244,13 +282,19 @@ pub enum MagicSchool {
     Special,
 }
 
+impl Display for MagicSchool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "{:?}", self)
+    }
+}
+
 // --------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
 pub struct StatField {
-    stat : Stat,
-    current : usize,
-    max : usize,
+    pub stat : Stat,
+    pub current : usize,
+    pub max : usize,
 }
 
 impl StatField {
@@ -292,9 +336,71 @@ pub struct CharData {
     // 6 right finger
     // 7 feet
     // 8 left finger
+    pub languages: usize,
+    pub current_language: usize,
+    pub physical_conditions: usize,
+    pub mental_conditions: usize,
+    pub join_chance: Percentage,
+    pub spellcast_success_chance: Percentage,
+    pub morale_percentage: Percentage,
+    pub resistance: usize,      // min # magic bonus to hit
+    pub battle_position: usize,
+    pub attacks_per_round: usize,
+    pub monster_flags: usize,   // special monster vulnerabilities
+    pub elemental_flags: usize, // elemental immunities and vulnerabilities
     pub portrait : Option<IndexedPixmap>,
     pub interactions : Vec<Vec<Interaction>>,  // not completed
     pub messages : Vec<String>,
+}
+
+impl Attributed for &CharData {
+    fn attributes(&self) -> attr::AttrIterator {
+	let mut stats = self.stats.iter().map(|f| Attr::string(f.stat.short_str(), format!("{} / {}", f.current, f.max)));
+	let mut items = self.items.iter().enumerate().filter(
+	    |(_i, (count, _item))| *count > 0).map(
+	    |(i, (count, item))|  {
+		let equip_slot = EquipSlot::new(i as u8 + 1);
+		let v = if equip_slot.is_equip_slot() {
+		    Attr::entity(&equip_slot.to_string(), item)
+		} else {
+		    Attr::entity(&format!("item-{i}"), item)
+		};
+		v.count(*count)
+	    });
+
+	Box::new(chain![
+	    attr::string("name", &self.name),
+	    attr::usize_if_nonzero("istat-flag-id", self.interaction_status_flag),
+	    attr::usize("gender", self.gender),
+	    attr::usize("race", self.race),
+	    attr::usize("class", self.class),
+	    attr::usize("level", self.level),
+	    attr::uhex_if_nonzero("languages", self.languages),
+	    attr::uhex("language", self.current_language),
+	    attr::formatted_if(self.join_chance.nonzero(), "join", self.join_chance),
+	    attr::formatted_if(self.monster, "gfx", self.monster_gfx),
+	    attr::formatted("magic", self.magic_schools),
+	    attr::inlined(&mut stats),
+	    attr::usize_if_nonzero("used-hands", self.used_hands),
+	    attr::usize_if_nonzero("used-fingers", self.used_fingers),
+	    attr::formatted("hp", self.hp),
+	    attr::formatted("sp", self.sp),
+	    attr::usize("attack", self.attack),
+	    attr::usize("defense", self.defense),
+	    attr::usize("resistance", self.resistance),
+	    attr::uhex_if_nonzero("cond-physical", self.physical_conditions),
+	    attr::uhex_if_nonzero("cond-mental", self.mental_conditions),
+	    attr::formatted("morale", self.morale_percentage),
+	    attr::formatted("spellcast", self.spellcast_success_chance),
+	    attr::usize("battle-pos", self.battle_position),
+	    attr::usize("attacks/round", self.attacks_per_round),
+
+	    attr::usize("gold", self.gp),
+	    attr::usize("weight", self.weight),
+	    attr::bool("portrait", self.portrait.is_some()),
+	    attr::entity_it("items", Box::new(attr::inlined(&mut items))),
+	])
+    }
 }
 
 impl CharData {
@@ -317,7 +423,70 @@ impl CharData {
 	    None
 	}
     }
+
+    pub fn print_header(&self){
+	println!("{}{} {} (level {})", if self.monster { "" } else { "NPC "},
+		 self.get_race_class(),
+		 self.name, self.level);
+    }
+
+    pub fn print_interactions(&self, fragment_table: &StringFragmentTable){
+	if self.interactions.len() > 0 {
+	    println!("--- Interactions ----------------------------------------");
+	}
+	for (interaction_type, interactions) in [("incomplete", &self.interactions[0]), ("complete", &self.interactions[1])] {
+	    if interactions.len() > 0 {
+		let interaction_status_flag = self.interaction_status_flag;
+		println!("  interactions[{interaction_type}({interaction_status_flag:x})] = {}", interactions.len());
+		for interaction in interactions {
+		    let Interaction { id, trigger, reactions } = interaction;
+		    println!("    == #{id}:  {}", trigger.show(fragment_table));
+		    for reaction in reactions {
+			println!("       - {}", reaction.show(fragment_table, &self.messages));
+		    }
+		}
+	    }
+	}
+    }
 }
+
+
+const RACES: [&str; 15] = [
+    "Human",
+    "Elf",
+    "Dwarf",
+    "Gnome",
+    "Halfling",
+    "Half Elf",
+    "Half Orc",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Animal",
+    "Monster",
+];
+
+const CLASS_NONE: usize = 0;
+const CLASS_ANIMAL: usize = 9;
+const CLASS_MONSTER: usize = 10;
+
+const CLASSES: [&str; 11] = [
+    "None",
+    "Warrior",
+    "Paladin",
+    "Ranger",
+    "Thief",
+    "Monk",
+    "White Mage",
+    "Grey Mage",
+    "Black Mage",
+    "Animal",
+    "Monster",
+];
+
 
 fn print_unknown(data: &[u8], start: usize, len: usize) {
     let mut interesting = false;
@@ -339,6 +508,19 @@ fn print_unknown(data: &[u8], start: usize, len: usize) {
 }
 
 impl CharData {
+    pub fn get_race_class(&self) -> String {
+	if self.monster {
+	    return "Monster".to_string();
+	}
+	if self.class == CLASS_NONE
+	    || self.class == CLASS_ANIMAL
+	    || self.class == CLASS_MONSTER {
+
+	    return RACES[self.race].to_string();
+	}
+	return format!("{} {}", RACES[self.race], CLASSES[self.class]);
+    }
+
     pub fn new(fragment_table : &StringFragmentTable, npc_id : u16, data : &[u8]) -> Self {
 	// unknown 0000-0001 (always 00 ff)
 	let monster = data[0x0002] > 0;
@@ -386,23 +568,23 @@ impl CharData {
 	//let _magic_bonus_weapon = data[0x0020] as usize;
 	//let _magic_bonus_defense = data[0x0021] as usize;
 	let inventory_counts = &data[0x0022..0x0022+(9 + 12)];
-	let languages = data[0x0037];
-	let current_language = data[0x0038]; // unused in game?
+	let languages = data[0x0037] as usize;
+	let current_language = data[0x0038] as usize; // unused in game?
 	// 0x39: always zero
 	let physical_conditions = data[0x003a] as usize;
 	let mental_conditions = data[0x003b] as usize;
-	let join_chance = data[0x003c] as usize; // in percent: chance of joining party when asked
+	let join_chance = Percentage::new(data[0x003c]); // in percent: chance of joining party when asked
 	let interaction_status_flag = data[0x003d] as usize;
 	let monster_gfx = data[0x003e] as usize;
 	if monster { assert!(monster_gfx > 0); }
 	if !monster { assert!(monster_gfx == 0); }
-	let spellcast_success_chance = data[0x3f];
-	let minimum_magic_to_hit = data[0x40]; // Cannot be damaged if bonus is lower than this
-	let morale_percentage = data[0x41]; // flee once this % of monsters of same type are defeated
-	let battle_position = data[0x42]; // 0x01 / 0x02 : last row?
-	let attacks_per_round = data[0x43];
-	let monster_type = data[0x44]; // 01: undead, 02: demon, 04: immune to ailments
-	let elemental_status = data[0x45]; // 01 fire, 02 earth, 04 water, 08 wind; lower nibble: immune, upper nibble: vulnerable (dbl damage)
+	let spellcast_success_chance = Percentage::new(data[0x3f]);
+	let resistance = data[0x40] as usize; // Cannot be damaged if bonus is lower than this
+	let morale_percentage = Percentage::new(data[0x41]); // flee once this % of monsters of same type are defeated
+	let battle_position = data[0x42] as usize; // 0x01 / 0x02 : last row?
+	let attacks_per_round = data[0x43] as usize;
+	let monster_flags = data[0x44] as usize; // 01: undead, 02: demon, 04: immune to ailments
+	let elemental_flags = data[0x45] as usize; // 01 fire, 02 earth, 04 water, 08 wind; lower nibble: immune, upper nibble: vulnerable (dbl damage)
 	// unknown 003f-0047
 	// unknown attribute at decode(data, 0x005a) / max decode(data, 0x006e)  (always zero)
 	// unknown 0070-0085
@@ -492,19 +674,6 @@ impl CharData {
 	let portrait = if decode::u32(data, 0x6aa) > 0 {
 	    Some(pixmap::new_icon_frame(&data[image_base..]))
 	} else { None };
-	debug!("  portrait = {}", portrait.is_some());
-	for (interaction_type, interactions) in [("incomplete", &interactions_all[0]), ("complete", &interactions_all[1])] {
-	    if interactions.len() > 0 {
-		debug!("  interactions[{interaction_type}({interaction_status_flag:x})] = {}", interactions.len());
-		for interaction in interactions {
-		    let Interaction { id, trigger, reactions } = interaction;
-		    debug!("    == #{id}:  {}", trigger.show(fragment_table));
-		    for reaction in reactions {
-			debug!("       - {}", reaction.show(fragment_table, &messages));
-		    }
-		}
-	    }
-	}
 
 	return CharData {
 	    monster,
@@ -529,6 +698,18 @@ impl CharData {
 	    weight,
 	    name,
 	    items,
+	    languages,
+	    current_language,
+	    physical_conditions,
+	    mental_conditions,
+	    join_chance,
+	    spellcast_success_chance,
+	    resistance,
+	    morale_percentage,
+	    battle_position,
+	    attacks_per_round,
+	    monster_flags,
+	    elemental_flags,
 	    portrait,
 	    interactions : interactions_all,
 	    messages,

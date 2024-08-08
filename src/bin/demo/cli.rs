@@ -31,6 +31,11 @@ pub enum Command {
     /// Graphics demo (mainly intended for debugging and exploration)
     GfxDemo,
 
+    /// Show all in-game characters
+    ListChars,
+    /// Print all information on a given character
+    ShowChar { character: usize },
+
     /// List all palettes
     ListPalettes,
     /// Prints a palette
@@ -39,7 +44,6 @@ pub enum Command {
     ListPixmaps,
     /// Extract pixmap as PNG
     ExtractPixmap{pixmap: String, palette: Option<String>},
-
 
     /// Map viewer and 3D map walking demo
     MapViewer,

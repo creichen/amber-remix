@@ -1,6 +1,7 @@
 // Copyright (C) 2022-24 Christoph Reichenbach (creichen@gmail.com)
 // Licenced under the GNU General Public Licence, v3.  Please refer to the file "COPYING" for details.
 
+use amber_remix::datafiles::attr::Attributed;
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
 
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 use std::{io, fs};
 
 
-use amber_remix::datafiles::{self, ResourcePath};
+use amber_remix::datafiles::{self, ResourcePath, attr};
 
 use clap::Parser;
 mod font;
@@ -89,6 +90,28 @@ fn main() -> io::Result<()> {
 		song_player::print_iter_song(&data, song_nr.unwrap_or(0)),
 	    Command::GfxDemo => gfx_demo::show_images(&data),
 	    Command::MapViewer => map_demo::show_maps(&data),
+
+	    Command::ListChars => {
+		for (i, c) in data.chardata.iter().enumerate() {
+		    let cat = if c.monster { "Monster".into() }
+		    else { format!("Lvl {:2} {}", c.level, c.get_race_class()) };
+
+		    println!("{i:2} (0x{i:02x}) {cat:-28} {}", c.name);
+		}
+	    },
+
+	    Command::ShowChar { character } => {
+		if character >= data.chardata.len() {
+		    error!("Out of range");
+		} else {
+		    let c = &data.chardata[character];
+		    let mut attr_iterator: attr::AttrIterator = c.attributes();
+		    c.print_header();
+		    attr::print_rec(&mut attr_iterator, "\t");
+		    c.print_interactions(&data.amberdev.string_fragments);
+		}
+	    },
+
 	    Command::ListPalettes => {
 		let palettes = data.palettes();
 		let mut keys: Vec<ResourcePath> = palettes.keys().into_iter().map(|k| k.clone()).collect();
@@ -159,13 +182,6 @@ fn main() -> io::Result<()> {
 		} else {
 		    panic!("Not found: pixmap {pixmap}");
 		}
-
-		// let mut keys: Vec<ResourcePath> = palettes.keys().into_iter().map(|&k| k.clone()).collect();
-		// keys.sort();
-		// let pad = keys.iter().map(|k| format!("{k}").len()).max().unwrap();
-		// for key in keys {
-		//     println!("{key:pad$}");
-		// }
 	    }
 	    Command::Extract{..}  => {}, // already handled above
 	}

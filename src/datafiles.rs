@@ -3,10 +3,11 @@
 
 #[allow(unused)]
 use log::{Level, log_enabled, trace, debug, info, warn, error};
-use crate::datafiles::amberdev::Amberdev;
-//use crate::datafiles::chardata::CharData;
+
 #[allow(unused)]
 use crate::{ptrace, pdebug, pinfo, pwarn, perror};
+
+use crate::datafiles::amberdev::Amberdev;
 
 use core::fmt;
 use std::assert;
@@ -35,6 +36,7 @@ mod map_string_table;
 mod decode;
 mod bytepattern;
 mod pictures;
+pub mod attr;
 pub mod amber_string;
 pub mod palette;
 pub mod pixmap;

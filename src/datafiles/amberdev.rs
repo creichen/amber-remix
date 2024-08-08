@@ -9,7 +9,7 @@ use super::{string_fragment_table::StringFragmentTable, amber_string, decode};
 
 /// Game file language
 #[derive(Debug, Clone, Copy)]
-enum Language {
+pub enum Language {
     DE, EN
 }
 
@@ -77,10 +77,6 @@ impl Amberdev {
 	amberdev.positions.merchant_name_table = amberdev.positions.spell_name_table + 0x0004b230 - 0x0004ac00 - 2;
 	amberdev.positions.daylight_tables = amberdev.positions.spell_name_table + 0x000473a4 - 0x0004ac0a;
 	amberdev.song_names = amber_string::vec_from_terminated_bytes(&amberdev[amberdev.positions.codetxt_amb + 0x151..]);
-
-	for (i, n) in amberdev.song_names.iter().enumerate() {
-	    println!(" SONG {i}: {n}");
-	}
 
 	amberdev.spell_names = amberdev.extract_spell_names();
 	amberdev.merchant_names = amberdev.extract_merchant_names();
